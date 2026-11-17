@@ -1,50 +1,4 @@
 
-running 41 tests
-test bold_word::tests::off_leaves_the_chapter_bytes_unchanged ... ok
-test books::tests::books_are_epub_or_pdf_paths ... ok
-test books::tests::file_urls_keep_the_book_path ... ok
-test chrome::tests::a_cjk_title_uses_songti ... ok
-test chrome::tests::paperback_on_a_1000_by_1200_frame_is_the_page_plus_the_top_mat ... ok
-test bold_word::tests::prefixes_match_the_crate_and_skip_publisher_bold ... ok
-test bold_word::tests::entities_stay_words_and_a_bare_less_than_returns ... ok
-test chrome::tests::the_bar_width_centers_the_traffic_lights ... ok
-test chrome::tests::the_page_is_centered_in_the_area_beside_the_bar ... ok
-test chrome::tests::spike_window_parses_a_frame_and_rejects_a_partial_one ... ok
-test chrome::tests::the_page_starts_below_the_traffic_lights ... ok
-test form::tests::a_connected_source_keeps_its_count_and_a_denial_drops_it ... ok
-test form::tests::a_shown_margin_has_no_chat_width ... ok
-test form::tests::a_toggle_twice_restores_full_and_does_not_leave_it ... ok
-test breaks::tests::book_id_changes_when_a_byte_changes_and_ignores_map_order ... ok
-test form::tests::books_fill_the_grid ... ok
-test form::tests::hiding_a_column_keeps_the_six_point_inset ... ok
-test form::tests::launch_is_full_with_both_columns ... ok
-test reading::tests::chinese_footer_matches_the_books_line ... ok
-test reading::tests::frame_floor_is_one_refresh ... ok
-test reading::tests::lang_is_stamped_and_the_fallback_is_first_in_the_head ... ok
-test reading::tests::fallbacks_stay_under_the_book ... ok
-test reading::tests::page_sheet_does_not_restyle_type ... ok
-test reading::tests::script_is_one_slide_and_names_no_forbidden_mode ... ok
-test reading::tests::trim_fit_keeps_the_ratio_and_declared_size_wins ... ok
-test reading::tests::title_fades_and_the_readme_lists_the_overrides ... ok
-test settings::tests::support_dir_follows_a_verify_override_and_ignores_a_blank_one ... ok
-test books::tests::an_epub_package_is_a_folder_with_a_container ... ok
-test breaks::tests::a_stamp_mismatch_drops_the_file_and_a_bad_row_is_skipped ... ok
-test breaks::tests::invalidate_removes_the_file_and_a_second_call_stays_empty ... ok
-test stage::tests::a_smaller_placement_is_the_layout_target ... ok
-test breaks::tests::retarget_keeps_later_plans_and_drops_the_old_stamp ... ok
-test tokens::tests::a_narrow_card_does_not_wrap_at_two_by_fiat ... ok
-test tokens::tests::the_mockup_width_fits_five_covers ... ok
-test breaks::tests::harvest_round_trips_and_a_second_write_matches ... ok
-test breaks::tests::a_plan_stored_off_is_not_reused_when_the_setting_is_on ... ok
-test settings::tests::round_trip_keeps_a_known_trim_and_rejects_unknown ... ok
-test icons::tests::each_toolbar_icon_rasterizes_to_ink ... ok
-test shelf::tests::a_store_only_apple_source_stays_listed_at_zero ... ok
-test shelf::tests::continue_reading_follows_last_opened_and_percent_needs_a_total ... ok
-test reading::tests::justify_source_parses_and_stays_out_of_the_type_sheet ... ok
-
-test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
-
-
 warning: failed to auto-clean cache data
 
 failed to clean entries from the global cache
@@ -54,10 +8,6 @@ Caused by:
 
 Caused by:
   Permission denied (os error 13)
-   Compiling spike-report v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/report)
-   Compiling spike-bold-word-starts v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/bold-word-starts)
-   Compiling spike-epub v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/epub)
-   Compiling spike-pdf v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/pdf)
    Compiling spike-library v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/library)
 warning: field `pdfium` is never read
   --> pdf/src/lib.rs:53:5
@@ -80,32 +30,75 @@ warning: use of deprecated associated constant `objc2_core_graphics::CGBitmapInf
    = note: `#[warn(deprecated)]` on by default
 
 warning: unnecessary `unsafe` block
-   --> shell/src/stage.rs:287:9
+   --> shell/src/stage.rs:286:9
     |
-287 |         unsafe {
+286 |         unsafe {
     |         ^^^^^^ unnecessary `unsafe` block
     |
     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
 
 warning: unnecessary `unsafe` block
-   --> shell/src/stage.rs:451:25
+   --> shell/src/stage.rs:450:25
     |
-451 | ...   unsafe { CGContext::draw_image(Some(&ctx), rect, Some(&cg)) };
+450 | ...   unsafe { CGContext::draw_image(Some(&ctx), rect, Some(&cg)) };
     |       ^^^^^^ unnecessary `unsafe` block
 
 warning: unnecessary `unsafe` block
-   --> shell/src/stage.rs:705:13
+   --> shell/src/stage.rs:704:13
     |
-705 |             unsafe { CGContext::draw_image(Some(ctx), rect, Some(&cg)) };
+704 |             unsafe { CGContext::draw_image(Some(ctx), rect, Some(&cg)) };
     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: function `prefix_of` is never used
+  --> shell/src/bold_word.rs:48:8
+   |
+48 | pub fn prefix_of(word: &str) -> String {
+   |        ^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variants `PageAndPanel` and `Immersive` are never constructed
+  --> shell/src/form.rs:37:5
+   |
+35 | pub enum Form {
+   |          ---- variants in this enum
+36 |     Full { sidebar: Presence, chat: Presence },
+37 |     PageAndPanel { sidebar: Presence, margin: Presence },
+   |     ^^^^^^^^^^^^
+38 |     Immersive,
+   |     ^^^^^^^^^
+   |
+   = note: `Form` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `remember_source` is never used
+   --> shell/src/form.rs:449:8
+    |
+449 | pub fn remember_source(rows: &mut Vec<SourceIn>, label: &str, count: u3...
+    |        ^^^^^^^^^^^^^^^
 
 warning: function `glyph_file` is never used
   --> shell/src/icons.rs:61:8
    |
 61 | pub fn glyph_file(name: &str) -> Option<std::path::PathBuf> {
    |        ^^^^^^^^^^
+
+warning: constant `PAGE_OVERRIDES` is never used
+  --> shell/src/reading.rs:50:11
    |
-   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+50 | pub const PAGE_OVERRIDES: &[(&str, &str)] = &[
+   |           ^^^^^^^^^^^^^^
+
+warning: function `ratio_within` is never used
+   --> shell/src/reading.rs:110:8
+    |
+110 | pub fn ratio_within(width: f64, height: f64, want_w: f64, want_h: f64) ...
+    |        ^^^^^^^^^^^^
+
+warning: function `store_place` is never used
+  --> shell/src/settings.rs:81:8
+   |
+81 | pub fn store_place(path: &Path, book: &str, page: u32) -> Result<(), Str...
+   |        ^^^^^^^^^^^
 
 warning: function `library_folder` is never used
    --> shell/src/settings.rs:344:8
@@ -143,6 +136,12 @@ warning: constant `CITE_SIZE` is never used
 71 | pub const CITE_SIZE: f32 = 11.5;
    |           ^^^^^^^^^
 
+warning: constant `WINDOW_W` is never used
+  --> shell/src/tokens.rs:78:11
+   |
+78 | pub const WINDOW_W: f64 = 1440.0;
+   |           ^^^^^^^^
+
 warning: constant `WINDOW_H` is never used
   --> shell/src/tokens.rs:79:11
    |
@@ -179,24 +178,47 @@ warning: constant `FOOT_PX` is never used
 111 | pub const FOOT_PX: f32 = 8.0;
     |           ^^^^^^^
 
-warning: constant `BUBBLE_TAIL` is never used
-   --> shell/src/tokens.rs:176:11
+warning: constant `SHELF_COVER_W` is never used
+   --> shell/src/tokens.rs:153:11
     |
-176 | pub const BUBBLE_TAIL: f32 = 4.0;
+153 | pub const SHELF_COVER_W: f32 = 128.0;
+    |           ^^^^^^^^^^^^^
+
+warning: constant `SHELF_COVER_H` is never used
+   --> shell/src/tokens.rs:154:11
+    |
+154 | pub const SHELF_COVER_H: f32 = 192.0;
+    |           ^^^^^^^^^^^^^
+
+warning: constant `SHELF_ROW_GAP` is never used
+   --> shell/src/tokens.rs:157:11
+    |
+157 | pub const SHELF_ROW_GAP: f32 = 28.0;
+    |           ^^^^^^^^^^^^^
+
+warning: constant `CHAT_BREAKPOINT` is never used
+   --> shell/src/tokens.rs:165:11
+    |
+165 | pub const CHAT_BREAKPOINT: f64 = 898.0;
+    |           ^^^^^^^^^^^^^^^
+
+warning: constant `BUBBLE_TAIL` is never used
+   --> shell/src/tokens.rs:183:11
+    |
+183 | pub const BUBBLE_TAIL: f32 = 4.0;
     |           ^^^^^^^^^^^
 
 warning: constant `PLACEHOLDER_H` is never used
-   --> shell/src/tokens.rs:187:11
+   --> shell/src/tokens.rs:194:11
     |
-187 | pub const PLACEHOLDER_H: f32 = 20.0;
+194 | pub const PLACEHOLDER_H: f32 = 20.0;
     |           ^^^^^^^^^^^^^
 
 warning: constant `ATTACH` is never used
-   --> shell/src/tokens.rs:190:11
+   --> shell/src/tokens.rs:197:11
     |
-190 | pub const ATTACH: f32 = 24.0;
+197 | pub const ATTACH: f32 = 24.0;
     |           ^^^^^^
 
-warning: `spike-shell` (lib test) generated 20 warnings
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.64s
-     Running unittests src/lib.rs (/Users/morris/.cache/cargo-target/SuperReader/debug/deps/spike_shell-25677bb6e57bcc22)
+warning: `spike-shell` (lib) generated 31 warnings
+    Finished `release` profile [optimized] target(s) in 8.09s

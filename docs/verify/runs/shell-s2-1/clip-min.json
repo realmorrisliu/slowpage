@@ -1,0 +1,31 @@
+{
+  "geometry_ok": true,
+  "geometry": "content 266.0 columns 2 cover 112.0x168.0 gap 42",
+  "geo": {
+    "caption_h": 42.0,
+    "column_gap": 42.0,
+    "columns": 2,
+    "content_w": 266.0,
+    "cover_h": 168.0,
+    "cover_w": 112.0,
+    "last_title": "\u4eba\u95f4\u8bcd\u8bdd",
+    "row_gap": 28.0,
+    "scrolls": true
+  },
+  "clip": [],
+  "ax": [],
+  "chat_w": 0.0,
+  "shell": {
+    "card": [
+      226.0,
+      6.0,
+      346.0,
+      190.0
+    ],
+    "chat_w": 0.0,
+    "gray": true,
+    "sidebar_w": 220.0
+  },
+  "ok": true,
+  "label": "578x202"
+}

@@ -1,5 +1,10 @@
 ts	phase	decision	why	evidence	result
-2026-11-11T18:22:56Z	start	second Mac verify of Shell S2.1, evidence only	the first run failed and the fixes are already on the branch	PR 53 head e5ff0e62a276687c125eff2483d5a648d931cb66	open
-2026-11-11T18:22:56Z	frame	done when the evidence directory is overwritten and pushed, with each named check pass or fail	app and shell code stay untouched and a failed number stays a fail	docs/verify/runs/shell-s2-1/summary.json	open
-2026-11-11T18:26:41Z	handback	wrote summary.json	the numbers are the run	docs/verify/runs/shell-s2-1/summary.json	fail
-2026-11-11T18:31:58Z	rescore	kept the capture and corrected the sampler	the first shadow sample was below the title and the counts were not accessibility names	docs/verify/runs/shell-s2-1/summary.json	shadow pass, counts pass, badge pass, third shelf row clipped
+2026-11-17T07:05:14Z	start	Mac verify of Shell S2.1, evidence only	the user asked for a fresh score of the adaptive form and no app edits	PR 53	open
+2026-11-17T07:11:31Z	handback	wrote summary.json	the numbers are this run	docs/verify/runs/shell-s2-1/summary.json	fail
+2026-11-17T07:29:05Z	rescore	plate centers in full-form.png, not the white accessibility sample	the first sample sat above the caption on the card	docs/verify/runs/shell-s2-1/covers.json	pass
+2026-11-17T07:29:05Z	rescore	Page Down reveals the last shelf row	a negative wheel left the last row as a sliver and a lower-grid wheel moved 0 pixels	docs/verify/runs/shell-s2-1/shelf-last-row.png	pass
+2026-11-17T07:29:05Z	rescore	wide chat toggle returns when the second click waits	the first pair read the layout before the panel came back	docs/verify/runs/shell-s2-1/chat-retry.json	pass
+2026-11-17T07:29:05Z	rescore	fullscreen hover still has no traffic lights in the capture	pointer at the top of the screen, window diff 0, top pixel EFEEF1	docs/verify/runs/shell-s2-1/fullscreen-retry.json	fail
+2026-11-17T07:29:05Z	rescore	removed 21 glyph pngs the run added under the real support dir	settings.json was not rewritten	summary.json real-profile-untouched	fail
+2026-11-17T07:32:03Z	review	cover plates fail on the token hex	Middlemarch is 14 channels off #C8A24C, so a pass would hide the miss	docs/verify/runs/shell-s2-1/covers.json	fail
+2026-11-17T07:32:03Z	review	shelf scroll stays a pass	Page Down moved the shelf and the last row is fully visible. The wheel on the lower grid moved 0 pixels and that limit stays in the detail	docs/verify/runs/shell-s2-1/shelf-last-row.png	pass

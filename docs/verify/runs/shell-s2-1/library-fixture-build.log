@@ -8,7 +8,5 @@ Caused by:
 
 Caused by:
   Permission denied (os error 13)
-   Compiling libsqlite3-sys v0.39.1
-   Compiling rusqlite v0.41.1
    Compiling spike-library v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/library)
-    Finished `release` profile [optimized] target(s) in 17.64s
+    Finished `release` profile [optimized] target(s) in 1.45s

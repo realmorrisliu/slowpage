@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nsh test" tests="1" failures="0" errors="0" skipped="0" time="4.534">
+  <testsuite name="shell.access.test.tsx" tests="1" failures="0" errors="0" skipped="0" time="0.216">
+    <testcase classname="shell.access.test.tsx" name="the shell does not offer the bare shelf picker" time="0.216"/>
+  </testsuite>
+</testsuites>
