@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
 import os
@@ -515,15 +516,22 @@ def read_font_notes():
         "问问 Slowpage…": (13, 400),
         "最近阅读": (12.5, 400),
     }
-    found = {note.get("label"): note for note in notes if isinstance(note, dict)}
+    found = {}
+    for note in notes:
+        if isinstance(note, dict) and note.get("label"):
+            found.setdefault(note.get("label"), []).append(note)
     missing = []
     for label, (size, weight) in want.items():
-        note = found.get(label)
-        if not note:
+        rows = found.get(label) or []
+        if not rows:
             missing.append(label)
             continue
-        if abs(float(note.get("size") or 0) - size) > 0.1 or int(note.get("weight") or 0) != weight:
-            missing.append(f"{label} {note.get('size')}/{note.get('weight')}")
+        if not any(
+            abs(float(note.get("size") or 0) - size) <= 0.1 and int(note.get("weight") or 0) == weight
+            for note in rows
+        ):
+            shown = ", ".join(f"{note.get('size')}/{note.get('weight')}" for note in rows)
+            missing.append(f"{label} {shown}")
     if missing:
         return False, "font mismatch " + ", ".join(missing)
     return True, "fonts.json matches the view tree for the full-form labels"
@@ -709,6 +717,45 @@ def clipping_report(layout):
                 needed = 0.0
             if needed > width + CLIP_TOL and not node.get("ellipsis"):
                 problems.append(f"{name} text is clipped")
+    problems.extend(sibling_overlaps(nodes))
+    return problems
+
+
+def _contains(outer, inner, tol=CLIP_TOL):
+    ox, oy, ow, oh = outer
+    ix, iy, iw, ih = inner
+    return (
+        ix >= ox - tol
+        and iy >= oy - tol
+        and ix + iw <= ox + ow + tol
+        and iy + ih <= oy + oh + tol
+    )
+
+
+def _overlaps(a, b, tol=CLIP_TOL):
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw - tol and bx < ax + aw - tol and ay < by + bh - tol and by < ay + ah - tol
+
+
+def sibling_overlaps(nodes):
+    """Two frames that cross, and neither sits inside the other, are a clip."""
+    frames = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        frame = _box(node.get("frame"))
+        if frame is None:
+            continue
+        frames.append((str(node.get("id") or "node"), frame))
+    problems = []
+    for index, (name, frame) in enumerate(frames):
+        for other, other_frame in frames[index + 1 :]:
+            if not _overlaps(frame, other_frame):
+                continue
+            if _contains(frame, other_frame) or _contains(other_frame, frame):
+                continue
+            problems.append(f"{name} overlaps {other}")
     return problems
 
 
@@ -946,6 +993,83 @@ def form_diff_self_check():
         ],
     }
     assert any("clipped" in item for item in clipping_report(clipped))
+    crossed = {
+        "window": [578, 514],
+        "nodes": [
+            {
+                "id": "sidebar.row.1",
+                "kind": "sidebar-row",
+                "frame": [10, 140, 200, 28],
+                "intrinsic": [200, 28],
+                "container": [0, 88, 220, 80],
+                "ellipsis": True,
+                "label": "正在读",
+                "scroll_child": True,
+            },
+            {
+                "id": "sidebar.settings",
+                "kind": "sidebar-row",
+                "frame": [10, 150, 200, 28],
+                "intrinsic": [200, 28],
+                "container": [0, 0, 220, 514],
+                "ellipsis": True,
+                "label": "设置",
+                "scroll_child": False,
+            },
+        ],
+    }
+    assert any("overlaps" in item for item in clipping_report(crossed))
+    nested = {
+        "window": [578, 514],
+        "nodes": [
+            {
+                "id": "cover.0",
+                "kind": "cover",
+                "frame": [40, 40, 112, 168],
+                "intrinsic": [112, 168],
+                "container": [0, 0, 400, 500],
+                "ellipsis": False,
+                "scroll_child": False,
+                "plate": True,
+                "plate_rgb": "C8A24C",
+            },
+            {
+                "id": "cover.0.type.title",
+                "kind": "text",
+                "frame": [48, 100, 96, 15],
+                "intrinsic": [80, 15],
+                "container": [40, 40, 112, 168],
+                "ellipsis": True,
+                "scroll_child": False,
+            },
+            {
+                "id": "cover.0.type.author",
+                "kind": "text",
+                "frame": [48, 121, 96, 9],
+                "intrinsic": [60, 9],
+                "container": [40, 40, 112, 168],
+                "ellipsis": True,
+                "scroll_child": False,
+            },
+        ],
+    }
+    assert clipping_report(nested) == []
+    bare = {"window": [100, 100], "nodes": [dict(nested["nodes"][0])]}
+    assert any("no type" in item for item in plate_report(bare, None))
+    face = bytearray([0xC8, 0xA2, 0x4C])
+    ink = bytearray([0xFF, 0xFF, 0xFF])
+    row = bytearray(face * 20)
+    for column in range(6, 14):
+        row[column * 3 : column * 3 + 3] = ink
+    band = [bytes(face * 20) for _ in range(10)]
+    for line in (3, 5, 7):
+        band[line] = bytes(row)
+    assert _plate_has_ink(band, 3, 1.0, [0, 0, 20, 10], "#C8A24C")
+    flat = [bytes(face * 20) for _ in range(10)]
+    assert not _plate_has_ink(flat, 3, 1.0, [0, 0, 20, 10], "#C8A24C")
+    assert pixel_changes(band, flat) > 0
+    assert pixel_changes(flat, flat) == 0
+    assert library_min_height() == 520
     assert not frame_outside_x(10, 20, 0, 100)
     assert frame_outside_x(90, 20, 0, 100)
 
@@ -1178,12 +1302,195 @@ def _size_note(label, pid=None):
     return matched and not problems, note
 
 
+def plate_report(layout, png):
+    """Coverless plates need type frames inside the cover, ink on the face, and the token color."""
+    if not isinstance(layout, dict):
+        return ["layout.json was not written"]
+    nodes = layout.get("nodes")
+    if not isinstance(nodes, list):
+        return ["no frames"]
+    by_id = {node.get("id"): node for node in nodes if isinstance(node, dict)}
+    problems = []
+    plates = [node for node in by_id.values() if node.get("plate")]
+    if not plates:
+        return ["no coverless plate frames"]
+    rows = None
+    channels = 3
+    scale = 1.0
+    if png is not None and Path(png).is_file():
+        try:
+            image_w, _image_h, rows = decode_png_rows(png)
+            channels = len(rows[0]) // image_w if rows else 3
+            window = layout.get("window")
+            if isinstance(window, list) and window and float(window[0]) > 0:
+                scale = image_w / float(window[0])
+        except (OSError, ValueError, ZeroDivisionError):
+            rows = None
+    for plate in plates:
+        name = str(plate.get("id") or "cover")
+        frame = _box(plate.get("frame"))
+        title = by_id.get(f"{name}.type.title")
+        author = by_id.get(f"{name}.type.author")
+        if frame is None or title is None or author is None:
+            problems.append(f"{name} has no type")
+            continue
+        for kind, node in (("title", title), ("author", author)):
+            inner = _box(node.get("frame"))
+            if inner is None or inner[2] < 1 or inner[3] < 1 or not _contains(frame, inner):
+                problems.append(f"{name} {kind} is outside the plate")
+        if rows is None:
+            continue
+        face = _sample(rows, channels, scale, frame, 0.22, 0.16)
+        want = str(plate.get("plate_rgb") or "")
+        if face is None:
+            problems.append(f"{name} face was not sampled")
+        elif want and _hex_delta(face, want) > 2:
+            problems.append(f"{name} face {face} vs {want}")
+        if not _plate_has_ink(rows, channels, scale, frame, face):
+            problems.append(f"{name} plate has no type")
+    return problems
+
+
+def _sample(rows, channels, scale, frame, fx, fy):
+    if not rows:
+        return None
+    width = len(rows[0]) // channels
+    height = len(rows)
+    x = int((frame[0] + frame[2] * fx) * scale)
+    y = int((frame[1] + frame[3] * fy) * scale)
+    if x < 0 or y < 0 or y >= height or x >= width:
+        return None
+    pixel = rows[y][x * channels : x * channels + 3]
+    if len(pixel) < 3:
+        return None
+    return f"#{pixel[0]:02X}{pixel[1]:02X}{pixel[2]:02X}"
+
+
+def _hex_delta(got, want):
+    got = got.removeprefix("#")
+    want = want.removeprefix("#")
+    if len(got) < 6 or len(want) < 6:
+        return 255
+    try:
+        channels = [abs(int(got[i : i + 2], 16) - int(want[i : i + 2], 16)) for i in (0, 2, 4)]
+    except ValueError:
+        return 255
+    return max(channels)
+
+
+def _plate_has_ink(rows, channels, scale, frame, face):
+    if not rows or face is None:
+        return False
+    width = len(rows[0]) // channels
+    height = len(rows)
+    base = face.removeprefix("#")
+    try:
+        rgb = [int(base[i : i + 2], 16) for i in (0, 2, 4)]
+    except ValueError:
+        return False
+    left = int((frame[0] + frame[2] * 0.2) * scale)
+    right = int((frame[0] + frame[2] * 0.8) * scale)
+    top = int((frame[1] + frame[3] * 0.35) * scale)
+    bottom = int((frame[1] + frame[3] * 0.7) * scale)
+    ink = 0
+    for y in range(max(0, top), min(height, bottom), 2):
+        for x in range(max(0, left), min(width, right), 2):
+            pixel = rows[y][x * channels : x * channels + 3]
+            if len(pixel) < 3:
+                continue
+            if max(abs(pixel[i] - rgb[i]) for i in range(3)) > 40:
+                ink += 1
+                if ink >= 8:
+                    return True
+    return False
+
+
+def pixel_changes(left, right):
+    if not left or not right or len(left) != len(right):
+        return 0
+    return sum(1 for a, b in zip(left, right) if a != b)
+
+
+def compile_wheel(out):
+    binary = out / "wheel"
+    if binary.is_file():
+        return binary
+    source = out / "wheel.swift"
+    source.write_text(
+        """
+import CoreGraphics
+guard CommandLine.arguments.count > 3,
+      let x = Double(CommandLine.arguments[1]),
+      let y = Double(CommandLine.arguments[2]),
+      let dy = Int32(CommandLine.arguments[3]) else { exit(2) }
+let point = CGPoint(x: x, y: y)
+CGWarpMouseCursorPosition(point)
+guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: dy, wheel2: 0, wheel3: 0) else { exit(1) }
+event.location = point
+event.post(tap: .cghidEventTap)
+"""
+    )
+    proc = subprocess.run(
+        ["swiftc", "-O", "-o", str(binary), str(source)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or "wheel swiftc failed")
+    return binary
+
+
+def shelf_wheel(out, window_tool, state):
+    """A wheel over the shelf grid has to move pixels. Page Down is not a substitute."""
+    if not state.get("alive"):
+        return False, "shelf wheel had no window"
+    metrics = window_metrics(window_tool, state["pid"])
+    layout = read_shell_layout()
+    card = layout.get("card") if isinstance(layout.get("card"), list) else None
+    if metrics is None or card is None or len(card) != 4 or "x" not in metrics:
+        return False, "shelf wheel had no grid point"
+    point_x = float(card[0]) + float(card[2]) * 0.55
+    point_y = float(card[1]) + float(card[3]) * 0.72
+    screen_x = metrics["x"] + point_x
+    screen_y = metrics["y"] + point_y
+    window = metrics["id"]
+    before = out / "shelf-wheel-before.png"
+    after = out / "shelf-wheel-after.png"
+    try:
+        capture(window, before)
+        tool = compile_wheel(out)
+        proc = subprocess.run(
+            [str(tool), str(screen_x), str(screen_y), "-220"],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return False, proc.stderr or "wheel post failed"
+        time.sleep(0.6)
+        capture(window, after)
+        _, _, left = decode_png_rows(before)
+        _, _, right = decode_png_rows(after)
+        changed = pixel_changes(left, right)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return False, f"shelf wheel {exc}"
+    if changed <= 0:
+        return False, "wheel over the shelf grid changed 0 pixels"
+    return True, f"wheel over the shelf grid changed {changed} pixels"
+
+
 def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
     """Minimum, the 1440 mockup, and full screen. Each must match the grid rule and clip nothing."""
     notes = []
     ok = True
+    wheel_ok, wheel_detail = shelf_wheel(out, window_tool, state)
+    notes.append(wheel_detail)
+    ok = ok and wheel_ok
     try:
         matched, note = _size_note("1440x900", state["pid"] if state["alive"] else None)
+        plate = plate_report(read_layout_frames(), mock_shot)
+        if plate:
+            matched = False
+            note += "; " + "; ".join(plate[:6])
         if not mock_shot.exists():
             matched = False
             note += "; form-fixture.png missing"
@@ -1194,7 +1501,7 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         state = launch(
             out,
             "form-minimum",
-            _form_env(root, libs, {"SPIKE_WINDOW": "578x202"}),
+            _form_env(root, libs, {"SPIKE_WINDOW": f"578x{int(library_min_height())}"}),
             lambda names: "书库" in names
             and (geo := read_geometry())
             and abs(float(geo.get("content_w") or 0) - 266.0) <= 1.0,
@@ -1205,7 +1512,9 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         except RuntimeError as exc:
             notes.append(f"minimum capture {exc}")
             ok = False
-        matched, note = _size_note("578x202", state["pid"] if state["alive"] else None)
+        matched, note = _size_note(
+            f"578x{int(library_min_height())}", state["pid"] if state["alive"] else None
+        )
         shell = read_shell_layout()
         if float(shell.get("chat_w") or 0) > 0.5:
             matched = False
@@ -3434,7 +3743,20 @@ def private_support(out):
     support = Path(tempfile.mkdtemp(prefix=f"superreader-verify-{out.name}-"))
     os.environ["SUPERREADER_SUPPORT_DIR"] = str(support)
     SETTINGS = support / "settings.json"
+    marker = Path("/tmp/superreader-spike/support-dir")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(support))
+    atexit.register(lambda path=marker: path.unlink(missing_ok=True))
     print(f"support {support}", flush=True)
+
+
+def library_min_height():
+    """Toolbar, title, continue row, one shelf row, both section labels, and the insets."""
+    section = 28 + 15 * 1.2 + 12
+    continue_h = 12 * 2 + 78
+    shelf = 112 * 1.5 + 42
+    stack = 40 + 4 + 36 + section + continue_h + section + shelf
+    return stack + 6 * 2
 
 
 def timed_open(out, name, justify, extra, watch, timeout=45):

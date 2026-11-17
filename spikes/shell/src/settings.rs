@@ -6,13 +6,42 @@ pub fn path() -> PathBuf {
     support_dir().join("settings.json")
 }
 
+/// Verify writes this when a launch cannot see `SUPERREADER_SUPPORT_DIR`.
+const SUPPORT_FILE: &str = "/tmp/superreader-spike/support-dir";
+
 pub fn support_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("SUPERREADER_SUPPORT_DIR") {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
+    if let Some(dir) = configured_support_dir() {
+        return dir;
     }
+    default_support_dir()
+}
+
+/// Icon rasters, settings, and history. A set env wins, and a blank env means
+/// the real directory. The file is the same override for a process that was
+/// not given the env, such as `open -a`.
+pub fn configured_support_dir() -> Option<PathBuf> {
+    match std::env::var("SUPERREADER_SUPPORT_DIR") {
+        Ok(value) => return trimmed_dir(value.trim()),
+        Err(_) => {}
+    }
+    let text = std::fs::read_to_string(SUPPORT_FILE).unwrap_or_default();
+    trimmed_dir(text.trim())
+}
+
+pub fn glyph_cache_dir() -> PathBuf {
+    support_dir().join("shell-glyphs")
+}
+
+fn trimmed_dir(value: &str) -> Option<PathBuf> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(value))
+    }
+}
+
+fn default_support_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     PathBuf::from(home).join("Library/Application Support/app.slowpage.reader")
 }
@@ -445,6 +474,39 @@ mod tests {
         assert_eq!(support_dir(), dir);
         std::env::set_var("SUPERREADER_SUPPORT_DIR", " ");
         assert!(support_dir().ends_with("app.slowpage.reader"));
+        match previous {
+            Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+            None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+        }
+    }
+
+    #[test]
+    fn glyph_cache_stays_inside_the_support_override() {
+        let dir = std::env::temp_dir().join(format!("superreader-glyphs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let previous = std::env::var("SUPERREADER_SUPPORT_DIR").ok();
+        let previous_file = std::fs::read_to_string(SUPPORT_FILE).ok();
+        std::env::remove_var("SUPERREADER_SUPPORT_DIR");
+        std::fs::create_dir_all("/tmp/superreader-spike").unwrap();
+        std::fs::write(SUPPORT_FILE, dir.to_string_lossy().as_bytes()).unwrap();
+        let cache = glyph_cache_dir();
+        assert!(cache.starts_with(&dir), "{cache:?}");
+        let real = default_support_dir().join("shell-glyphs");
+        assert_ne!(cache, real);
+        std::fs::create_dir_all(&cache).unwrap();
+        let name = format!("probe-{}.png", std::process::id());
+        std::fs::write(cache.join(&name), b"png").unwrap();
+        assert!(!real.join(&name).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+        match previous_file {
+            Some(value) => {
+                let _ = std::fs::write(SUPPORT_FILE, value);
+            }
+            None => {
+                let _ = std::fs::remove_file(SUPPORT_FILE);
+            }
+        }
         match previous {
             Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
             None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),

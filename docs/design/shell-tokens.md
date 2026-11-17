@@ -81,7 +81,7 @@ The shelf is one continuous rule, not a second breakpoint. `columns = floor((con
 
 The continue-reading row keeps the 52 by 78 cover. A card needs 103 points before it can sit in the row. The row takes the largest count from 1 to 3 that fits, then stretches those cards across the content width. At 808 that is three cards. At 266 it is two.
 
-The window minimum is 578 by 202. The width is the 220-point sidebar, the 6-point inset, the 40-point card padding, a 266-point two-column shelf, the padding again, and the inset. The height is the sidebar stack: the top band, search, one group, one row, and the pinned settings row. The chat panel is 320 points and does not shrink. It is shown only when the content width beside it is still at least 266, which is a 898-point window with the sidebar open. Below that the library form hides the panel. The preference is kept, and the toolbar toggle shows it again once the window is wide enough. This is not the reading-form annotation-margin drawer.
+The window minimum is 578 by 520. The width is the 220-point sidebar, the 6-point inset, the 40-point card padding, a 266-point two-column shelf, the padding again, and the inset. The height is the card stack: the toolbar, the title, the continue row, one full shelf row, both section labels, and the 6-point inset above and below. The sidebar list scrolls in the space above the pinned settings row. The chat panel is 320 points and does not shrink. It is shown only when the content width beside it is still at least 266, which is a 898-point window with the sidebar open. Below that the library form hides the panel. The preference is kept, and the toolbar toggle shows it again once the window is wide enough. This is not the reading-form annotation-margin drawer.
 
 ## Chat
 

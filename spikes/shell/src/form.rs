@@ -1,6 +1,7 @@
 //! The shell is one form. `step` is the only writer. `place` is the geometry.
 //! `mount` paints that geometry and does not invent a second one.
 
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
 use nsh_core::prelude::*;
@@ -587,7 +588,9 @@ fn fonts_clear() {
 
 fn remember_font(label: &str, size: f32, weight: FontWeight) {
     if let Ok(mut notes) = font_notes().lock() {
-        if notes.iter().any(|note| note.label == label) {
+        if notes.iter().any(|note| {
+            note.label == label && (note.size - size).abs() < 0.1 && note.weight == weight.0
+        }) {
             return;
         }
         notes.push(FontNote {
@@ -596,6 +599,38 @@ fn remember_font(label: &str, size: f32, weight: FontWeight) {
             weight: weight.0,
         });
     }
+}
+
+thread_local! {
+    static SHELF_SCROLL: RefCell<Option<ElementRef>> = const { RefCell::new(None) };
+    static SHELF_OFFSET: Cell<f32> = const { Cell::new(0.0) };
+}
+
+fn remember_shelf(shelf: &ElementRef) {
+    SHELF_SCROLL.with(|slot| *slot.borrow_mut() = Some(shelf.clone()));
+}
+
+fn note_shelf_offset(offset: f32) {
+    if offset.is_finite() {
+        SHELF_OFFSET.with(|stored| stored.set(offset.max(0.0)));
+    }
+}
+
+/// A wheel that reached the stage instead of the shelf. Positive moves down.
+pub fn nudge_shelf(delta: f32) {
+    if !delta.is_finite() || delta.abs() < 0.01 {
+        return;
+    }
+    let next = SHELF_OFFSET.with(|stored| {
+        let next = (stored.get() + delta).max(0.0);
+        stored.set(next);
+        next
+    });
+    SHELF_SCROLL.with(|slot| {
+        if let Some(shelf) = slot.borrow().as_ref() {
+            shelf.scroll_to(point(px(0.0), px(next)), false);
+        }
+    });
 }
 
 fn fonts_write() {
@@ -724,40 +759,97 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             false,
         ));
         let row_w = (side.w as f32 - crate::tokens::SIDE_PAD_X * 2.0).max(0.0);
-        for (index, row) in placed.rows.iter().enumerate() {
-            let y = 80.0 + index as f32 * crate::tokens::ROW_H;
-            let frame = [crate::tokens::SIDE_PAD_X, y, row_w, crate::tokens::ROW_H];
+        let scroll_top =
+            crate::tokens::TOP_ROW_H + crate::tokens::SEARCH_MB + crate::tokens::SEARCH_H;
+        let settings_h = crate::tokens::ROW_H + crate::tokens::SIDE_PAD_BOTTOM;
+        let settings_y = (side.h as f32 - settings_h).max(scroll_top);
+        let viewport = [
+            side.x as f32,
+            scroll_top,
+            side.w as f32,
+            (settings_y - scroll_top).max(0.0),
+        ];
+        let mut y = scroll_top;
+        let mut index = 0u32;
+        for label in &placed.groups {
+            let label_h =
+                crate::tokens::LABEL_MT + crate::tokens::LABEL_SIZE + crate::tokens::LABEL_MB;
+            if let Some(frame) =
+                clip_frame([crate::tokens::SIDE_PAD_X, y, row_w, label_h], viewport)
+            {
+                nodes.push(layout_node(
+                    &format!("sidebar.group.{index}"),
+                    "text",
+                    frame,
+                    [
+                        text_width(label, crate::tokens::LABEL_SIZE),
+                        crate::tokens::LABEL_SIZE,
+                    ],
+                    viewport,
+                    true,
+                    label,
+                    true,
+                ));
+            }
+            y += label_h;
+            for row in placed.rows.iter().filter(|row| row.group == *label) {
+                let raw = [crate::tokens::SIDE_PAD_X, y, row_w, crate::tokens::ROW_H];
+                if let Some(frame) = clip_frame(raw, viewport) {
+                    nodes.push(layout_node(
+                        &format!("sidebar.row.{index}"),
+                        "sidebar-row",
+                        frame,
+                        [row_w, crate::tokens::ROW_H],
+                        viewport,
+                        true,
+                        &row.label,
+                        true,
+                    ));
+                    let slot = (row_w
+                        - crate::tokens::ROW_ICON_SLOT
+                        - crate::tokens::ROW_GAP * 2.0
+                        - 24.0)
+                        .max(0.0);
+                    let label_frame = [
+                        frame[0] + crate::tokens::ROW_ICON_SLOT + crate::tokens::ROW_GAP,
+                        frame[1],
+                        slot.min(frame[2]),
+                        frame[3],
+                    ];
+                    nodes.push(layout_node(
+                        &format!("sidebar.row.{index}.label"),
+                        "text",
+                        label_frame,
+                        [
+                            text_width(&row.label, crate::tokens::BODY_SIZE),
+                            crate::tokens::BODY_SIZE,
+                        ],
+                        frame,
+                        true,
+                        &row.label,
+                        true,
+                    ));
+                }
+                y += crate::tokens::ROW_H;
+                index += 1;
+            }
+        }
+        if let Some(settings) = placed.rows.iter().find(|row| row.id == SelectId::Settings) {
+            let frame = [
+                crate::tokens::SIDE_PAD_X,
+                settings_y,
+                row_w,
+                crate::tokens::ROW_H,
+            ];
             nodes.push(layout_node(
-                &format!("sidebar.row.{index}"),
+                "sidebar.settings",
                 "sidebar-row",
                 frame,
                 [row_w, crate::tokens::ROW_H],
                 side_frame,
+                true,
+                &settings.label,
                 false,
-                &row.label,
-                true,
-            ));
-            let slot = (row_w - crate::tokens::ROW_ICON_SLOT - crate::tokens::ROW_GAP * 2.0 - 24.0)
-                .max(0.0);
-            nodes.push(layout_node(
-                &format!("sidebar.row.{index}.label"),
-                "text",
-                [
-                    crate::tokens::SIDE_PAD_X
-                        + crate::tokens::ROW_ICON_SLOT
-                        + crate::tokens::ROW_GAP,
-                    y,
-                    slot,
-                    crate::tokens::ROW_H,
-                ],
-                [
-                    text_width(&row.label, crate::tokens::BODY_SIZE),
-                    crate::tokens::BODY_SIZE,
-                ],
-                frame,
-                true,
-                &row.label,
-                true,
             ));
         }
     }
@@ -788,25 +880,54 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
     }
     let grid = spike_library::shelf_grid(content_w);
     let row_w = spike_library::row_width(grid);
+    let mut y = rect.y as f32
+        + crate::tokens::TOOLBAR_H
+        + crate::tokens::CARD_PAD_TOP
+        + crate::tokens::TITLE_ROW_H;
+    let continued =
+        crate::tokens::continue_layout(content_w, library.continue_reading.len() as u32);
+    if continued.cards > 0 {
+        y += crate::tokens::section_block();
+        let card_h = crate::tokens::continue_card_h();
+        for index in 0..continued.cards.min(library.continue_reading.len() as u32) {
+            let x = origin_x + index as f32 * (continued.card_w + continued.gap);
+            let frame = [x, y, continued.card_w, card_h];
+            let title = library
+                .continue_reading
+                .get(index as usize)
+                .map(|card| card.title.as_str())
+                .unwrap_or("");
+            nodes.push(layout_node(
+                &format!("continue.{index}"),
+                "button",
+                frame,
+                [continued.card_w, card_h],
+                content,
+                false,
+                title,
+                false,
+            ));
+        }
+        y += card_h;
+    }
+    y += crate::tokens::section_block();
+    let row_h = grid.cover_h + grid.caption_h;
     nodes.push(layout_node(
         "shelf.row",
         "container",
-        [origin_x, content[1], row_w, grid.cover_h + grid.caption_h],
-        [row_w, grid.cover_h],
+        [origin_x, y, row_w, row_h],
+        [row_w, row_h],
         content,
         false,
         "",
-        true,
+        false,
     ));
     for index in 0..grid.columns.min(library.covers.len() as u32) {
         let x = origin_x + index as f32 * (grid.cover_w + grid.column_gap);
-        let frame = [x, content[1], grid.cover_w, grid.cover_h];
-        let title = library
-            .covers
-            .get(index as usize)
-            .map(|card| card.title.as_str())
-            .unwrap_or("");
-        nodes.push(layout_node(
+        let frame = [x, y, grid.cover_w, grid.cover_h];
+        let card = library.covers.get(index as usize);
+        let title = card.map(|item| item.title.as_str()).unwrap_or("");
+        let mut cover = layout_node(
             &format!("cover.{index}"),
             "cover",
             frame,
@@ -814,44 +935,87 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             content,
             false,
             title,
-            true,
-        ));
+            false,
+        );
+        if card.is_some_and(coverless) {
+            let color = card
+                .and_then(|item| item.plate_rgb)
+                .unwrap_or_else(|| fallback_color(title));
+            cover["plate"] = serde_json::json!(true);
+            cover["plate_rgb"] = serde_json::json!(format!("{:06X}", color & 0x00FF_FFFF));
+            nodes.push(cover);
+            let (title_h, author_h) = plate_type_size(grid.cover_h);
+            let text_w = (grid.cover_w - crate::tokens::COVER_LABEL_PX * 2.0).max(0.0);
+            let block = title_h + crate::tokens::SHELF_META_GAP + author_h;
+            let text_x = x + crate::tokens::COVER_LABEL_PX;
+            let text_y = y + (grid.cover_h - block) / 2.0;
+            let author = card.map(|item| item.author.as_str()).unwrap_or("");
+            nodes.push(layout_node(
+                &format!("cover.{index}.type.title"),
+                "text",
+                [text_x, text_y, text_w, title_h],
+                [text_width(title, title_h), title_h],
+                frame,
+                true,
+                title,
+                false,
+            ));
+            nodes.push(layout_node(
+                &format!("cover.{index}.type.author"),
+                "text",
+                [
+                    text_x,
+                    text_y + title_h + crate::tokens::SHELF_META_GAP,
+                    text_w,
+                    author_h,
+                ],
+                [text_width(author, author_h), author_h],
+                frame,
+                true,
+                author,
+                false,
+            ));
+        } else {
+            nodes.push(cover);
+        }
         nodes.push(layout_node(
             &format!("cover.{index}.title"),
             "text",
-            [x, content[1] + grid.cover_h, grid.cover_w, grid.caption_h],
+            [x, y + grid.cover_h, grid.cover_w, grid.caption_h],
             [
                 text_width(title, crate::tokens::SHELF_TITLE_SIZE),
                 crate::tokens::SHELF_TITLE_SIZE,
             ],
-            [x, content[1] + grid.cover_h, grid.cover_w, grid.caption_h],
+            [x, y + grid.cover_h, grid.cover_w, grid.caption_h],
             true,
-            title,
-            true,
-        ));
-    }
-    let continued =
-        crate::tokens::continue_layout(content_w, library.continue_reading.len() as u32);
-    for index in 0..continued.cards.min(library.continue_reading.len() as u32) {
-        let x = origin_x + index as f32 * (continued.card_w + continued.gap);
-        let frame = [x, content[1], continued.card_w, continued.cover_h + 24.0];
-        let title = library
-            .continue_reading
-            .get(index as usize)
-            .map(|card| card.title.as_str())
-            .unwrap_or("");
-        nodes.push(layout_node(
-            &format!("continue.{index}"),
-            "button",
-            frame,
-            [continued.card_w, continued.cover_h],
-            content,
-            false,
             title,
             true,
         ));
     }
     nodes
+}
+
+fn clip_frame(frame: [f32; 4], view: [f32; 4]) -> Option<[f32; 4]> {
+    let top = frame[1].max(view[1]);
+    let bottom = (frame[1] + frame[3]).min(view[1] + view[3]);
+    let height = bottom - top;
+    if height < 1.0 {
+        None
+    } else {
+        Some([frame[0], top, frame[2], height])
+    }
+}
+
+fn coverless(card: &CoverCard) -> bool {
+    !(card.cover.is_some() && card.plate_rgb.is_none() && !card.pdf)
+}
+
+fn plate_type_size(height: f32) -> (f32, f32) {
+    if height < 100.0 {
+        (crate::tokens::TAG_SM_SIZE, crate::tokens::TAG_SM_SIZE)
+    } else {
+        (crate::tokens::SECTION_SIZE, crate::tokens::TAG_SIZE)
+    }
 }
 
 fn write_frames(placed: &Placement, library: &LibraryIn) {
@@ -974,6 +1138,9 @@ fn sidebar_pane(
     );
     let mut groups = scroll()
         .flex_1()
+        .flex_shrink(1.0)
+        .min_h(px(0.0))
+        .overflow_hidden()
         .w_full()
         .flex()
         .flex_col()
@@ -1633,15 +1800,24 @@ fn card_face(
     }
     column = match face {
         CardFace::EmptyPeers => column.child(empty_peers(on_peer)),
-        CardFace::Grid => column.child(
-            scroll()
-                .flex_1()
-                .w_full()
-                .flex()
-                .flex_col()
-                .scrollable(true)
-                .child(book_grid(library, content_w, on_open)),
-        ),
+        CardFace::Grid => {
+            let shelf = element_ref();
+            remember_shelf(&shelf);
+            column.child(
+                scroll()
+                    .element_ref(&shelf)
+                    .flex_1()
+                    .flex_shrink(1.0)
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .scrollable(true)
+                    .on_scroll(|scroll: &ScrollEvent| note_shelf_offset(scroll.offset.y.0))
+                    .child(book_grid(library, content_w, on_open)),
+            )
+        }
         CardFace::Placeholder | CardFace::Page => column,
     };
     body.child(column).into_element()
@@ -2114,16 +2290,8 @@ fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
         );
     }
     if !photo {
-        let title_size = if height < 100.0 {
-            crate::tokens::TAG_SM_SIZE
-        } else {
-            crate::tokens::SECTION_SIZE
-        };
-        let author_size = if height < 100.0 {
-            crate::tokens::TAG_SM_SIZE
-        } else {
-            crate::tokens::TAG_SIZE
-        };
+        let (title_size, author_size) = plate_type_size(height);
+        let text_w = (width - crate::tokens::COVER_LABEL_PX * 2.0).max(0.0);
         art = art.child(
             view()
                 .size_full()
@@ -2133,15 +2301,17 @@ fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
                 .justify_center()
                 .px(px(crate::tokens::COVER_LABEL_PX))
                 .gap(px(crate::tokens::SHELF_META_GAP))
-                .child(fit_text(
+                .child(plate_line(
                     card.title.clone(),
+                    text_w,
                     title_size,
                     crate::tokens::H1_WEIGHT,
                     title_ink,
                     0.0,
                 ))
-                .child(fit_text(
+                .child(plate_line(
                     card.author.clone(),
+                    text_w,
                     author_size,
                     crate::tokens::BODY_WEIGHT,
                     author_ink,
@@ -2161,6 +2331,30 @@ fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
         );
     }
     art.into_element()
+}
+
+fn plate_line(
+    label: String,
+    width: f32,
+    size: f32,
+    weight: FontWeight,
+    color: Hsla,
+    tracking: f32,
+) -> AnyElement {
+    remember_font(&label, size, weight);
+    view()
+        .w(px(width))
+        .min_w(px(0.0))
+        .child(
+            line!(label.clone(), size, weight, color, tracking)
+                .w_full()
+                .text_center()
+                .truncate()
+                .accessible(true)
+                .label(label.clone())
+                .tooltip(text(label).text_size(px(size)).text_color(color)),
+        )
+        .into_element()
 }
 
 fn sample_cover(card: &CoverCard) -> Option<u32> {
@@ -2378,7 +2572,7 @@ mod tests {
                 form: launch(),
                 window: Window {
                     width: crate::tokens::MIN_WINDOW_W,
-                    height: crate::tokens::MIN_WINDOW_H,
+                    height: crate::tokens::library_min_height(),
                 },
                 traffic: 78.0,
             },
@@ -2411,6 +2605,32 @@ mod tests {
                 "{node} leaves the window"
             );
         }
+        let settings = nodes.iter().find(|node| node["id"] == "sidebar.settings");
+        let reading = nodes.iter().find(|node| node["label"] == "正在读");
+        let settings = settings.expect("settings row");
+        let reading = reading.expect("正在读");
+        assert!(
+            !frames_overlap(
+                settings["frame"].as_array().unwrap(),
+                reading["frame"].as_array().unwrap()
+            ),
+            "正在读 overlaps 设置"
+        );
+        assert!((rect.h - crate::tokens::library_stack() as f64).abs() < 0.5);
+    }
+
+    fn frames_overlap(a: &[serde_json::Value], b: &[serde_json::Value]) -> bool {
+        let box_of = |items: &[serde_json::Value]| {
+            (
+                items[0].as_f64().unwrap_or(0.0),
+                items[1].as_f64().unwrap_or(0.0),
+                items[2].as_f64().unwrap_or(0.0),
+                items[3].as_f64().unwrap_or(0.0),
+            )
+        };
+        let (ax, ay, aw, ah) = box_of(a);
+        let (bx, by, bw, bh) = box_of(b);
+        ax < bx + bw - 0.5 && bx < ax + aw - 0.5 && ay < by + bh - 0.5 && by < ay + ah - 0.5
     }
 
     #[test]

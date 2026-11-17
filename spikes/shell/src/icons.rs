@@ -64,7 +64,7 @@ pub fn glyph_file(name: &str) -> Option<std::path::PathBuf> {
 
 pub fn glyph_ink(name: &str, hex: &str) -> Option<std::path::PathBuf> {
     let svg = named_svg(name)?;
-    let dir = crate::settings::support_dir().join("shell-glyphs");
+    let dir = crate::settings::glyph_cache_dir();
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(format!("{name}-{hex}.png"));
     if !path.is_file() {

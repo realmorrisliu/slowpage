@@ -154,6 +154,17 @@ define_class!(
 
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
+            if crate::chrome::shell_on() {
+                // Covers forward a wheel here. The shelf is the NSH scroll
+                // above this stage, so move that instead of the PDF offset.
+                let mut dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
+                if dy.abs() < 0.01 {
+                    let lines: f64 = unsafe { msg_send![event, deltaY] };
+                    dy = lines * 16.0;
+                }
+                crate::form::nudge_shelf(-dy as f32);
+                return;
+            }
             let dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
             self.ivars().state.borrow_mut().scroll(dy);
             unsafe { msg_send![self, setNeedsDisplay: true] }

@@ -8,9 +8,9 @@ use nsh_platform_macos::objc2::{
 };
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSButton, NSColor, NSFont, NSFontWeightRegular, NSImage, NSImageAlignment, NSImageScaling,
-    NSImageSymbolConfiguration, NSImageView, NSLineBreakMode, NSScreen, NSTextField,
-    NSTitlebarSeparatorStyle, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode,
+    NSButton, NSColor, NSColorSpace, NSFont, NSFontWeightRegular, NSImage, NSImageAlignment,
+    NSImageScaling, NSImageSymbolConfiguration, NSImageView, NSLineBreakMode, NSScreen,
+    NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode,
     NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem, NSView, NSWindow, NSWindowButton,
     NSWindowCollectionBehavior, NSWindowStyleMask,
 };
@@ -303,6 +303,7 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     let _release = Release(&rt.entering);
     rt.page.set(page);
     style_window(window, rt);
+    window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
     if shell_on() && !window.styleMask().contains(NSWindowStyleMask::FullScreen) {
         center_traffic_lights(window);
     }
@@ -329,16 +330,25 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     }
     note_fullscreen_hook(window, rt);
     if fullscreen {
-        paint_lights(window, 1.0);
-        rt.lights.set(1.0);
-        rt.full.set(true);
         let shown = hover_target(window);
+        if shell_on() {
+            // The shell covers the screen, so AppKit's fullscreen title bar
+            // never receives the hover. Put the buttons on the content view
+            // while the pointer is at the top, and hide them otherwise.
+            place_fullscreen_lights(window, shown > 0.5);
+            rt.lights.set(shown);
+        } else {
+            paint_lights(window, 1.0);
+            rt.lights.set(1.0);
+        }
+        rt.full.set(true);
         place_contents(window, rt, shown);
         place_title(window, rt, shown);
         write_json(window, rt, true);
         return;
     }
     if rt.full.replace(false) {
+        restore_fullscreen_lights();
         rt.settled.set(false);
         rt.stable.set(0);
         rt.attempts.set(0);
@@ -484,6 +494,77 @@ fn center_traffic_lights(window: &NSWindow) {
         let local = button.frame();
         button.setFrameOrigin(NSPoint::new(local.origin.x, local.origin.y + dy));
     }
+}
+
+thread_local! {
+    static LIGHT_HOME: RefCell<Vec<(Retained<NSButton>, Retained<NSView>, NSRect)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+fn view_of(button: &NSButton) -> &NSView {
+    let view: &NSView = unsafe { &*std::ptr::from_ref(button).cast::<NSView>() };
+    view
+}
+
+fn place_fullscreen_lights(window: &NSWindow, show: bool) {
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let height = content.frame().size.height;
+    for (index, kind) in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let Some(button) = window.standardWindowButton(kind) else {
+            continue;
+        };
+        let view = view_of(&button);
+        if !show {
+            unsafe {
+                let _: () = msg_send![&*button, setAlphaValue: 0.0_f64];
+                let _: () = msg_send![&*button, setHidden: true];
+            }
+            continue;
+        }
+        LIGHT_HOME.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let known = slot
+                .iter()
+                .any(|(saved, _, _)| std::ptr::eq(saved.as_ref(), &*button));
+            if !known {
+                if let Some(parent) = view.superview() {
+                    if !std::ptr::eq(parent.as_ref(), content.as_ref()) {
+                        // The frame is in the title-bar view. Reparenting
+                        // keeps it, so the exit path has to put this back.
+                        slot.push((button.clone(), parent, view.frame()));
+                    }
+                }
+            }
+        });
+        content.addSubview(view);
+        let x = 9.0 + index as f64 * 22.0;
+        let y = height - 31.0;
+        view.setFrame(NSRect::new(NSPoint::new(x, y), NSSize::new(14.0, 14.0)));
+        unsafe {
+            let _: () = msg_send![&*button, setHidden: false];
+            let _: () = msg_send![&*button, setAlphaValue: 1.0_f64];
+            let _: () = msg_send![&*button, setEnabled: true];
+        }
+    }
+}
+
+fn restore_fullscreen_lights() {
+    LIGHT_HOME.with(|slot| {
+        for (button, parent, frame) in slot.borrow_mut().drain(..) {
+            let view = view_of(&button);
+            parent.addSubview(view);
+            view.setFrame(frame);
+        }
+    });
 }
 
 fn button_window_frame(button: &NSButton) -> NSRect {

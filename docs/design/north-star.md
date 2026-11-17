@@ -30,7 +30,7 @@ No UI element may be clipped or overflow its container, and sizes adapt to the w
 - Text truncates with an ellipsis. The full string stays in the tooltip and the accessibility label. A glyph is never cut in half.
 - The shelf uses one continuous rule. Column count is `floor((available + gap) / (min cover width + gap))`. Cover width stretches between 112 and 168 points to fill the row, at a 2:3 aspect, with the gap taken from the tokens. At the 1440-point mockup that rule is five columns of 128 by 192 with a 42-point gap.
 - The continue-reading row shrinks its cards, then drops to fewer cards. It does not clip a card.
-- Below the width where the 320-point chat panel still leaves a two-column shelf, the library chat hides. The reading-form annotation margin is unchanged. The window has a real minimum, derived from the sidebar, a two-column shelf, and the chrome. The numbers live in `docs/design/shell-tokens.md`.
+- Below the width where the 320-point chat panel still leaves a two-column shelf, the library chat hides. The reading-form annotation margin is unchanged. The window has a real minimum, derived from the sidebar, a two-column shelf, and the chrome. The height fits the toolbar, the title, the continue row, and one full shelf row. A sibling that overlaps another sibling is clipped, the same as a frame that leaves its container. The numbers live in `docs/design/shell-tokens.md`.
 
 Single-page reading only. There is no two-page spread, and there is no setting that turns one on.
 

@@ -157,8 +157,6 @@ pub const SHELF_RADIUS: f32 = 3.0;
 pub const SHELF_ROW_GAP: f32 = 28.0;
 /// Sidebar, two minimum covers, and the chrome around them. Chat is hidden.
 pub const MIN_WINDOW_W: f64 = 578.0;
-/// Sidebar chrome that stays on screen, including the pinned settings row.
-pub const MIN_WINDOW_H: f64 = 202.0;
 /// Two 112-point covers and the 42-point gap. The content width of the minimum window.
 pub const TWO_COLUMN_CONTENT: f32 = 266.0;
 /// Minimum window plus the 320-point chat panel, with the sidebar shown.
@@ -227,8 +225,37 @@ pub fn chat_fits(window_w: f32, sidebar_w: f32) -> bool {
     content_width(window_w, sidebar_w, CHAT_W as f32) + 0.5 >= TWO_COLUMN_CONTENT
 }
 
+/// One section label: the margin above it, the line box, and the margin below it.
+/// Text paints a line box of 1.2 times the font size.
+pub fn section_block() -> f32 {
+    SECTION_MT + SECTION_SIZE * 1.2 + SECTION_MB
+}
+
+/// A continue card is the 78-point cover plus the padding above and below it.
+pub fn continue_card_h() -> f32 {
+    CONTINUE_PAD * 2.0 + CONTINUE_COVER_H
+}
+
+/// Toolbar, title, the continue row, and one full shelf row, with both section labels.
+pub fn library_stack() -> f32 {
+    let shelf = spike_library::shelf_grid(TWO_COLUMN_CONTENT);
+    TOOLBAR_H
+        + CARD_PAD_TOP
+        + TITLE_ROW_H
+        + section_block()
+        + continue_card_h()
+        + section_block()
+        + shelf.cover_h
+        + shelf.caption_h
+}
+
+/// The stack plus the inset above and below the card.
+pub fn library_min_height() -> f64 {
+    f64::from(library_stack()) + INSET * 2.0
+}
+
 pub fn window_min() -> Size<Points> {
-    size(px(MIN_WINDOW_W as f32), px(MIN_WINDOW_H as f32))
+    size(px(MIN_WINDOW_W as f32), px(library_min_height() as f32))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -358,5 +385,16 @@ mod tests {
         let narrow = continue_layout(TWO_COLUMN_CONTENT, 3);
         assert_eq!(narrow.cards, 2);
         assert!((narrow.cover_w - 52.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn the_minimum_window_fits_the_continue_row_and_one_shelf_row() {
+        let stack = library_stack();
+        let shelf = spike_library::shelf_grid(TWO_COLUMN_CONTENT);
+        let continue_and_shelf =
+            section_block() + continue_card_h() + section_block() + shelf.cover_h + shelf.caption_h;
+        assert!(stack > continue_and_shelf);
+        assert!((library_min_height() - (f64::from(stack) + INSET * 2.0)).abs() < 0.1);
+        assert!(library_min_height() > 400.0);
     }
 }
