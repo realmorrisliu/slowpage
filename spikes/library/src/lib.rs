@@ -9,7 +9,7 @@ mod shelf_grid;
 mod snapshot;
 
 pub use plate::{plate_color, png_center_rgb};
-pub use shelf_grid::{second_cover_right, shelf_grid, ShelfGrid};
+pub use shelf_grid::{row_width, shelf_grid, ShelfGrid};
 
 use std::path::{Path, PathBuf};
 

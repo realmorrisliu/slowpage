@@ -415,6 +415,11 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
         place_contents(window, rt, next);
         place_title(window, rt, next);
     }
+    // A shell window opens at SPIKE_WINDOW. The reader settle loop does not
+    // run while the shell is on, and the fullscreen flag waits for settled.
+    if shell_on() && !rt.settled.get() {
+        rt.settled.set(true);
+    }
     if rt.settled.get() && !rt.fullscreen_sent.get() && flag("SPIKE_FULLSCREEN") {
         window.toggleFullScreen(None);
         rt.fullscreen_sent.set(true);

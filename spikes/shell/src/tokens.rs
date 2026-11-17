@@ -154,8 +154,15 @@ pub const SHELF_COVER_W: f32 = 128.0;
 pub const SHELF_COVER_H: f32 = 192.0;
 pub const COVER_LABEL_PX: f32 = 8.0;
 pub const SHELF_RADIUS: f32 = 3.0;
-pub const SHELF_MIN_GAP: f32 = 24.0;
 pub const SHELF_ROW_GAP: f32 = 28.0;
+/// Sidebar, two minimum covers, and the chrome around them. Chat is hidden.
+pub const MIN_WINDOW_W: f64 = 578.0;
+/// Sidebar chrome that stays on screen, including the pinned settings row.
+pub const MIN_WINDOW_H: f64 = 202.0;
+/// Two 112-point covers and the 42-point gap. The content width of the minimum window.
+pub const TWO_COLUMN_CONTENT: f32 = 266.0;
+/// Minimum window plus the 320-point chat panel, with the sidebar shown.
+pub const CHAT_BREAKPOINT: f64 = 898.0;
 pub const SHELF_TITLE_MT: f32 = 10.0;
 pub const SHELF_META_MT: f32 = 1.0;
 pub const SHELF_META_GAP: f32 = 6.0;
@@ -209,26 +216,65 @@ pub fn track(size: f32, em: f32) -> f32 {
     size * em
 }
 
-/// Columns of 128-point covers. At the 1440-point mockup the content width is 808 and this returns 5.
-pub fn shelf_columns(content_w: f32) -> u32 {
-    if content_w < SHELF_COVER_W {
-        return 1;
-    }
-    let count = ((content_w + SHELF_MIN_GAP) / (SHELF_COVER_W + SHELF_MIN_GAP)).floor() as u32;
-    count.max(1)
-}
-
-pub fn shelf_gap(content_w: f32, columns: u32) -> f32 {
-    if columns <= 1 {
-        return 0.0;
-    }
-    let used = columns as f32 * SHELF_COVER_W;
-    ((content_w - used) / (columns - 1) as f32).max(0.0)
-}
-
-pub fn card_content_width(window_w: f32) -> f32 {
-    let card = window_w - SIDEBAR_W as f32 - CHAT_W as f32 - INSET as f32 * 2.0;
+/// Card content width after the live sidebar, the live chat panel, the insets, and the pads.
+pub fn content_width(window_w: f32, sidebar_w: f32, chat_w: f32) -> f32 {
+    let card = window_w - sidebar_w - chat_w - INSET as f32 * 2.0;
     (card - CARD_PAD_X * 2.0).max(0.0)
+}
+
+/// The 320-point chat panel fits beside a two-column shelf.
+pub fn chat_fits(window_w: f32, sidebar_w: f32) -> bool {
+    content_width(window_w, sidebar_w, CHAT_W as f32) + 0.5 >= TWO_COLUMN_CONTENT
+}
+
+pub fn window_min() -> Size<Points> {
+    size(px(MIN_WINDOW_W as f32), px(MIN_WINDOW_H as f32))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContinueLayout {
+    pub cards: u32,
+    pub card_w: f32,
+    pub cover_w: f32,
+    pub cover_h: f32,
+    pub gap: f32,
+}
+
+/// Continue cards share the row, then the count drops. The cover stays 52 by 78.
+pub fn continue_layout(content_w: f32, available: u32) -> ContinueLayout {
+    let content_w = if content_w.is_finite() {
+        content_w.max(0.0)
+    } else {
+        0.0
+    };
+    let wanted = available.min(CONTINUE_MAX as u32);
+    if wanted == 0 {
+        return ContinueLayout {
+            cards: 0,
+            card_w: 0.0,
+            cover_w: CONTINUE_COVER_W,
+            cover_h: CONTINUE_COVER_H,
+            gap: 0.0,
+        };
+    }
+    let card_min = CONTINUE_PAD * 2.0 + CONTINUE_COVER_W + CONTINUE_INNER_GAP + CONTINUE_TITLE_SIZE;
+    let mut cards = wanted;
+    while cards > 1 {
+        let need = cards as f32 * card_min + (cards - 1) as f32 * CONTINUE_GAP;
+        if need <= content_w + 0.5 {
+            break;
+        }
+        cards -= 1;
+    }
+    let gap = if cards <= 1 { 0.0 } else { CONTINUE_GAP };
+    let card_w = ((content_w - (cards - 1) as f32 * gap) / cards as f32).max(0.0);
+    ContinueLayout {
+        cards,
+        card_w,
+        cover_w: CONTINUE_COVER_W,
+        cover_h: CONTINUE_COVER_H,
+        gap,
+    }
 }
 
 fn black(alpha: f32) -> nsh_core::color::Rgba {
@@ -293,18 +339,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_mockup_width_fits_five_covers() {
-        let content = card_content_width(WINDOW_W as f32);
+    fn the_mockup_content_width_is_808() {
+        let content = content_width(WINDOW_W as f32, SIDEBAR_W as f32, CHAT_W as f32);
         assert!((content - 808.0).abs() < 0.1, "{content}");
-        assert_eq!(shelf_columns(content), 5);
-        let gap = shelf_gap(content, 5);
-        assert!((gap - 42.0).abs() < 0.1, "{gap}");
     }
 
     #[test]
-    fn a_narrow_card_does_not_wrap_at_two_by_fiat() {
-        assert_eq!(shelf_columns(400.0), 2);
-        assert_eq!(shelf_columns(128.0), 1);
-        assert!(shelf_columns(656.0) >= 4);
+    fn the_chat_panel_hides_below_the_two_column_shelf() {
+        assert!(chat_fits(CHAT_BREAKPOINT as f32, SIDEBAR_W as f32));
+        assert!(!chat_fits((CHAT_BREAKPOINT - 1.0) as f32, SIDEBAR_W as f32));
+        assert!(
+            (content_width(MIN_WINDOW_W as f32, SIDEBAR_W as f32, 0.0) - TWO_COLUMN_CONTENT).abs()
+                < 0.1
+        );
+        let wide = continue_layout(808.0, 3);
+        assert_eq!(wide.cards, 3);
+        assert!((wide.cover_w - 52.0).abs() < 0.1);
+        let narrow = continue_layout(TWO_COLUMN_CONTENT, 3);
+        assert_eq!(narrow.cards, 2);
+        assert!((narrow.cover_w - 52.0).abs() < 0.1);
     }
 }

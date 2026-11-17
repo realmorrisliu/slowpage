@@ -22,6 +22,16 @@ Verify runs on the Mac take `/tmp/superreader-verify.lock` and wait until the 1-
 
 No theme switching, and no night mode, ever. A reader with night mode is unacceptable.
 
+## Adaptive layout, nothing clipped
+
+No UI element may be clipped or overflow its container, and sizes adapt to the window instead of being fixed for one width.
+
+- Every view defines its behavior from the minimum window to full screen. A container that only fits one window size is not allowed.
+- Text truncates with an ellipsis. The full string stays in the tooltip and the accessibility label. A glyph is never cut in half.
+- The shelf uses one continuous rule. Column count is `floor((available + gap) / (min cover width + gap))`. Cover width stretches between 112 and 168 points to fill the row, at a 2:3 aspect, with the gap taken from the tokens. At the 1440-point mockup that rule is five columns of 128 by 192 with a 42-point gap.
+- The continue-reading row shrinks its cards, then drops to fewer cards. It does not clip a card.
+- Below the width where the 320-point chat panel still leaves a two-column shelf, the library chat hides. The reading-form annotation margin is unchanged. The window has a real minimum, derived from the sidebar, a two-column shelf, and the chrome. The numbers live in `docs/design/shell-tokens.md`.
+
 Single-page reading only. There is no two-page spread, and there is no setting that turns one on.
 
 The liked reference is Apple Books on one page of 《穷查理宝典》. The toolbar carries the book title. The footer shows the page as `590/1146` and the pages left in the chapter.

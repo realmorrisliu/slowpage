@@ -69,7 +69,7 @@ An empty **书单** group still shows its label. The headless check `shell-sideb
 | `.cr-w` | 11px `#A1A1A6` | `TIME_SIZE`, `FAINT` |
 | `.grid` row gap | 28px | `SHELF_ROW_GAP` |
 | shelf cover | 128 by 192, radius 3 | `SHELF_COVER_W`, `SHELF_COVER_H`, `SHELF_RADIUS` |
-| column count | 5 at the mockup content width of 808 | `shelf_columns`, `SHELF_MIN_GAP` |
+| column count | continuous rule; 5 at content width 808 | `shelf_grid` |
 | cover shadow | 0.5px ring, 1px/2px, 6px/14px spread -4 | `cover_shadows` |
 | `.b-t` | 12.5px / 500, margin-top 10 | `SHELF_TITLE_SIZE`, `SHELF_TITLE_WEIGHT`, `SHELF_TITLE_MT` |
 | `.b-a` | 11.5px `#8E8E93`, gap 6, margin-top 1 | `SHELF_META_SIZE`, `QUIET`, `SHELF_META_GAP`, `SHELF_META_MT` |
@@ -77,7 +77,11 @@ An empty **书单** group still shows its label. The headless check `shell-sideb
 | `.tag` | 9px / 600, radius 3, pad 3, 0.5px border | `TAG_SIZE`, `TAG_WEIGHT`, `TAG_RADIUS`, `TAG_PX`, `TAG_BORDER` |
 | `.tag.sm` | 8.5px | `TAG_SM_SIZE` |
 
-`shelf_columns(808)` is 5. The gap between those covers is 42 points, which is the stylesheet's `justify-content: space-between` on five 128-point columns. A narrower card uses fewer columns. It does not stop at two.
+The shelf is one continuous rule, not a second breakpoint. `columns = floor((content + 42) / 154)`, and the cover width is the share of that content clamped to 112..168 points. The height is `width * 3 / 2`. The column gap stays 42 and the row gap stays 28. At the mockup content width of 808 the rule is five columns of 128 by 192. A content width of 648 is four columns of 130.5 by 195.75. A content width of 266, the two-column minimum, is two columns of 112 by 168. A cover never grows past 168, and the row never runs past the content width.
+
+The continue-reading row keeps the 52 by 78 cover. A card needs 103 points before it can sit in the row. The row takes the largest count from 1 to 3 that fits, then stretches those cards across the content width. At 808 that is three cards. At 266 it is two.
+
+The window minimum is 578 by 202. The width is the 220-point sidebar, the 6-point inset, the 40-point card padding, a 266-point two-column shelf, the padding again, and the inset. The height is the sidebar stack: the top band, search, one group, one row, and the pinned settings row. The chat panel is 320 points and does not shrink. It is shown only when the content width beside it is still at least 266, which is a 898-point window with the sidebar open. Below that the library form hides the panel. The preference is kept, and the toolbar toggle shows it again once the window is wide enough. This is not the reading-form annotation-margin drawer.
 
 ## Chat
 

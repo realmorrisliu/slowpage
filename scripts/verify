@@ -592,6 +592,246 @@ def read_geometry():
     return body if isinstance(body, dict) else None
 
 
+COVER_MIN_W = 112.0
+COVER_MAX_W = 168.0
+COLUMN_GAP = 42.0
+CLIP_TOL = 0.5
+GEOM_TOL = 1.0
+
+
+def grid_rule(content_w):
+    """The shelf rule. Columns fill from a 112-point cover; width stretches to 168."""
+    try:
+        usable = float(content_w)
+    except (TypeError, ValueError):
+        usable = 0.0
+    if usable != usable or usable < 0.0:
+        usable = 0.0
+    columns = int((usable + COLUMN_GAP) // (COVER_MIN_W + COLUMN_GAP))
+    if columns < 1:
+        columns = 1
+    raw = (usable - (columns - 1) * COLUMN_GAP) / columns
+    cover_w = usable if usable < COVER_MIN_W else min(raw, COVER_MAX_W)
+    if cover_w < 0.0:
+        cover_w = 0.0
+    return {
+        "columns": columns,
+        "cover_w": cover_w,
+        "cover_h": cover_w * 3.0 / 2.0,
+        "column_gap": 0.0 if columns <= 1 else COLUMN_GAP,
+        "row_gap": 28.0,
+        "caption_h": 42.0,
+    }
+
+
+def geometry_matches(geo, content_w=None):
+    """True when geometry.json is the rule's output at this content width."""
+    if not isinstance(geo, dict):
+        return False, "geometry.json was not written from the view"
+    if content_w is None:
+        content_w = geo.get("content_w")
+    try:
+        width = float(content_w)
+    except (TypeError, ValueError):
+        return False, "content_w missing"
+    want = grid_rule(width)
+    bad = []
+    for key, value in want.items():
+        try:
+            got = float(geo.get(key))
+        except (TypeError, ValueError):
+            bad.append(key)
+            continue
+        if key == "columns":
+            if got != value:
+                bad.append(f"columns {got}")
+        elif abs(got - value) > GEOM_TOL:
+            bad.append(f"{key} {got}")
+    if bad:
+        return False, f"content {width:.1f} " + ", ".join(bad)
+    return True, (
+        f"content {width:.1f} columns {want['columns']} "
+        f"cover {want['cover_w']:.1f}x{want['cover_h']:.1f} gap {want['column_gap']:.0f}"
+    )
+
+
+def _box(value):
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    try:
+        return [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+
+
+def clipping_report(layout):
+    """Frames outside a container or the window, and text cut off without an ellipsis."""
+    if not isinstance(layout, dict):
+        return ["layout.json was not written"]
+    window = layout.get("window")
+    if not isinstance(window, list) or len(window) < 2:
+        return ["window size missing"]
+    try:
+        window_w = float(window[0])
+        window_h = float(window[1])
+    except (TypeError, ValueError):
+        return ["window size missing"]
+    nodes = layout.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        return ["no frames"]
+    problems = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            problems.append("node was not an object")
+            continue
+        name = str(node.get("id") or "node")
+        frame = _box(node.get("frame"))
+        container = _box(node.get("container"))
+        if frame is None or container is None:
+            problems.append(f"{name} frame")
+            continue
+        x, y, width, height = frame
+        cx, cy, cw, ch = container
+        if x < cx - CLIP_TOL or x + width > cx + cw + CLIP_TOL:
+            problems.append(f"{name} extends outside its container")
+        if x < -CLIP_TOL or x + width > window_w + CLIP_TOL:
+            problems.append(f"{name} extends outside the window")
+        if not node.get("scroll_child"):
+            if y < cy - CLIP_TOL or y + height > cy + ch + CLIP_TOL:
+                problems.append(f"{name} extends outside its container")
+            if y < -CLIP_TOL or y + height > window_h + CLIP_TOL:
+                problems.append(f"{name} extends outside the window")
+        if node.get("kind") == "text":
+            intrinsic = node.get("intrinsic")
+            try:
+                needed = float(intrinsic[0])
+            except (TypeError, ValueError, IndexError):
+                needed = 0.0
+            if needed > width + CLIP_TOL and not node.get("ellipsis"):
+                problems.append(f"{name} text is clipped")
+    return problems
+
+
+def frame_outside_x(x, width, origin, span, tol=1.0):
+    return x < origin - tol or x + width > origin + span + tol
+
+
+def ax_overflow(pid):
+    """Named accessibility elements whose horizontal frame leaves the window.
+
+    A failed walk is retried. A frame that is actually outside is not.
+    """
+    last = ["accessibility walk found no frames"]
+    for attempt in range(3):
+        problems = ax_overflow_once(pid)
+        failed = len(problems) == 1 and (
+            "no frames" in problems[0] or "failed" in problems[0] or problems[0] == "NO_PROCESS"
+        )
+        if not failed:
+            return problems
+        last = problems
+        if attempt < 2:
+            time.sleep(0.4)
+    return last
+
+
+def ax_overflow_once(pid):
+    script = f'''
+tell application "System Events"
+  if not (exists (first process whose unix id is {pid})) then
+    return "NO_PROCESS"
+  end if
+  tell (first process whose unix id is {pid})
+    set out to ""
+    repeat with w in windows
+      try
+        set wp to position of w
+        set ws to size of w
+        set out to out & "WIN " & (item 1 of wp as text) & " " & (item 2 of wp as text) & " " & (item 1 of ws as text) & " " & (item 2 of ws as text) & linefeed
+      end try
+      set elems to entire contents of w
+      repeat with e in elems
+        try
+          set r to role of e as text
+          set n to name of e as text
+          if n is "missing value" or n is "" then
+            if r is "AXButton" then
+              set n to description of e as text
+            end if
+          end if
+          set p to position of e
+          set s to size of e
+          set out to out & r & tab & n & tab & (item 1 of p as text) & tab & (item 2 of p as text) & tab & (item 1 of s as text) & tab & (item 2 of s as text) & linefeed
+        end try
+      end repeat
+    end repeat
+    return out
+  end tell
+end tell
+'''
+    proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return [(proc.stderr or proc.stdout or "accessibility walk failed").strip()]
+    window = None
+    problems = []
+    seen = 0
+    for line in proc.stdout.splitlines():
+        if line.startswith("WIN "):
+            parts = line.split()
+            if len(parts) == 5:
+                try:
+                    window = [float(part) for part in parts[1:]]
+                except ValueError:
+                    window = None
+            continue
+        parts = line.split("\t")
+        if len(parts) != 6 or window is None:
+            continue
+        try:
+            x = float(parts[2])
+            width = float(parts[4])
+        except ValueError:
+            continue
+        if width <= 0:
+            continue
+        seen += 1
+        if frame_outside_x(x, width, window[0], window[2]):
+            label = parts[1].strip() or parts[0]
+            problems.append(f"{label} extends outside the window")
+    if window is None or seen == 0:
+        problems.append("accessibility walk found no frames")
+    return problems
+
+
+def read_layout_frames():
+    path = Path("/tmp/superreader-spike/layout.json")
+    if not path.is_file():
+        return None
+    try:
+        body = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def read_shell_layout():
+    path = Path("/tmp/superreader-spike/shell-layout.json")
+    if not path.is_file():
+        return {}
+    try:
+        body = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def clear_layout_files():
+    for name in ("geometry.json", "layout.json", "shell-layout.json", "chrome.json"):
+        path = Path("/tmp/superreader-spike") / name
+        if path.is_file():
+            path.unlink()
+
+
 def placeholder_seen(names):
     if "问问 Slowpage…" in names:
         return True
@@ -644,6 +884,70 @@ def form_diff_self_check():
         measured["columns"] = columns
         wrong, _detail = geometry_detail(measured)
         assert not wrong, columns
+    for content, columns, cover in ((266.0, 2, 112.0), (648.0, 4, 130.5), (808.0, 5, 128.0)):
+        rule = grid_rule(content)
+        assert rule["columns"] == columns, (content, rule)
+        assert abs(rule["cover_w"] - cover) < 0.1, (content, rule)
+        body = dict(rule)
+        body["content_w"] = content
+        ok, detail = geometry_matches(body)
+        assert ok, detail
+    fitted = {
+        "window": [1440, 900],
+        "nodes": [
+            {
+                "id": "cover.0",
+                "kind": "cover",
+                "frame": [10, 10, 128, 192],
+                "intrinsic": [128, 192],
+                "container": [0, 0, 800, 600],
+                "ellipsis": False,
+                "scroll_child": False,
+            },
+            {
+                "id": "title",
+                "kind": "text",
+                "frame": [10, 210, 128, 20],
+                "intrinsic": [400, 13],
+                "container": [0, 0, 800, 600],
+                "ellipsis": True,
+                "scroll_child": True,
+            },
+        ],
+    }
+    assert clipping_report(fitted) == []
+    overflow = {
+        "window": [1440, 900],
+        "nodes": [
+            {
+                "id": "cover.0",
+                "kind": "cover",
+                "frame": [700, 10, 128, 192],
+                "intrinsic": [128, 192],
+                "container": [0, 0, 800, 600],
+                "ellipsis": False,
+                "scroll_child": False,
+            }
+        ],
+    }
+    assert clipping_report(overflow)
+    clipped = {
+        "window": [1440, 900],
+        "nodes": [
+            {
+                "id": "title",
+                "kind": "text",
+                "frame": [10, 10, 40, 20],
+                "intrinsic": [200, 13],
+                "container": [0, 0, 800, 600],
+                "ellipsis": False,
+                "scroll_child": False,
+            }
+        ],
+    }
+    assert any("clipped" in item for item in clipping_report(clipped))
+    assert not frame_outside_x(10, 20, 0, 100)
+    assert frame_outside_x(90, 20, 0, 100)
 
 
 def run_form_fixture(out, window_tool):
@@ -782,6 +1086,9 @@ def run_form_fixture(out, window_tool):
             f"scrolls {bool(geo and geo.get('scrolls'))}, last {last or 'missing'} "
             + ("is in the tree" if last and last in names else "is not in the tree")
         )
+        clip_ok, clip_detail, state = adaptive_layout(
+            out, window_tool, root, libs, state, shot
+        )
         return [
             check(
                 "shell-fonts",
@@ -820,10 +1127,159 @@ def run_form_fixture(out, window_tool):
                 "pass" if scroll_ok else "fail",
                 scroll_detail,
             ),
+            check(
+                "shell-clip",
+                "shell",
+                "layout.json",
+                "pass" if clip_ok else "fail",
+                clip_detail,
+                "form-fullscreen.png" if (out / "form-fullscreen.png").exists() else None,
+            ),
         ]
     finally:
         finish_launch(state)
         shutil.rmtree(root, ignore_errors=True)
+
+
+def _capture_form(out, window_tool, state, png_name):
+    if not state["alive"]:
+        return False
+    window = window_id(window_tool, state["pid"])
+    if window is None:
+        return False
+    capture(window, out / png_name)
+    return (out / png_name).exists()
+
+
+def _form_env(root, libs, extra):
+    base = {
+        "SUPERREADER_SUPPORT_DIR": str(root / "support"),
+        "SUPERREADER_FORM_FIXTURE": "1",
+        "SUPERREADER_LIBRARY": str(libs.apple),
+        "SUPERREADER_CALIBRE": str(libs.calibre),
+        "SUPERREADER_FOLDER": str(libs.folder),
+    }
+    base.update(extra)
+    return child_env(base)
+
+
+def _size_note(label, pid=None):
+    geo = read_geometry()
+    frames = read_layout_frames()
+    shell = read_shell_layout()
+    matched, match_detail = geometry_matches(geo)
+    problems = clipping_report(frames)
+    if pid is not None:
+        problems.extend(ax_overflow(pid))
+    chat = shell.get("chat_w")
+    shown = problems[:8]
+    extra = "" if len(problems) <= 8 else f" (+{len(problems) - 8})"
+    note = f"{label}: {match_detail}; chat {chat}; clip {shown or 'none'}{extra}"
+    return matched and not problems, note
+
+
+def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
+    """Minimum, the 1440 mockup, and full screen. Each must match the grid rule and clip nothing."""
+    notes = []
+    ok = True
+    try:
+        matched, note = _size_note("1440x900", state["pid"] if state["alive"] else None)
+        if not mock_shot.exists():
+            matched = False
+            note += "; form-fixture.png missing"
+        notes.append(note)
+        ok = ok and matched
+        finish_launch(state)
+        clear_layout_files()
+        state = launch(
+            out,
+            "form-minimum",
+            _form_env(root, libs, {"SPIKE_WINDOW": "578x202"}),
+            lambda names: "书库" in names
+            and (geo := read_geometry())
+            and abs(float(geo.get("content_w") or 0) - 266.0) <= 1.0,
+            45,
+        )
+        try:
+            _capture_form(out, window_tool, state, "form-minimum.png")
+        except RuntimeError as exc:
+            notes.append(f"minimum capture {exc}")
+            ok = False
+        matched, note = _size_note("578x202", state["pid"] if state["alive"] else None)
+        shell = read_shell_layout()
+        if float(shell.get("chat_w") or 0) > 0.5:
+            matched = False
+            note += "; chat still open"
+        if not (out / "form-minimum.png").exists():
+            matched = False
+            note += "; png missing"
+        notes.append(note)
+        ok = ok and matched
+        finish_launch(state)
+        clear_layout_files()
+        state = launch(
+            out,
+            "form-fullscreen",
+            _form_env(
+                root,
+                libs,
+                {"SPIKE_WINDOW": "1440x900", "SPIKE_FULLSCREEN": "1"},
+            ),
+            lambda names: "书库" in names and _chrome_fullscreen(),
+            45,
+        )
+        try:
+            _capture_form(out, window_tool, state, "form-fullscreen.png")
+        except RuntimeError as exc:
+            notes.append(f"fullscreen capture {exc}")
+            ok = False
+        matched, note = _size_note("fullscreen", state["pid"] if state["alive"] else None)
+        if not _chrome_fullscreen():
+            matched = False
+            note += "; fullscreen flag was not set"
+        if not (out / "form-fullscreen.png").exists():
+            matched = False
+            note += "; png missing"
+        notes.append(note)
+        ok = ok and matched
+    except Exception as exc:
+        notes.append(f"adaptive layout {exc}")
+        ok = False
+    return ok, "; ".join(notes), state
+
+
+def _chrome_fullscreen():
+    path = Path("/tmp/superreader-spike/chrome.json")
+    if not path.is_file():
+        return False
+    try:
+        body = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(body, dict) or not body.get("fullscreen"):
+        return False
+    try:
+        window_w = float(body.get("window_w") or 0)
+    except (TypeError, ValueError):
+        return False
+    frames = read_layout_frames() or {}
+    live = frames.get("window")
+    if not isinstance(live, list) or not live:
+        return False
+    try:
+        if abs(float(live[0]) - window_w) > 2.0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    shell = read_shell_layout()
+    try:
+        sidebar = float(shell.get("sidebar_w") or 0)
+        chat = float(shell.get("chat_w") or 0)
+        expected = max(0.0, window_w - sidebar - chat - 12.0 - 80.0)
+        content = float((read_geometry() or {}).get("content_w"))
+    except (TypeError, ValueError):
+        return False
+    return abs(content - expected) <= 1.0
 
 
 class FormLibraries:

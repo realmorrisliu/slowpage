@@ -312,6 +312,9 @@ pub fn SpikeApp() -> impl IntoElement {
     title_bar.height = Some(px(chrome::TOP as f32));
     let mut attributes = WindowAttributes::default();
     attributes.title_bar = Some(title_bar);
+    if launches_full() {
+        attributes.min_size = Some(Some(crate::tokens::window_min()));
+    }
     current_window().set(attributes);
     let stage = element_ref();
     let title = signal(String::new());
