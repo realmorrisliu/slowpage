@@ -2,14 +2,14 @@
 
 Morris is on a single page. He drags across a passage and highlights it. He writes his own note on that highlight, the way a comment sits on a passage in Google Docs, Notion, or Feishu.
 
-He wants alan to look at the same passage. He writes `@alan` and the question in the comment. The comment switches to a thinking state. The reply arrives whole.
+He wants alan to look at the same passage. He writes `@alan` and the question in the comment. The reply streams into that thread.
 
-SuperReader owns the library, the SQLite annotations, tantivy, the comment thread, and the comment UI. alan is not linked into the reader process, and SuperReader does not speak alan's socket protocol. SuperReader spawns a fresh one-shot `alan` process and pipes stdin. The body is the passage, Morris's note, the earlier comments in the thread, and the new question. The spawn does not pass `--resume`. The annotation id and the thread id stay in SuperReader.
+SuperReader owns the library, the SQLite annotations, tantivy, the comment thread, and the comment UI. On 2026-11-17, SuperReader embeds alan in-process. That decision supersedes the 2026-11-03 one-shot process. The facade, the types, and the prerequisites are in `docs/design/north-star.md`. SQLite owns the conversation history. Each ask sends that thread as context. The annotation id and the thread id stay in SuperReader.
 
-alan's reply arrives as one stdout payload. SuperReader writes it into SQLite as alan's reply comment, and the thinking state becomes that reply.
+The reply streams into SQLite as alan's reply comment.
 
 Another agent, alan included, reads the library and the notes through the `superreader` command and through a skill. The command prints JSON. alan's bash is inside a macOS Seatbelt sandbox that denies writes outside mounted directories, so a write from that command is applied by the running SuperReader app. The command does not open the database. An MCP wrapper comes later, and only for a client that cannot run a terminal.
 
 The exact comment chrome is still open. Two or three prototypes decide it. This walkthrough fixes the handoff, not the chrome.
 
-`@alan` waits until alan has a launch flag that does not rewrite alan's global root-rollout pointer. That flag is Morris's to land in the alan repository. Until it has landed, this walkthrough is the target, not a milestone that can start.
+Integration starts after alan's prerequisites land and after shell slices S3 and S4. This walkthrough is the target. The milestone does not start now.

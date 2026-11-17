@@ -68,7 +68,7 @@ The chat panel exists only in Full. It is 320 points wide and sits on the gray b
 
 The header shows an avatar, the name **Slowpage**, and the subtitle **你的阅读助手**. The body is the conversation. The bottom is a rounded field. The placeholder is **问问 Slowpage…**.
 
-Shell slices build this frame and the empty state. They do not embed alan, and they do not speak alan's socket protocol. A later change can host alan in this panel. The one-shot `@alan` comment path in `docs/design/north-star.md` stays as written.
+Shell slices build this frame and the empty state. They do not embed alan. The 2026-11-17 embed decision is in `docs/design/north-star.md`. Integration starts after S3 and S4, and after alan's prerequisites.
 
 Hiding the chat panel widens the card. The card stays inset 6 points from the base. Hiding the chat panel does not enter immersive reading.
 
