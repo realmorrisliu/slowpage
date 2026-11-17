@@ -105,7 +105,7 @@ Queued after the shell slices, with [pull request 45](https://github.com/realmor
 
 The spike still scrolls PDFs in one column. Replace that with fit-page inside the white reading card, EPUB's page-turn interaction, and pdfium with adjacent-page cache. The hard requirements are in `docs/design/north-star.md`, PDF reading. EPUB and PDF both run the checklist in `docs/design/reading-interactions.md`. Item 10 of that checklist is this paged PDF rule.
 
-The implementing pull request must attach prototype screenshots for Morris's approval before the code change: fit-page in the card at two window sizes, and a mid-turn frame.
+The implementing pull request must attach prototype screenshots for Morris's approval before the code change: fit-page in the card at two window sizes, and a mid-turn frame. Those shots do not replace the checklist's `nsh test` and Mac recording.
 
 Verify:
 
