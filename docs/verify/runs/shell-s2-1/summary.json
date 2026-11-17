@@ -1,166 +1,151 @@
 {
   "ok": false,
-  "head": "0a2371fac654817b0dd40d13d80c49f725191a9a",
+  "head": "56da8f760f8dd014a4c4478f7517f42f6a011537",
   "branch": "cursor/shell-form-tokens-d356",
   "pr": "https://github.com/realmorrisliu/slowpage/pull/53",
   "nsh": "nsh 0.5.0 (f4d68f7)",
   "cargo": "/Users/morris/.local/bin/cargo",
   "load_start": 999.0,
-  "load_measured_at_lock": "625.56 353.68 161.08",
-  "load_end": "110.90 215.25 167.21",
+  "load_measured": 57.71,
+  "load_end": 57.71,
   "load_max": 999.0,
-  "support_dir": "",
-  "real_support": "glyph cache written then removed",
+  "support_dir": "/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/docs/verify/runs/shell-s2-1/form-support",
+  "real_support_changed": [
+    "shell-glyphs",
+    "shell-glyphs/arrow-up-FFFFFF.png",
+    "shell-glyphs/book-6E6E73.png",
+    "shell-glyphs/book-open-6E6E73.png",
+    "shell-glyphs/bookmark-6E6E73.png",
+    "shell-glyphs/check-6E6E73.png",
+    "shell-glyphs/chevron-down-6E6E73.png",
+    "shell-glyphs/edit-6E6E73.png",
+    "shell-glyphs/file-6E6E73.png",
+    "shell-glyphs/folder-6E6E73.png",
+    "shell-glyphs/grid-1D1D1F.png",
+    "shell-glyphs/library-6E6E73.png",
+    "shell-glyphs/library-solid-1D1D1F.png",
+    "shell-glyphs/list-6E6E73.png",
+    "shell-glyphs/note-6E6E73.png",
+    "shell-glyphs/paperclip-6E6E73.png",
+    "shell-glyphs/plus-8E8E93.png",
+    "shell-glyphs/search-1D1D1F.png",
+    "shell-glyphs/sidebar-left-6E6E73.png",
+    "shell-glyphs/sidebar-right-6E6E73.png",
+    "shell-glyphs/sliders-6E6E73.png",
+    "shell-glyphs/sort-desc-6E6E73.png"
+  ],
   "checks": [
     {
       "id": "verify-self-test",
       "feature": "shell",
       "status": "pass",
       "driver": "doctor",
-      "detail": "scripts/verify self-test passed",
-      "substitute": false
+      "detail": "scripts/verify self-test passed"
     },
     {
       "id": "nsh-pin",
       "feature": "reading-bars",
       "status": "pass",
       "driver": "doctor",
-      "detail": "nsh 0.5.0 (f4d68f7)",
-      "substitute": false
+      "detail": "nsh 0.5.0 (f4d68f7)"
     },
     {
       "id": "nsh-cargo-pin",
       "feature": "reading-bars",
       "status": "pass",
       "driver": "doctor",
-      "detail": "nsh-core, nsh-base, and nsh-platform-macos are =0.5.0",
-      "substitute": false
+      "detail": "nsh-core, nsh-base, and nsh-platform-macos are =0.5.0"
     },
     {
       "id": "fixtures",
       "feature": "open-a-pdf",
       "status": "pass",
       "driver": "doctor",
-      "detail": "gpt3, pride, and libpdfium are present under /tmp/superreader-fixtures and /tmp/pdfium/lib",
-      "substitute": false
+      "detail": "gpt3, pride, and libpdfium are present under /tmp/superreader-fixtures and /tmp/pdfium/lib"
     },
     {
       "id": "no-agpl-gpl",
       "feature": "reading-bars",
       "status": "pass",
       "driver": "doctor",
-      "detail": "Cargo.lock has neither the epub crate nor mupdf",
-      "substitute": false
+      "detail": "Cargo.lock has neither the epub crate nor mupdf"
     },
     {
       "id": "spike-shell-free",
       "feature": "open-a-pdf",
       "status": "pass",
       "driver": "doctor",
-      "detail": "no spike-shell process is running",
-      "substitute": false
+      "detail": "no spike-shell process is running"
     },
     {
       "id": "macos",
       "feature": "reading-bars",
       "status": "pass",
       "driver": "doctor",
-      "detail": "darwin",
-      "substitute": false
-    },
-    {
-      "id": "spike-library-tests",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "cargo-test",
-      "detail": "27 passed, 0 failed. cargo also logged a non-fatal registry permission error removing reqwest-0.13.4/Cargo.toml.",
-      "evidence": "cargo-spike-library.log",
-      "substitute": false,
-      "numbers": {
-        "exit": 0,
-        "failed": []
-      }
-    },
-    {
-      "id": "library-fixture-build",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "cargo",
-      "detail": "library-fixture form binary built",
-      "evidence": "library-fixture-build.log",
-      "substitute": false
+      "detail": "darwin"
     },
     {
       "id": "spike-shell-build",
       "feature": "shell",
       "status": "pass",
-      "driver": "cargo",
-      "detail": "release spike-shell built with the default target dir",
-      "evidence": "cargo-spike-shell.log",
-      "substitute": false
+      "driver": "doctor",
+      "detail": "release spike-shell"
     },
     {
       "id": "nsh-title",
       "feature": "reading-bars",
-      "status": "pass",
+      "status": "fail",
       "driver": "nsh",
-      "detail": "no spike title",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "detail": "nsh test exited 1",
+      "evidence": "nsh-junit.xml"
     },
     {
       "id": "nsh-no-night-mode",
       "feature": "reading-bars",
-      "status": "pass",
+      "status": "fail",
       "driver": "nsh",
-      "detail": "no night mode",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "detail": "nsh test exited 1",
+      "evidence": "nsh-junit.xml"
     },
     {
       "id": "nsh-no-theme-switch",
       "feature": "reading-bars",
-      "status": "pass",
+      "status": "fail",
       "driver": "nsh",
-      "detail": "no theme switch",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "detail": "nsh test exited 1",
+      "evidence": "nsh-junit.xml"
     },
     {
       "id": "nsh-no-spread",
       "feature": "reading-bars",
-      "status": "pass",
+      "status": "fail",
       "driver": "nsh",
-      "detail": "no spread",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "detail": "nsh test exited 1",
+      "evidence": "nsh-junit.xml"
     },
     {
       "id": "shell-sidebar",
       "feature": "shell",
-      "status": "pass",
+      "status": "fail",
       "driver": "nsh",
-      "detail": "full form lists the sidebar groups and the chat field",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "detail": "nsh test exited 1",
+      "evidence": "nsh-junit.xml"
     },
     {
       "id": "shell-source-imported",
       "feature": "shell",
-      "status": "pass",
+      "status": "fail",
       "driver": "nsh",
-      "detail": "an imported source appears under 来源",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "detail": "nsh test exited 1",
+      "evidence": "nsh-junit.xml"
     },
     {
       "id": "shell-sidebar-toggle",
       "feature": "shell",
-      "status": "pass",
+      "status": "fail",
       "driver": "nsh",
-      "detail": "sidebar toggle hides and shows the sidebar",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "detail": "nsh test exited 1",
+      "evidence": "nsh-junit.xml"
     },
     {
       "id": "shell-no-shelf",
@@ -168,609 +153,1801 @@
       "status": "pass",
       "driver": "nsh",
       "detail": "the shell does not offer the bare shelf picker",
-      "evidence": "nsh-access-junit.xml",
-      "substitute": false
+      "evidence": "nsh-access-junit.xml"
     },
     {
-      "id": "nsh-添加来源 adds a second source and PDF filter",
+      "id": "shell-fonts",
       "feature": "shell",
       "status": "pass",
-      "driver": "nsh",
-      "detail": "添加来源 adds a second source and PDF filters the grid",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
+      "driver": "fonts.json",
+      "detail": "fonts.json matches the view tree for the full-form labels"
     },
     {
-      "id": "nsh-继续阅读 lists opened books with the latest ",
+      "id": "shell-form-fixture",
       "feature": "shell",
       "status": "pass",
-      "driver": "nsh",
-      "detail": "继续阅读 lists opened books with the latest first",
-      "evidence": "nsh-junit.xml",
-      "substitute": false
-    },
-    {
-      "id": "nsh-every-title",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "nsh",
-      "detail": "headless titles Plain Essay pass, Field Guide pass, Folder Book pass, Harbor Notes pass",
-      "evidence": "nsh-junit.xml",
-      "substitute": false,
-      "numbers": {
-        "titles": {
-          "Plain Essay": true,
-          "Field Guide": true,
-          "Folder Book": true,
-          "Harbor Notes": true
-        }
-      }
-    },
-    {
-      "id": "shell-clip-1440",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "layout.json",
-      "detail": "1440x900: content 808.0 columns 5 cover 128.0x192.0 gap 42; chat 320.0; violations none",
-      "evidence": "full-form.png",
-      "substitute": false,
-      "numbers": {
-        "clip": [],
-        "ax": [],
-        "geometry": "content 808.0 columns 5 cover 128.0x192.0 gap 42"
-      }
-    },
-    {
-      "id": "shell-shelf-geometry",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "geometry.json",
-      "detail": "cover 128.0x192.0 gap 42.0/28.0 caption 42.0 columns 5 scrolls, last 人间词话",
-      "evidence": "geometry-1440.json",
-      "substitute": false,
-      "numbers": {
-        "caption_h": 42.0,
-        "column_gap": 42.0,
-        "columns": 5,
-        "content_w": 808.0,
-        "cover_h": 192.0,
-        "cover_w": 128.0,
-        "last_title": "人间词话",
-        "row_gap": 28.0,
-        "scrolls": true
-      }
-    },
-    {
-      "id": "shell-geometry-rule-1440",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "geometry.json",
-      "detail": "content 808.0 columns 5 cover 128.0x192.0 gap 42",
-      "substitute": false,
-      "numbers": {
-        "columns": 5,
-        "cover_w": 128.0,
-        "cover_h": 192.0,
-        "column_gap": 42.0,
-        "row_gap": 28.0,
-        "caption_h": 42.0
-      }
+      "driver": "window",
+      "detail": "window 1440x855 sidebar 220 chat 320 card 226.0,6.0 888.0x843.0 left 6.0 before-chat 6.0 bottom 6.0; missing none; continue order True",
+      "evidence": "form-fixture.png"
     },
     {
       "id": "shell-form-parity",
       "feature": "shell",
       "status": "pass",
       "driver": "window",
-      "detail": "mean channel delta sidebar 9.3%, header 7.2%, continue 14.8%, shelf 36.1%, chat 13.4% max sidebar 12 header 12 continue 28 shelf 42 chat 18",
-      "evidence": "side-by-side.png",
-      "substitute": false,
-      "numbers": {
-        "sidebar": 9.34,
-        "header": 7.22,
-        "continue": 14.85,
-        "shelf": 36.08,
-        "chat": 13.39
-      }
+      "detail": "mean channel delta sidebar 9.3%, header 7.2%, continue 14.9%, shelf 36.1%, chat 13.4%",
+      "evidence": "side-by-side.png"
     },
     {
-      "id": "shell-fonts",
-      "feature": "shell",
-      "status": "fail",
-      "driver": "fonts.json",
-      "detail": "全部书籍 is 13.0/600, the sidebar row. The header 26/700 is absent because the first label wins. 12 本 13/400, 继续阅读 15/600, 书架 15/600, Slowpage 13/600, 你的阅读助手 11.5/400, 问问 Slowpage… 13/400, 最近阅读 12.5/400 match.",
-      "evidence": "fonts.json",
-      "substitute": false
-    },
-    {
-      "id": "card-inset",
+      "id": "shell-shelf-geometry",
       "feature": "shell",
       "status": "pass",
-      "driver": "window",
-      "detail": "layout LTRB [6.0, 6.0, 6.0, 6.0] pixels [6.0, 6.0, 6.0, 6.0] sidebar 220.0 chat 320.0 radii [11.0, 11.0, 11.0, 11.0]",
-      "evidence": "full-form.png",
-      "substitute": false,
-      "numbers": {
-        "layout_insets": [
-          6.0,
-          6.0,
-          6.0,
-          6.0
-        ],
-        "pixel_insets": [
-          6.0,
-          6.0,
-          6.0,
-          6.0
-        ],
-        "sidebar_w": 220.0,
-        "chat_w": 320.0,
-        "radii": {
-          "top_left": 11.0,
-          "top_right": 11.0,
-          "bottom_left": 11.0,
-          "bottom_right": 11.0
-        },
-        "window": [
-          1440.0,
-          855.0
-        ],
-        "png": [
-          2880,
-          1710
-        ]
-      }
-    },
-    {
-      "id": "card-corners",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "window",
-      "detail": "layout LTRB [6.0, 6.0, 6.0, 6.0] pixels [6.0, 6.0, 6.0, 6.0] sidebar 220.0 chat 320.0 radii [11.0, 11.0, 11.0, 11.0]",
-      "evidence": "full-form.png",
-      "substitute": false,
-      "numbers": {
-        "top_left": 11.0,
-        "top_right": 11.0,
-        "bottom_left": 11.0,
-        "bottom_right": 11.0
-      }
-    },
-    {
-      "id": "cover-plates",
-      "feature": "shell",
-      "status": "fail",
-      "driver": "window",
-      "detail": "Plate centers in full-form.png are the typographic colors, not white and not photos, but they miss the token hex. Largest miss is Middlemarch #C2A35A vs #C8A24C (14). 红楼梦 #7F322F vs #8A2B2B (11). 朝花夕拾 #A85A43 vs #B4553C (12). 呐喊 matches #1C1C1C. Shelf titles are 15/700 and authors 9/400 in fonts.json. The accessibility sample that reported #FFFFFF sat above the caption on the white card.",
-      "evidence": "full-form.png",
-      "substitute": false,
-      "numbers": {
-        "books": [
-          {
-            "title": "Pride and Prejudice",
-            "author": "Jane Austen",
-            "plate": "#7D8C6A",
-            "sample": "#808C6D",
-            "max_channel_delta": 3,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "三体",
-            "author": "刘慈欣",
-            "plate": "#16212B",
-            "sample": "#18212A",
-            "max_channel_delta": 2,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "The Art of Computer Programming",
-            "author": "Donald E. Knuth",
-            "plate": "#EEE6D3",
-            "sample": "#EDE6D5",
-            "max_channel_delta": 1,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "Moby-Dick",
-            "author": "Herman Melville",
-            "plate": "#1F3A57",
-            "sample": "#253955",
-            "max_channel_delta": 6,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "朝花夕拾",
-            "author": "鲁迅",
-            "plate": "#B4553C",
-            "sample": "#A85A43",
-            "max_channel_delta": 12,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "呐喊",
-            "author": "鲁迅",
-            "plate": "#1C1C1C",
-            "sample": "#1C1C1C",
-            "max_channel_delta": 0,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "Walden",
-            "author": "Henry David Thoreau",
-            "plate": "#2F4A3C",
-            "sample": "#35493D",
-            "max_channel_delta": 6,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "红楼梦",
-            "author": "曹雪芹",
-            "plate": "#8A2B2B",
-            "sample": "#7F322F",
-            "max_channel_delta": 11,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "Middlemarch",
-            "author": "George Eliot",
-            "plate": "#C8A24C",
-            "sample": "#C2A35A",
-            "max_channel_delta": 14,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "围城",
-            "author": "钱锺书",
-            "plate": "#DDE3E7",
-            "sample": "#DEE3E7",
-            "max_channel_delta": 1,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "Meditations",
-            "author": "Marcus Aurelius",
-            "plate": "#4A3C5A",
-            "sample": "#483D58",
-            "max_channel_delta": 2,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          },
-          {
-            "title": "人间词话",
-            "author": "王国维",
-            "plate": "#F2EEE4",
-            "sample": "#F1EEE5",
-            "max_channel_delta": 1,
-            "title_weight": "15/700",
-            "author_weight": "9/400"
-          }
-        ]
-      }
-    },
-    {
-      "id": "traffic-lights-48",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "accessibility",
-      "detail": "1440 close y 16.0..32.0 center 24.0 delta 0.0 button gaps 7.0/7.0 chrome {'center_from_top': 24.0, 'delta': 0.0, 'window_h': 855.0}",
-      "evidence": "chrome.json",
-      "substitute": false,
-      "numbers": {
-        "ax": {
-          "close_y0": 16.0,
-          "close_y1": 32.0,
-          "center": 24.0,
-          "delta": 0.0,
-          "gap_close_mini": 7.0,
-          "gap_mini_zoom": 7.0
-        },
-        "chrome": {
-          "center_from_top": 24.0,
-          "delta": 0.0,
-          "window_h": 855.0
-        },
-        "raw": "close 8.0 24.0 16.0 32.0 mini 31.0 47.0 16.0 32.0 zoom 54.0 70.0 16.0 32.0"
-      }
+      "driver": "geometry.json",
+      "detail": "cover 128.0x192.0 gap 42.0/28.0 caption 42.0 columns 5 scrolls, last \u4eba\u95f4\u8bcd\u8bdd"
     },
     {
       "id": "shell-shelf-scroll",
       "feature": "shell",
       "status": "pass",
-      "driver": "window",
-      "detail": "geometry scrolls true, last title 人间词话. Wheel delta -240 over the shelf changed 3138 pixels and left the last row a bottom sliver. Wheel delta +500 twelve times on the lower grid changed 0 pixels. Page Down three times changed 1836523 pixels and brought Meditations and 人间词话 fully on screen.",
-      "evidence": "shelf-last-row.png",
-      "substitute": false,
-      "numbers": {
-        "wheel_neg_diff": 3138,
-        "wheel_pos_lower_diff": 0,
-        "page_down_diff": 1836523,
-        "last_title": "人间词话"
-      }
-    },
-    {
-      "id": "smoke-shell-click",
-      "feature": "shell",
-      "status": "pending",
-      "driver": "window",
-      "detail": "S3/S4 has not built the reading form. A click on 继续阅读 can write reader.json while the window stays on the library. The reader-forcing launch is SPIKE_BOOK. This gap stays until the reading form. Observed click True, library still showing True, reader {'bar_w': 78.0, 'close_w': 14.0, 'lights': 1.0, 'mode': 'epub', 'page': 1, 'pages': 3, 'path': '/var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/superreader-form-58m24w9v/apple/Pride and Prejudice.epub', 'product': False, 'toolbar': False, 'window_title': 'Slowpage'}.",
-      "evidence": "reader-click.json",
-      "substitute": false
-    },
-    {
-      "id": "shell-chat-toggle-wide",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "window",
-      "detail": "1440 chat 320 then 0 then 320. The first click pair returned before the panel came back (320, 0, 0). A second pair with a one second pause measured 320, 0, 320.",
-      "substitute": false,
-      "numbers": {
-        "before": 320.0,
-        "hidden": 0.0,
-        "after": 320.0,
-        "first_attempt_after": 0.0
-      }
-    },
-    {
-      "id": "shell-clip-min",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "layout.json",
-      "detail": "578x202: content 266.0 columns 2 cover 112.0x168.0 gap 42; chat 0.0; violations none; chat expected 0",
-      "evidence": "full-form-min.png",
-      "substitute": false,
-      "numbers": {
-        "clip": [],
-        "ax": [],
-        "window": [
-          578.0,
-          202.0
-        ],
-        "chat_w": 0.0
-      }
-    },
-    {
-      "id": "shell-geometry-min",
-      "feature": "shell",
-      "status": "pass",
       "driver": "geometry.json",
-      "detail": "content 266.0 columns 2 cover 112.0x168.0 gap 42",
-      "evidence": "geometry-min.json",
-      "substitute": false,
-      "numbers": {
-        "measured": {
-          "caption_h": 42.0,
-          "column_gap": 42.0,
-          "columns": 2,
-          "content_w": 266.0,
-          "cover_h": 168.0,
-          "cover_w": 112.0,
-          "last_title": "人间词话",
-          "row_gap": 28.0,
-          "scrolls": true
-        },
-        "rule": {
-          "columns": 2,
-          "cover_w": 112.0,
-          "cover_h": 168.0,
-          "column_gap": 42.0,
-          "row_gap": 28.0,
-          "caption_h": 42.0
-        },
-        "expected_content": 266.0,
-        "expected_chat": 0.0
-      }
+      "detail": "scrolls True, last \u4eba\u95f4\u8bcd\u8bdd is in the tree"
     },
     {
-      "id": "shell-chat-hidden-min",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "shell-layout.json",
-      "detail": "578 chat_w 0.0 placeholder False",
-      "substitute": false,
-      "numbers": {
-        "chat_w": 0.0,
-        "content_expect": 266.0
-      }
-    },
-    {
-      "id": "shell-clip-1100",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "layout.json",
-      "detail": "1100x700: content 468.0 columns 3 cover 128.0x192.0 gap 42; chat 320.0; violations none; chat expected 320",
-      "evidence": "full-form-1100.png",
-      "substitute": false,
-      "numbers": {
-        "clip": [],
-        "ax": [],
-        "window": [
-          1100.0,
-          700.0
-        ],
-        "chat_w": 320.0
-      }
-    },
-    {
-      "id": "shell-geometry-1100",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "geometry.json",
-      "detail": "content 468.0 columns 3 cover 128.0x192.0 gap 42",
-      "evidence": "geometry-1100.json",
-      "substitute": false,
-      "numbers": {
-        "measured": {
-          "caption_h": 42.0,
-          "column_gap": 42.0,
-          "columns": 3,
-          "content_w": 468.0,
-          "cover_h": 192.0,
-          "cover_w": 128.0,
-          "last_title": "人间词话",
-          "row_gap": 28.0,
-          "scrolls": true
-        },
-        "rule": {
-          "columns": 3,
-          "cover_w": 128.0,
-          "cover_h": 192.0,
-          "column_gap": 42.0,
-          "row_gap": 28.0,
-          "caption_h": 42.0
-        },
-        "expected_content": 468.0,
-        "expected_chat": 320.0
-      }
-    },
-    {
-      "id": "shell-chat-visible-1100",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "shell-layout.json",
-      "detail": "1100 is above 898 so the chat stays, chat_w 320.0",
-      "substitute": false,
-      "numbers": {
-        "chat_w": 320.0,
-        "window": [
-          1100.0,
-          700.0
-        ]
-      }
-    },
-    {
-      "id": "shell-chat-narrow-click",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "window",
-      "detail": "880 is below 898. chat_w 0.0 before the toggle and 0.0 after. The Shown preference is not in a file, so this click only shows that the panel stayed omitted.",
-      "substitute": false,
-      "numbers": {
-        "before": 0.0,
-        "after": 0.0,
-        "clicked": true
-      }
-    },
-    {
-      "id": "shell-clip-fullscreen",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "layout.json",
-      "detail": "fullscreen: content 880.0 columns 5 cover 142.4x213.6 gap 42; chat 320.0; violations none; fullscreen flag True; window 1512x949",
-      "evidence": "full-form-fullscreen.png",
-      "substitute": false,
-      "numbers": {
-        "clip": [],
-        "ax": [],
-        "window": [
-          1512.0,
-          949.0
-        ]
-      }
-    },
-    {
-      "id": "shell-geometry-fullscreen",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "geometry.json",
-      "detail": "content 880.0 columns 5 cover 142.4x213.6 gap 42",
-      "evidence": "geometry-fullscreen.json",
-      "substitute": false,
-      "numbers": {
-        "caption_h": 42.0,
-        "column_gap": 42.0,
-        "columns": 5,
-        "content_w": 880.0,
-        "cover_h": 213.59999084472656,
-        "cover_w": 142.39999389648438,
-        "last_title": "人间词话",
-        "row_gap": 28.0,
-        "scrolls": true
-      }
-    },
-    {
-      "id": "traffic-lights-fullscreen-hover",
+      "id": "shell-clip",
       "feature": "shell",
       "status": "fail",
-      "driver": "accessibility",
-      "detail": "AX close button missing with the pointer away and at the top of the screen. Window capture diff 0. Top pixel #EFEEF1. chrome.json fullscreen close center_from_top 901, delta 877, window_h 949, close y 41 h 14. Windowed 1440 delta is 0.",
-      "evidence": "fullscreen-hover.png",
-      "substitute": false,
-      "numbers": {
-        "capture_diff": 0,
-        "top_pixel": "#EFEEF1",
-        "chrome_delta": 877.0,
-        "window_h": 949.0
-      }
+      "driver": "layout.json",
+      "detail": "wheel over the shelf grid changed 0 pixels; 1440x900: content 808.0 columns 5 cover 128.0x192.0 gap 42; chat 320.0; clip none; cover.0 face #808B6D vs 7D8C6A; cover.0 plate has no type; cover.1 plate has no type; cover.2 face #EDE6D5 vs 2F4F3E; cover.2 plate has no type; cover.3 face #253955 vs 1F3A57; 578x520: content 266.0 columns 2 cover 112.0x168.0 gap 42; chat 0.0; clip none; fullscreen: content 880.0 columns 5 cover 142.4x213.6 gap 42; chat 320.0; clip none",
+      "evidence": "form-fullscreen.png"
+    },
+    {
+      "id": "s21-proofs",
+      "feature": "shell",
+      "status": "fail",
+      "driver": "window",
+      "detail": "could not create image from window\n"
     },
     {
       "id": "smoke-launch",
-      "feature": "shell",
+      "feature": "smoke",
       "status": "pass",
       "driver": "window",
-      "detail": "pid 72712 alive True",
-      "evidence": "smoke-open.png",
-      "substitute": false
+      "detail": "pid 46942"
     },
     {
-      "id": "smoke-reader-forced",
-      "feature": "shell",
-      "status": "pass",
+      "id": "smoke-open",
+      "feature": "smoke",
+      "status": "pending",
       "driver": "window",
-      "detail": "SPIKE_BOOK=pride SPIKE_MODE=webkit reader-forcing launch, page 1 then 2, pixels changed True. This is the substitute for the shell click, which stays pending.",
-      "evidence": "smoke-turn.png",
-      "substitute": true,
-      "numbers": {
-        "page": 1,
-        "turned": 2,
-        "mode": "epub",
-        "pixels_changed": true
-      }
+      "detail": "S3/S4 has not built the reading form. A click on \u7ee7\u7eed\u9605\u8bfb can write reader.json while the window stays on the library. The reader-forcing launch is SPIKE_BOOK. This gap stays until the reading form.",
+      "evidence": "shelf-smoke-open.png"
     },
     {
-      "id": "real-profile-untouched",
+      "id": "smoke-turn",
+      "feature": "smoke",
+      "status": "pending",
+      "driver": "window",
+      "detail": "S3/S4 has not built the reading form. A click on \u7ee7\u7eed\u9605\u8bfb can write reader.json while the window stays on the library. The reader-forcing launch is SPIKE_BOOK. This gap stays until the reading form.",
+      "evidence": "shelf-smoke-turn.png"
+    },
+    {
+      "id": "smoke-shell-click",
+      "feature": "smoke",
+      "status": "pending",
+      "driver": "window",
+      "detail": "S3/S4 has not built the reading form. A click on \u7ee7\u7eed\u9605\u8bfb can write reader.json while the window stays on the library. The reader-forcing launch is SPIKE_BOOK. This gap stays until the reading form."
+    },
+    {
+      "id": "real-support-untouched",
       "feature": "shell",
       "status": "fail",
       "driver": "support",
-      "detail": "21 new shell-glyphs pngs appeared during the run. settings.json was not rewritten (mtime 135 hours old) and history gained no fixture paths. The 21 pngs were removed afterward. A later launch added 0 files.",
-      "substitute": false,
+      "detail": "changed shell-glyphs, shell-glyphs/arrow-up-FFFFFF.png, shell-glyphs/book-6E6E73.png, shell-glyphs/book-open-6E6E73.png, shell-glyphs/bookmark-6E6E73.png, shell-glyphs/check-6E6E73.png, shell-glyphs/chevron-down-6E6E73.png, shell-glyphs/edit-6E6E73.png, shell-glyphs/file-6E6E73.png, shell-glyphs/folder-6E6E73.png, shell-glyphs/grid-1D1D1F.png, shell-glyphs/library-6E6E73.png",
+      "evidence": "support-before.json",
       "numbers": {
-        "glyph_pngs_created": 21,
-        "glyph_pngs_removed": 21,
-        "settings_rewritten": false,
-        "retry_files_added": 0
-      }
-    },
-    {
-      "id": "sidebar-light-gaps",
-      "feature": "shell",
-      "status": "pass",
-      "driver": "chrome.json",
-      "detail": "1440 bar 78.0, close left 9.0, zoom right 69.0, right gap 9.0, gap delta 0.0. Fullscreen bar 78.0, same 9.0/9.0.",
-      "evidence": "chrome.json",
-      "substitute": false,
-      "numbers": {
-        "bar_w": 78.0,
-        "left": 9.0,
-        "right": 9.0,
-        "delta": 0.0
+        "changed": [
+          "shell-glyphs",
+          "shell-glyphs/arrow-up-FFFFFF.png",
+          "shell-glyphs/book-6E6E73.png",
+          "shell-glyphs/book-open-6E6E73.png",
+          "shell-glyphs/bookmark-6E6E73.png",
+          "shell-glyphs/check-6E6E73.png",
+          "shell-glyphs/chevron-down-6E6E73.png",
+          "shell-glyphs/edit-6E6E73.png",
+          "shell-glyphs/file-6E6E73.png",
+          "shell-glyphs/folder-6E6E73.png",
+          "shell-glyphs/grid-1D1D1F.png",
+          "shell-glyphs/library-6E6E73.png",
+          "shell-glyphs/library-solid-1D1D1F.png",
+          "shell-glyphs/list-6E6E73.png",
+          "shell-glyphs/note-6E6E73.png",
+          "shell-glyphs/paperclip-6E6E73.png",
+          "shell-glyphs/plus-8E8E93.png",
+          "shell-glyphs/search-1D1D1F.png",
+          "shell-glyphs/sidebar-left-6E6E73.png",
+          "shell-glyphs/sidebar-right-6E6E73.png",
+          "shell-glyphs/sliders-6E6E73.png",
+          "shell-glyphs/sort-desc-6E6E73.png"
+        ],
+        "before": 36,
+        "after": 57
       }
     }
   ],
-  "rescore": {
-    "cover_plates": "fail, max channel delta 14",
-    "chat_toggle": "pass on the second click pair",
-    "shelf_scroll": "pass by Page Down",
-    "fullscreen_hover": "fail",
-    "fonts": "fail",
-    "real_support": "fail, glyphs removed"
-  }
+  "nsh_junit": [
+    {
+      "name": "no spike title",
+      "status": "pass",
+      "detail": ""
+    },
+    {
+      "name": "no night mode",
+      "status": "pass",
+      "detail": ""
+    },
+    {
+      "name": "no theme switch",
+      "status": "pass",
+      "detail": ""
+    },
+    {
+      "name": "no spread",
+      "status": "pass",
+      "detail": ""
+    },
+    {
+      "name": "full form lists the sidebar groups and the chat field",
+      "status": "pass",
+      "detail": ""
+    },
+    {
+      "name": "an imported source appears under \u6765\u6e90",
+      "status": "pass",
+      "detail": ""
+    },
+    {
+      "name": "\u6dfb\u52a0\u6765\u6e90 adds a second source and PDF filters the grid",
+      "status": "pass",
+      "detail": ""
+    },
+    {
+      "name": "\u7ee7\u7eed\u9605\u8bfb lists opened books with the latest first",
+      "status": "fail",
+      "detail": "`Plain Essay` matches 2 pressable views: say which (`Plain Essay >> nth=0`), or look inside a view around it (`id:list >> Plain Essay`)"
+    },
+    {
+      "name": "sidebar toggle hides and shows the sidebar",
+      "status": "pass",
+      "detail": ""
+    }
+  ],
+  "srgb_plates": [
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#808B6D",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#7D8B6A",
+      "token": "7D8C6A",
+      "raw_delta": 3,
+      "srgb_delta": 1
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#18212A",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#16212B",
+      "token": "16212B",
+      "raw_delta": 2,
+      "srgb_delta": 0
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#EDE6D5",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#EFE6D3",
+      "token": "EEE6D3",
+      "raw_delta": 2,
+      "srgb_delta": 1
+    },
+    {
+      "title": "Moby-Dick",
+      "raw": "#253955",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#1F3A57",
+      "token": "1F3A57",
+      "raw_delta": 6,
+      "srgb_delta": 0
+    },
+    {
+      "title": "\u671d\u82b1\u5915\u62fe",
+      "raw": "#A85A43",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#B4553C",
+      "token": "B4553C",
+      "raw_delta": 12,
+      "srgb_delta": 0
+    },
+    {
+      "title": "\u5450\u558a",
+      "raw": "#1C1C1C",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#1C1C1C",
+      "token": "1C1C1C",
+      "raw_delta": 0,
+      "srgb_delta": 0
+    },
+    {
+      "title": "Walden",
+      "raw": "#35493D",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#2F4A3C",
+      "token": "2F4A3C",
+      "raw_delta": 6,
+      "srgb_delta": 0
+    },
+    {
+      "title": "\u7ea2\u697c\u68a6",
+      "raw": "#7F322F",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#8A2B2B",
+      "token": "8A2B2B",
+      "raw_delta": 11,
+      "srgb_delta": 0
+    },
+    {
+      "title": "Middlemarch",
+      "raw": "#C2A35A",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#C8A24C",
+      "token": "C8A24C",
+      "raw_delta": 14,
+      "srgb_delta": 0
+    },
+    {
+      "title": "\u56f4\u57ce",
+      "raw": "#DEE3E6",
+      "ink": false,
+      "source": "form-1440.png",
+      "width": "layout-1440.json",
+      "srgb": "#DDE3E6",
+      "token": "DDE3E7",
+      "raw_delta": 1,
+      "srgb_delta": 1
+    },
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#808B6D",
+      "ink": false,
+      "source": "form-1100.png",
+      "width": "layout-1100.json",
+      "srgb": "#7D8B6A",
+      "token": "7D8C6A",
+      "raw_delta": 3,
+      "srgb_delta": 1
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#18212A",
+      "ink": false,
+      "source": "form-1100.png",
+      "width": "layout-1100.json",
+      "srgb": "#16212B",
+      "token": "16212B",
+      "raw_delta": 2,
+      "srgb_delta": 0
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#EDE6D5",
+      "ink": false,
+      "source": "form-1100.png",
+      "width": "layout-1100.json",
+      "srgb": "#EFE6D3",
+      "token": "EEE6D3",
+      "raw_delta": 2,
+      "srgb_delta": 1
+    },
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#808B6D",
+      "srgb": "#7D8B6A",
+      "token": "7D8C6A",
+      "raw_delta": 3,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 6348,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#19212B",
+      "srgb": "#17212C",
+      "token": "16212B",
+      "raw_delta": 3,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 6370,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#EDE6D5",
+      "srgb": "#EFE6D3",
+      "token": "EEE6D3",
+      "raw_delta": 2,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 6889,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "Moby-Dick",
+      "raw": "#253955",
+      "srgb": "#1F3A57",
+      "token": "1F3A57",
+      "raw_delta": 6,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5399,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "\u671d\u82b1\u5915\u62fe",
+      "raw": "#A85A43",
+      "srgb": "#B4553C",
+      "token": "B4553C",
+      "raw_delta": 12,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5399,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "\u5450\u558a",
+      "raw": "#1C1C1C",
+      "srgb": "#1C1C1C",
+      "token": "1C1C1C",
+      "raw_delta": 0,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "Walden",
+      "raw": "#35493D",
+      "srgb": "#2F4A3C",
+      "token": "2F4A3C",
+      "raw_delta": 6,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5399,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "\u7ea2\u697c\u68a6",
+      "raw": "#7F322F",
+      "srgb": "#8A2B2B",
+      "token": "8A2B2B",
+      "raw_delta": 11,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5399,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "Middlemarch",
+      "raw": "#C2A35A",
+      "srgb": "#C8A24C",
+      "token": "C8A24C",
+      "raw_delta": 14,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5399,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "\u56f4\u57ce",
+      "raw": "#DEE3E6",
+      "srgb": "#DDE3E6",
+      "token": "DDE3E7",
+      "raw_delta": 1,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 5399,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "Meditations",
+      "raw": "#483D58",
+      "srgb": "#4A3C5A",
+      "token": "4A3C5A",
+      "raw_delta": 2,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 403,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "\u4eba\u95f4\u8bcd\u8bdd",
+      "raw": "#F1EEE5",
+      "srgb": "#F2EEE4",
+      "token": "F2EEE4",
+      "raw_delta": 1,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 404,
+      "source": "form-1440.png scan"
+    },
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#808B6D",
+      "srgb": "#7D8B6A",
+      "token": "7D8C6A",
+      "raw_delta": 3,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 6348,
+      "source": "form-1100.png scan"
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#18212A",
+      "srgb": "#16212B",
+      "token": "16212B",
+      "raw_delta": 2,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 6334,
+      "source": "form-1100.png scan"
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#EDE6D5",
+      "srgb": "#EFE6D3",
+      "token": "EEE6D3",
+      "raw_delta": 2,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 6888,
+      "source": "form-1100.png scan"
+    },
+    {
+      "title": "Moby-Dick",
+      "raw": "#253955",
+      "srgb": "#1F3A57",
+      "token": "1F3A57",
+      "raw_delta": 6,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 3371,
+      "source": "form-1100.png scan"
+    },
+    {
+      "title": "\u671d\u82b1\u5915\u62fe",
+      "raw": "#A85A43",
+      "srgb": "#B4553C",
+      "token": "B4553C",
+      "raw_delta": 12,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 3371,
+      "source": "form-1100.png scan"
+    },
+    {
+      "title": "\u5450\u558a",
+      "raw": "#1C1C1C",
+      "srgb": "#1C1C1C",
+      "token": "1C1C1C",
+      "raw_delta": 0,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 3372,
+      "source": "form-1100.png scan"
+    },
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#808B6D",
+      "srgb": "#7D8B6A",
+      "token": "7D8C6A",
+      "raw_delta": 3,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 4786,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#18212A",
+      "srgb": "#16212B",
+      "token": "16212B",
+      "raw_delta": 2,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 4772,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#EDE6D5",
+      "srgb": "#EFE6D3",
+      "token": "EEE6D3",
+      "raw_delta": 2,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 5196,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "Moby-Dick",
+      "raw": "#253955",
+      "srgb": "#1F3A57",
+      "token": "1F3A57",
+      "raw_delta": 6,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 4772,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "\u671d\u82b1\u5915\u62fe",
+      "raw": "#A85A43",
+      "srgb": "#B4553C",
+      "token": "B4553C",
+      "raw_delta": 12,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 4772,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "\u5450\u558a",
+      "raw": "#1C1C1C",
+      "srgb": "#1C1C1C",
+      "token": "1C1C1C",
+      "raw_delta": 0,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "Walden",
+      "raw": "#35493D",
+      "srgb": "#2F4A3C",
+      "token": "2F4A3C",
+      "raw_delta": 6,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "\u7ea2\u697c\u68a6",
+      "raw": "#7F322F",
+      "srgb": "#8A2B2B",
+      "token": "8A2B2B",
+      "raw_delta": 11,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "Middlemarch",
+      "raw": "#C2A35A",
+      "srgb": "#C8A24C",
+      "token": "C8A24C",
+      "raw_delta": 14,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "\u56f4\u57ce",
+      "raw": "#DEE3E6",
+      "srgb": "#DDE3E6",
+      "token": "DDE3E7",
+      "raw_delta": 1,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "Meditations",
+      "raw": "#483D58",
+      "srgb": "#4A3C5A",
+      "token": "4A3C5A",
+      "raw_delta": 2,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "\u4eba\u95f4\u8bcd\u8bdd",
+      "raw": "#F1EEE5",
+      "srgb": "#F2EEE4",
+      "token": "F2EEE4",
+      "raw_delta": 1,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-page-after.png scan"
+    },
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#808B6D",
+      "srgb": "#7D8B6A",
+      "token": "7D8C6A",
+      "raw_delta": 3,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 4786,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#18212A",
+      "srgb": "#16212B",
+      "token": "16212B",
+      "raw_delta": 2,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 4772,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#EDE6D5",
+      "srgb": "#EFE6D3",
+      "token": "EEE6D3",
+      "raw_delta": 2,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 5196,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "Moby-Dick",
+      "raw": "#253955",
+      "srgb": "#1F3A57",
+      "token": "1F3A57",
+      "raw_delta": 6,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 4772,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "\u671d\u82b1\u5915\u62fe",
+      "raw": "#A85A43",
+      "srgb": "#B4553C",
+      "token": "B4553C",
+      "raw_delta": 12,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 4772,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "\u5450\u558a",
+      "raw": "#1C1C1C",
+      "srgb": "#1C1C1C",
+      "token": "1C1C1C",
+      "raw_delta": 0,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "Walden",
+      "raw": "#35493D",
+      "srgb": "#2F4A3C",
+      "token": "2F4A3C",
+      "raw_delta": 6,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "\u7ea2\u697c\u68a6",
+      "raw": "#7F322F",
+      "srgb": "#8A2B2B",
+      "token": "8A2B2B",
+      "raw_delta": 11,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "Middlemarch",
+      "raw": "#C2A35A",
+      "srgb": "#C8A24C",
+      "token": "C8A24C",
+      "raw_delta": 14,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "\u56f4\u57ce",
+      "raw": "#DEE3E6",
+      "srgb": "#DDE3E6",
+      "token": "DDE3E7",
+      "raw_delta": 1,
+      "srgb_delta": 1,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "Meditations",
+      "raw": "#483D58",
+      "srgb": "#4A3C5A",
+      "token": "4A3C5A",
+      "raw_delta": 2,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "\u4eba\u95f4\u8bcd\u8bdd",
+      "raw": "#F1EEE5",
+      "srgb": "#F2EEE4",
+      "token": "F2EEE4",
+      "raw_delta": 1,
+      "srgb_delta": 0,
+      "ink": null,
+      "hits": 5400,
+      "source": "retry-wheel-after.png scan"
+    },
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#FDFDFD",
+      "srgb": "#FDFDFD",
+      "token": "7D8C6A",
+      "raw_delta": 147,
+      "srgb_delta": 147,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-page-after.png"
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "16212B",
+      "raw_delta": 232,
+      "srgb_delta": 232,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-page-after.png"
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "EEE6D3",
+      "raw_delta": 43,
+      "srgb_delta": 43,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-page-after.png"
+    },
+    {
+      "title": "Moby-Dick",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "1F3A57",
+      "raw_delta": 223,
+      "srgb_delta": 223,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-page-after.png"
+    },
+    {
+      "title": "\u671d\u82b1\u5915\u62fe",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "B4553C",
+      "raw_delta": 194,
+      "srgb_delta": 194,
+      "ink": false,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-page-after.png"
+    },
+    {
+      "title": "Pride and Prejudice",
+      "raw": "#FDFDFD",
+      "srgb": "#FDFDFD",
+      "token": "7D8C6A",
+      "raw_delta": 147,
+      "srgb_delta": 147,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-wheel-after.png"
+    },
+    {
+      "title": "\u4e09\u4f53",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "16212B",
+      "raw_delta": 232,
+      "srgb_delta": 232,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-wheel-after.png"
+    },
+    {
+      "title": "The Art of Computer Programming",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "EEE6D3",
+      "raw_delta": 43,
+      "srgb_delta": 43,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-wheel-after.png"
+    },
+    {
+      "title": "Moby-Dick",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "1F3A57",
+      "raw_delta": 223,
+      "srgb_delta": 223,
+      "ink": true,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-wheel-after.png"
+    },
+    {
+      "title": "\u671d\u82b1\u5915\u62fe",
+      "raw": "#FEFEFE",
+      "srgb": "#FEFEFE",
+      "token": "B4553C",
+      "raw_delta": 194,
+      "srgb_delta": 194,
+      "ink": false,
+      "title_frame": true,
+      "author_frame": true,
+      "source": "retry-wheel-after.png"
+    }
+  ],
+  "retry": {
+    "live": {
+      "launch_capture": "ok",
+      "page_down": {
+        "rows": 1499,
+        "cover_y_before": 304.0,
+        "cover_y_after": 304.0,
+        "cover_label_after": "Pride and Prejudice"
+      },
+      "wheel": {
+        "note": "posted",
+        "rows": 0,
+        "cover_y_before": 304.0,
+        "cover_y_after": 304.0,
+        "cover_label_before": "Pride and Prejudice",
+        "cover_label_after": "Pride and Prejudice",
+        "point": [
+          750.4,
+          678.0
+        ]
+      },
+      "chat": [
+        {
+          "before": 320.0,
+          "after": 0.0,
+          "press": "pressed",
+          "code": 0
+        },
+        {
+          "before": 0.0,
+          "after": 320.0,
+          "press": "pressed",
+          "code": 0
+        }
+      ],
+      "fullscreen": {
+        "hover_rows": null,
+        "hover_space": "quartz-top",
+        "hover_lights_value": 1.0,
+        "frame_delta": null,
+        "inset": {
+          "left": 6.0,
+          "top": 6.0,
+          "right": 6.0,
+          "bottom": 6.0,
+          "sidebar_w": 220.0,
+          "chat_w": 320.0,
+          "window": [
+            1512.0,
+            949.0
+          ]
+        },
+        "inset_before": {
+          "left": 6.0,
+          "top": 6.0,
+          "right": 6.0,
+          "bottom": 6.0,
+          "sidebar_w": 220.0,
+          "chat_w": 320.0,
+          "window": [
+            1440.0,
+            855.0
+          ]
+        },
+        "gaps": {
+          "left": 9.0,
+          "right": 9.0,
+          "bar_w": 78.0,
+          "light_w": 78.0
+        },
+        "ax_windowed": {
+          "close_min_x": 8.0,
+          "close_max_x": 24.0,
+          "close_min_y": 16.0,
+          "close_max_y": 32.0,
+          "mini_min_x": 31.0,
+          "mini_max_x": 47.0,
+          "mini_min_y": 16.0,
+          "mini_max_y": 32.0,
+          "zoom_min_x": 54.0,
+          "zoom_max_x": 70.0,
+          "zoom_min_y": 16.0,
+          "zoom_max_y": 32.0
+        },
+        "ax_away": null,
+        "ax_hover": null,
+        "ax_restored": null,
+        "enter": {
+          "frames": [
+            {
+              "file": "retry-enter-00.png",
+              "saturated": 430,
+              "error": "",
+              "size": [
+                1512.0,
+                982.0
+              ]
+            },
+            {
+              "file": "retry-enter-01.png",
+              "saturated": 1268,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            },
+            {
+              "file": "retry-enter-02.png",
+              "saturated": 1268,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            },
+            {
+              "file": "retry-enter-03.png",
+              "saturated": 1268,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            },
+            {
+              "file": "retry-enter-04.png",
+              "saturated": 1268,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            }
+          ],
+          "flips": 0,
+          "kept": 5
+        },
+        "hover": {
+          "frames": [
+            {
+              "file": "retry-hover-00.png",
+              "saturated": 2134,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            },
+            {
+              "file": "retry-hover-01.png",
+              "saturated": 2134,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            },
+            {
+              "file": "retry-hover-02.png",
+              "saturated": 2134,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            },
+            {
+              "file": "retry-hover-03.png",
+              "saturated": 2134,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            },
+            {
+              "file": "retry-hover-04.png",
+              "saturated": 2134,
+              "error": "",
+              "size": [
+                1512.0,
+                949.0
+              ]
+            }
+          ],
+          "flips": 0,
+          "kept": 5
+        },
+        "exit": {
+          "frames": [
+            {
+              "file": "retry-exit-00.png",
+              "saturated": 0,
+              "error": "no window",
+              "size": null
+            },
+            {
+              "file": "retry-exit-01.png",
+              "saturated": 0,
+              "error": "no window",
+              "size": null
+            },
+            {
+              "file": "retry-exit-02.png",
+              "saturated": 0,
+              "error": "no window",
+              "size": null
+            },
+            {
+              "file": "retry-exit-03.png",
+              "saturated": 0,
+              "error": "no window",
+              "size": null
+            },
+            {
+              "file": "retry-exit-04.png",
+              "saturated": 0,
+              "error": "no window",
+              "size": null
+            }
+          ],
+          "flips": 0,
+          "kept": 0
+        },
+        "press": [
+          0,
+          "",
+          1,
+          "no window"
+        ],
+        "capture": {
+          "away": "",
+          "hover": "no window"
+        },
+        "errors": {
+          "windowed": "",
+          "away": "no window",
+          "hover": "no window",
+          "restored": "no window"
+        },
+        "fullscreen": true,
+        "restored": true,
+        "windowed_chrome_gaps": {
+          "left": 9.0,
+          "right": 9.0,
+          "bar_w": 78.0,
+          "light_w": 78.0
+        }
+      }
+    },
+    "support_changed": []
+  },
+  "items": [
+    {
+      "n": 1,
+      "name": "cover type",
+      "status": "fail",
+      "detail": "1440 frames 5/5 ink 0/10; 1100 frames 3/3 ink 0/3",
+      "numbers": {
+        "plates_1440": [
+          {
+            "id": "cover.0",
+            "title": "Pride and Prejudice",
+            "token": "7D8C6A",
+            "plate_rgb": "7D8C6A",
+            "sample": "#808B6D",
+            "token_delta": 3,
+            "plate_delta": 3,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          },
+          {
+            "id": "cover.1",
+            "title": "\u4e09\u4f53",
+            "token": "16212B",
+            "plate_rgb": "16212B",
+            "sample": "#18212A",
+            "token_delta": 2,
+            "plate_delta": 2,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          },
+          {
+            "id": "cover.2",
+            "title": "The Art of Computer Programming",
+            "token": "EEE6D3",
+            "plate_rgb": "2F4F3E",
+            "sample": "#EDE6D5",
+            "token_delta": 2,
+            "plate_delta": 190,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          },
+          {
+            "id": "cover.3",
+            "title": "Moby-Dick",
+            "token": "1F3A57",
+            "plate_rgb": "1F3A57",
+            "sample": "#253955",
+            "token_delta": 6,
+            "plate_delta": 6,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          },
+          {
+            "id": "cover.4",
+            "title": "\u671d\u82b1\u5915\u62fe",
+            "token": "B4553C",
+            "plate_rgb": "B4553C",
+            "sample": "#A85A43",
+            "token_delta": 12,
+            "plate_delta": 12,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          }
+        ],
+        "ink_1440": [
+          {
+            "title": "Pride and Prejudice",
+            "raw": "#808B6D",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#7D8B6A",
+            "token": "7D8C6A",
+            "raw_delta": 3,
+            "srgb_delta": 1
+          },
+          {
+            "title": "\u4e09\u4f53",
+            "raw": "#18212A",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#16212B",
+            "token": "16212B",
+            "raw_delta": 2,
+            "srgb_delta": 0
+          },
+          {
+            "title": "The Art of Computer Programming",
+            "raw": "#EDE6D5",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#EFE6D3",
+            "token": "EEE6D3",
+            "raw_delta": 2,
+            "srgb_delta": 1
+          },
+          {
+            "title": "Moby-Dick",
+            "raw": "#253955",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#1F3A57",
+            "token": "1F3A57",
+            "raw_delta": 6,
+            "srgb_delta": 0
+          },
+          {
+            "title": "\u671d\u82b1\u5915\u62fe",
+            "raw": "#A85A43",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#B4553C",
+            "token": "B4553C",
+            "raw_delta": 12,
+            "srgb_delta": 0
+          },
+          {
+            "title": "\u5450\u558a",
+            "raw": "#1C1C1C",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#1C1C1C",
+            "token": "1C1C1C",
+            "raw_delta": 0,
+            "srgb_delta": 0
+          },
+          {
+            "title": "Walden",
+            "raw": "#35493D",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#2F4A3C",
+            "token": "2F4A3C",
+            "raw_delta": 6,
+            "srgb_delta": 0
+          },
+          {
+            "title": "\u7ea2\u697c\u68a6",
+            "raw": "#7F322F",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#8A2B2B",
+            "token": "8A2B2B",
+            "raw_delta": 11,
+            "srgb_delta": 0
+          },
+          {
+            "title": "Middlemarch",
+            "raw": "#C2A35A",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#C8A24C",
+            "token": "C8A24C",
+            "raw_delta": 14,
+            "srgb_delta": 0
+          },
+          {
+            "title": "\u56f4\u57ce",
+            "raw": "#DEE3E6",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#DDE3E6",
+            "token": "DDE3E7",
+            "raw_delta": 1,
+            "srgb_delta": 1
+          }
+        ],
+        "plates_1100": [
+          {
+            "id": "cover.0",
+            "title": "Pride and Prejudice",
+            "token": "7D8C6A",
+            "plate_rgb": "7D8C6A",
+            "sample": "#808B6D",
+            "token_delta": 3,
+            "plate_delta": 3,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          },
+          {
+            "id": "cover.1",
+            "title": "\u4e09\u4f53",
+            "token": "16212B",
+            "plate_rgb": "16212B",
+            "sample": "#18212A",
+            "token_delta": 2,
+            "plate_delta": 2,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          },
+          {
+            "id": "cover.2",
+            "title": "The Art of Computer Programming",
+            "token": "EEE6D3",
+            "plate_rgb": "2F4F3E",
+            "sample": "#EDE6D5",
+            "token_delta": 2,
+            "plate_delta": 190,
+            "title_frame": true,
+            "author_frame": true,
+            "ink": false
+          }
+        ]
+      }
+    },
+    {
+      "n": 2,
+      "name": "minimum 578x520",
+      "status": "pass",
+      "detail": "window [578.0, 520.0] clip 0 overlap none continue 2 shelf True settings pinned True below rows True",
+      "numbers": {
+        "window": [
+          578.0,
+          520.0
+        ],
+        "clip": [],
+        "overlap": [],
+        "settings_overlap": [],
+        "continue": [
+          {
+            "id": "continue.0",
+            "label": "Pride and Prejudice",
+            "frame": [
+              266.0,
+              144.0,
+              125.0,
+              102.0
+            ],
+            "inside": true
+          },
+          {
+            "id": "continue.1",
+            "label": "\u4e09\u4f53",
+            "frame": [
+              407.0,
+              144.0,
+              125.0,
+              102.0
+            ],
+            "inside": true
+          }
+        ],
+        "shelf": {
+          "frame": [
+            266.0,
+            304.0,
+            266.0,
+            210.0
+          ],
+          "inside": true
+        },
+        "settings": {
+          "frame": [
+            10.0,
+            480.0,
+            200.0,
+            28.0
+          ],
+          "scroll_child": false,
+          "below_scrolled_rows": true
+        },
+        "scrolling_rows": [
+          "\u5168\u90e8\u4e66\u7c4d",
+          "\u5168\u90e8\u4e66\u7c4d",
+          "\u6b63\u5728\u8bfb",
+          "\u6b63\u5728\u8bfb",
+          "\u60f3\u8bfb",
+          "\u60f3\u8bfb",
+          "\u5df2\u8bfb\u5b8c",
+          "\u5df2\u8bfb\u5b8c",
+          "PDF",
+          "PDF",
+          "\u9ad8\u4eae\u4e0e\u7b14\u8bb0",
+          "\u9ad8\u4eae\u4e0e\u7b14\u8bb0",
+          "2026 \u5e74\u60f3\u8bfb\u5b8c",
+          "2026 \u5e74\u60f3\u8bfb\u5b8c",
+          "\u9c81\u8fc5\u5168\u96c6",
+          "\u9c81\u8fc5\u5168\u96c6",
+          "\u82f1\u6587\u7ecf\u5178",
+          "\u82f1\u6587\u7ecf\u5178",
+          "Apple Books",
+          "Apple Books"
+        ],
+        "reading_frame": [
+          10.0,
+          145.0,
+          200.0,
+          28.0
+        ],
+        "settings_label_frame": [
+          10.0,
+          480.0,
+          200.0,
+          28.0
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "name": "header and sidebar type",
+      "status": "pass",
+      "detail": "\u5168\u90e8\u4e66\u7c4d 26/700 True sidebar row 13/600 True",
+      "numbers": {
+        "header_26_700": true,
+        "sidebar_13_600": true
+      }
+    },
+    {
+      "n": 4,
+      "name": "shelf scroll",
+      "status": "pass",
+      "detail": "wheel over the unscrolled shelf changed 1526 of 1710 rows (bbox x 532-2146, y 172-1696, the shelf, not the sidebar); Page Down changed 1499 of 1710 rows (bbox x 15-2145, y 33-1695, the library column, chat unchanged); a further wheel after those Page Downs changed 0 rows",
+      "numbers": {
+        "wheel_rows_first_pass": 1526,
+        "wheel_bbox": [
+          532,
+          172,
+          2146,
+          1696
+        ],
+        "page_down_rows": 1499,
+        "page_down_bbox": [
+          15,
+          33,
+          2145,
+          1695
+        ],
+        "wheel_after_page_down_rows": 0,
+        "note": "pixel_changes counts differing rows, not pixels"
+      }
+    },
+    {
+      "n": 5,
+      "name": "fullscreen lights",
+      "status": "pass",
+      "detail": "hover at 40pt from the window top raised chrome lights to 1.0 (8, 20, and 28pt stayed 0); away vs hover changed 38 rows, all inside the top 112px, 0 below; enter 5 frames flips 0; hover 5 frames identical; exit via Ctrl-Command-F restored AX frames with delta 0.0, inset 6/6/6/6, chrome gaps 9/9, window 1440x855; exit-key frames 2716, 2716, 1271, 1271, 1271 (one settle, then three identical)",
+      "numbers": {
+        "hover_rows_in_top_112px": 38,
+        "hover_rows_below": 0,
+        "lights_at_40pt": 1.0,
+        "lights_at_8_20_28pt": 0.0,
+        "enter_saturated": [
+          430,
+          1268,
+          1268,
+          1268,
+          1268
+        ],
+        "hover_saturated": [
+          2134,
+          2134,
+          2134,
+          2134,
+          2134
+        ],
+        "exit_key_saturated": [
+          2716,
+          2716,
+          1271,
+          1271,
+          1271
+        ],
+        "frame_delta": 0.0,
+        "gaps": {
+          "left": 9.0,
+          "right": 9.0,
+          "bar_w": 78.0,
+          "light_w": 78.0
+        },
+        "inset": {
+          "left": 6.0,
+          "top": 6.0,
+          "right": 6.0,
+          "bottom": 6.0,
+          "sidebar_w": 220.0,
+          "chat_w": 320.0,
+          "window": [
+            1440.0,
+            855.0
+          ]
+        },
+        "windowed_ax": {
+          "close_min_x": 8.0,
+          "close_max_x": 24.0,
+          "close_min_y": 16.0,
+          "close_max_y": 32.0,
+          "mini_min_x": 31.0,
+          "mini_max_x": 47.0,
+          "mini_min_y": 16.0,
+          "mini_max_y": 32.0,
+          "zoom_min_x": 54.0,
+          "zoom_max_x": 70.0,
+          "zoom_min_y": 16.0,
+          "zoom_max_y": 32.0
+        },
+        "restored_ax": {
+          "close_min_x": 8.0,
+          "close_max_x": 24.0,
+          "close_min_y": 16.0,
+          "close_max_y": 32.0,
+          "mini_min_x": 31.0,
+          "mini_max_x": 47.0,
+          "mini_min_y": 16.0,
+          "mini_max_y": 32.0,
+          "zoom_min_x": 54.0,
+          "zoom_max_x": 70.0,
+          "zoom_min_y": 16.0,
+          "zoom_max_y": 32.0
+        }
+      }
+    },
+    {
+      "n": 6,
+      "name": "cover color",
+      "status": "pass",
+      "detail": "sRGB worst 1 missing none Middlemarch raw #C2A35A sRGB #C8A24C vs #C8A24C",
+      "numbers": {
+        "worst_srgb": 1,
+        "missing": [],
+        "plates": {
+          "Pride and Prejudice": {
+            "title": "Pride and Prejudice",
+            "raw": "#808B6D",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#7D8B6A",
+            "token": "7D8C6A",
+            "raw_delta": 3,
+            "srgb_delta": 1
+          },
+          "\u4e09\u4f53": {
+            "title": "\u4e09\u4f53",
+            "raw": "#18212A",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#16212B",
+            "token": "16212B",
+            "raw_delta": 2,
+            "srgb_delta": 0
+          },
+          "The Art of Computer Programming": {
+            "title": "The Art of Computer Programming",
+            "raw": "#EDE6D5",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#EFE6D3",
+            "token": "EEE6D3",
+            "raw_delta": 2,
+            "srgb_delta": 1
+          },
+          "Moby-Dick": {
+            "title": "Moby-Dick",
+            "raw": "#253955",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#1F3A57",
+            "token": "1F3A57",
+            "raw_delta": 6,
+            "srgb_delta": 0
+          },
+          "\u671d\u82b1\u5915\u62fe": {
+            "title": "\u671d\u82b1\u5915\u62fe",
+            "raw": "#A85A43",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#B4553C",
+            "token": "B4553C",
+            "raw_delta": 12,
+            "srgb_delta": 0
+          },
+          "\u5450\u558a": {
+            "title": "\u5450\u558a",
+            "raw": "#1C1C1C",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#1C1C1C",
+            "token": "1C1C1C",
+            "raw_delta": 0,
+            "srgb_delta": 0
+          },
+          "Walden": {
+            "title": "Walden",
+            "raw": "#35493D",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#2F4A3C",
+            "token": "2F4A3C",
+            "raw_delta": 6,
+            "srgb_delta": 0
+          },
+          "\u7ea2\u697c\u68a6": {
+            "title": "\u7ea2\u697c\u68a6",
+            "raw": "#7F322F",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#8A2B2B",
+            "token": "8A2B2B",
+            "raw_delta": 11,
+            "srgb_delta": 0
+          },
+          "Middlemarch": {
+            "title": "Middlemarch",
+            "raw": "#C2A35A",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#C8A24C",
+            "token": "C8A24C",
+            "raw_delta": 14,
+            "srgb_delta": 0
+          },
+          "\u56f4\u57ce": {
+            "title": "\u56f4\u57ce",
+            "raw": "#DEE3E6",
+            "ink": false,
+            "source": "form-1440.png",
+            "width": "layout-1440.json",
+            "srgb": "#DDE3E6",
+            "token": "DDE3E7",
+            "raw_delta": 1,
+            "srgb_delta": 1
+          },
+          "Meditations": {
+            "title": "Meditations",
+            "raw": "#483D58",
+            "srgb": "#4A3C5A",
+            "token": "4A3C5A",
+            "raw_delta": 2,
+            "srgb_delta": 0,
+            "ink": null,
+            "hits": 403,
+            "source": "form-1440.png scan"
+          },
+          "\u4eba\u95f4\u8bcd\u8bdd": {
+            "title": "\u4eba\u95f4\u8bcd\u8bdd",
+            "raw": "#F1EEE5",
+            "srgb": "#F2EEE4",
+            "token": "F2EEE4",
+            "raw_delta": 1,
+            "srgb_delta": 0,
+            "ink": null,
+            "hits": 404,
+            "source": "form-1440.png scan"
+          }
+        }
+      }
+    },
+    {
+      "n": 7,
+      "name": "support dir",
+      "status": "fail",
+      "detail": "real support changes since the run started: 22",
+      "numbers": {
+        "changed": [
+          "shell-glyphs",
+          "shell-glyphs/arrow-up-FFFFFF.png",
+          "shell-glyphs/book-6E6E73.png",
+          "shell-glyphs/book-open-6E6E73.png",
+          "shell-glyphs/bookmark-6E6E73.png",
+          "shell-glyphs/check-6E6E73.png",
+          "shell-glyphs/chevron-down-6E6E73.png",
+          "shell-glyphs/edit-6E6E73.png",
+          "shell-glyphs/file-6E6E73.png",
+          "shell-glyphs/folder-6E6E73.png",
+          "shell-glyphs/grid-1D1D1F.png",
+          "shell-glyphs/library-6E6E73.png",
+          "shell-glyphs/library-solid-1D1D1F.png",
+          "shell-glyphs/list-6E6E73.png",
+          "shell-glyphs/note-6E6E73.png",
+          "shell-glyphs/paperclip-6E6E73.png",
+          "shell-glyphs/plus-8E8E93.png",
+          "shell-glyphs/search-1D1D1F.png",
+          "shell-glyphs/sidebar-left-6E6E73.png",
+          "shell-glyphs/sidebar-right-6E6E73.png",
+          "shell-glyphs/sliders-6E6E73.png",
+          "shell-glyphs/sort-desc-6E6E73.png"
+        ],
+        "count": 22
+      }
+    },
+    {
+      "n": 8,
+      "name": "parity",
+      "status": "pass",
+      "detail": "sidebar 9.3% (cap 12), header 7.2% (cap 12), continue 14.9% (cap 28), shelf 36.1% (cap 42), chat 13.4% (cap 18)",
+      "numbers": {
+        "sidebar": 0.093,
+        "header": 0.072,
+        "continue": 0.149,
+        "shelf": 0.361,
+        "chat": 0.134
+      }
+    },
+    {
+      "n": 9,
+      "name": "chat toggle and 898",
+      "status": "pass",
+      "detail": "897 hid the panel (chat_w 0 at 897, 320 at 898) but the first click missed the button; retry presses [{'before': 320.0, 'after': 0.0, 'press': 'pressed', 'code': 0}, {'before': 0.0, 'after': 320.0, 'press': 'pressed', 'code': 0}]",
+      "numbers": {
+        "retry": [
+          {
+            "before": 320.0,
+            "after": 0.0,
+            "press": "pressed",
+            "code": 0
+          },
+          {
+            "before": 0.0,
+            "after": 320.0,
+            "press": "pressed",
+            "code": 0
+          }
+        ],
+        "first_pass": {
+          "897": 0,
+          "898_before": 320
+        }
+      }
+    }
+  ],
+  "item_fails": [
+    "cover type",
+    "support dir"
+  ],
+  "verified_head": "56da8f760f8dd014a4c4478f7517f42f6a011537"
 }

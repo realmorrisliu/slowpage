@@ -1,6 +1,6 @@
 
-✓ built the Rust crate spike-shell (622ms, 32 warnings: -v shows them)
+✓ built the Rust crate spike-shell (712ms, 32 warnings: -v shows them)
 warn spike-shell exports one item without a doc comment, which TSX sees in its declarations: SpikeApp
-✓ built the headless runner of spike-shell (633ms, 33 warnings: -v shows them)
-✓ shell.access.test.tsx › the shell does not offer the bare shelf picker (216ms)
-✓ 1 test: 1 passed, 0 failed (4.5s)
+✓ built the headless runner of spike-shell (620ms, 33 warnings: -v shows them)
+✓ shell.access.test.tsx › the shell does not offer the bare shelf picker (202ms)
+✓ 1 test: 1 passed, 0 failed (3.9s)

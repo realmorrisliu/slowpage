@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="nsh test" tests="9" failures="0" errors="0" skipped="0" time="14.529">
-  <testsuite name="shell.test.tsx" tests="9" failures="0" errors="0" skipped="0" time="3.079">
-    <testcase classname="shell.test.tsx" name="no spike title" time="0.214"/>
-    <testcase classname="shell.test.tsx" name="no night mode" time="0.124"/>
-    <testcase classname="shell.test.tsx" name="no theme switch" time="0.129"/>
-    <testcase classname="shell.test.tsx" name="no spread" time="0.127"/>
-    <testcase classname="shell.test.tsx" name="full form lists the sidebar groups and the chat field" time="0.136"/>
-    <testcase classname="shell.test.tsx" name="an imported source appears under 来源" time="0.319"/>
-    <testcase classname="shell.test.tsx" name="添加来源 adds a second source and PDF filters the grid" time="0.913"/>
-    <testcase classname="shell.test.tsx" name="继续阅读 lists opened books with the latest first" time="0.668"/>
-    <testcase classname="shell.test.tsx" name="sidebar toggle hides and shows the sidebar" time="0.450"/>
+<testsuites name="nsh test" tests="9" failures="1" errors="0" skipped="0" time="128.974">
+  <testsuite name="shell.test.tsx" tests="9" failures="1" errors="0" skipped="0" time="2.241">
+    <testcase classname="shell.test.tsx" name="no spike title" time="0.121"/>
+    <testcase classname="shell.test.tsx" name="no night mode" time="0.114"/>
+    <testcase classname="shell.test.tsx" name="no theme switch" time="0.114"/>
+    <testcase classname="shell.test.tsx" name="no spread" time="0.114"/>
+    <testcase classname="shell.test.tsx" name="full form lists the sidebar groups and the chat field" time="0.115"/>
+    <testcase classname="shell.test.tsx" name="an imported source appears under 来源" time="0.291"/>
+    <testcase classname="shell.test.tsx" name="添加来源 adds a second source and PDF filters the grid" time="0.728"/>
+    <testcase classname="shell.test.tsx" name="继续阅读 lists opened books with the latest first" time="0.295">
+      <failure message="`Plain Essay` matches 2 pressable views: say which (`Plain Essay &gt;&gt; nth=0`), or look inside a view around it (`id:list &gt;&gt; Plain Essay`)">`Plain Essay` matches 2 pressable views: say which (`Plain Essay &gt;&gt; nth=0`), or look inside a view around it (`id:list &gt;&gt; Plain Essay`)&#10;on screen: &quot;搜索书名、作者、笔记&quot;, &quot;书库&quot;, &quot;全部书籍&quot;, &quot;3&quot;, &quot;正在读&quot;, &quot;2&quot;, &quot;想读&quot;, &quot;0&quot;, &quot;已读完&quot;, &quot;0&quot;, &quot;PDF&quot;, &quot;1&quot;, &quot;笔记&quot;, &quot;高亮与笔记&quot;, &quot;0&quot;, &quot;书单&quot;, &quot;来源&quot;, &quot;Apple Books&quot;, &quot;3&quot;, &quot;添加来源&quot;, &quot;设置&quot;, &quot;全部书籍&quot;, &quot;继续阅读&quot;, &quot;Field Guide&quot;, &quot;第 1 页&quot;, &quot;PDF&quot;, &quot;今天 07:05&quot;, &quot;Plain Essay&quot;, &quot;第 1 页&quot;, &quot;今天 07:05&quot;, &quot;书架&quot;, &quot;按最近阅读&quot;, &quot;Field Guide&quot;, &quot;Sample Author&quot;, &quot;PDF&quot;, &quot;Plain Essay&quot;, &quot;Sample Author&quot;, &quot;Folder Book&quot;, &quot;Jane Austen&quot;</failure>
+    </testcase>
+    <testcase classname="shell.test.tsx" name="sidebar toggle hides and shows the sidebar" time="0.349"/>
   </testsuite>
 </testsuites>
