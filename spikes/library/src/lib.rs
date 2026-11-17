@@ -4,7 +4,10 @@ mod apple;
 mod calibre;
 mod cover;
 mod disk;
+mod shelf_grid;
 mod snapshot;
+
+pub use shelf_grid::{second_cover_right, shelf_grid, ShelfGrid};
 
 use std::path::{Path, PathBuf};
 
