@@ -1877,11 +1877,14 @@ def form_diff_self_check():
     )
     head = git_head()
     assert head == "" or (len(head) == 40 and int(head, 16) >= 0)
+    real_before = READER_PROFILE.exists()
     try:
         require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(READER_PROFILE)})
-        raise AssertionError("real support was accepted")
-    except RuntimeError:
-        pass
+    except RuntimeError as err:
+        assert "real support directory" in str(err), err
+    else:
+        raise AssertionError(f"real support was accepted: {READER_PROFILE}")
+    assert READER_PROFILE.exists() == real_before, "the real support directory changed"
     with tempfile.TemporaryDirectory() as support_root:
         one = Path(support_root) / "a.png"
         two = Path(support_root) / "b.png"
@@ -1894,7 +1897,38 @@ def form_diff_self_check():
             (1440, 855),
         )
         isolated = Path(support_root) / "support"
-        assert require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(isolated)}) == isolated.resolve()
+        isolated_got = require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(isolated)})
+        assert isolated_got == isolated.resolve(), (
+            f"support path is not canonical\n  given {isolated}\n  got {isolated_got}\n  want {isolated.resolve()}"
+        )
+        private = Path(support_root) / "private" / "folders"
+        private.mkdir(parents=True)
+        var_link = Path(support_root) / "var"
+        var_link.symlink_to(Path(support_root) / "private", target_is_directory=True)
+        given = var_link / "folders" / "support"
+        want = (private / "support").resolve()
+        got = require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(given)})
+        assert got == want, f"symlinked support path is not canonical\n  given {given}\n  got {got}\n  want {want}"
+        assert got.is_dir() and not got.is_symlink(), f"canonical support path is not a real directory: {got}"
+        (got / "marker").write_text("ok")
+        assert (given / "marker").read_text() == "ok", f"writes through {given} did not land in {got}"
+        alias = Path(support_root) / "alias-real"
+        alias.symlink_to(READER_PROFILE)
+        try:
+            require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(alias)})
+        except RuntimeError as err:
+            assert "real support directory" in str(err), err
+        else:
+            raise AssertionError(f"symlink to the real support directory was accepted: {alias} -> {READER_PROFILE}")
+        nested = Path(support_root) / "alias-nested"
+        nested.symlink_to(READER_PROFILE)
+        try:
+            require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(nested / "child")})
+        except RuntimeError as err:
+            assert "real support directory" in str(err), err
+        else:
+            raise AssertionError(f"path under the real support directory was accepted: {nested / 'child'}")
+        assert READER_PROFILE.exists() == real_before, "a refused path created the real support directory"
     parked = _sample_layout()
     parked["lights"] = False
     assert any(item.startswith("sidebar.toggle") for item in alignment_report(parked))
@@ -3658,13 +3692,13 @@ def require_isolated_support(env):
     raw = env.get("SUPERREADER_SUPPORT_DIR") or ""
     if not raw:
         raise RuntimeError("refusing to launch without SUPERREADER_SUPPORT_DIR")
-    path = Path(raw)
+    given = Path(raw)
     real = READER_PROFILE.resolve()
-    got = path.resolve()
-    if got == real or real in got.parents or got in real.parents:
-        raise RuntimeError("refusing to launch against the real support directory")
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    canonical = given.resolve()
+    if canonical == real or real in canonical.parents or canonical in real.parents:
+        raise RuntimeError(f"refusing to launch against the real support directory ({canonical})")
+    canonical.mkdir(parents=True, exist_ok=True)
+    return canonical
 
 
 def launch(out, name, env, ready, timeout, watch=None, binary=None):
