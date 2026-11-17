@@ -345,13 +345,14 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
             // while the pointer is at the top, and hide them otherwise.
             place_fullscreen_lights(window, shown > 0.5);
             rt.lights.set(shown);
+            clear_shell_chrome(window);
         } else {
             paint_lights(window, 1.0);
             rt.lights.set(1.0);
+            place_contents(window, rt, shown);
+            place_title(window, rt, shown);
         }
         rt.full.set(true);
-        place_contents(window, rt, shown);
-        place_title(window, rt, shown);
         write_json(window, rt, true);
         return;
     }
@@ -429,9 +430,7 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     rt.lights.set(next);
     paint_lights(window, next);
     if shell_on() {
-        if let Some(toolbar) = window.toolbar() {
-            clear_contents(&toolbar);
-        }
+        clear_shell_chrome(window);
     } else {
         place_contents(window, rt, next);
         place_title(window, rt, next);
@@ -953,6 +952,16 @@ fn place_contents(window: &NSWindow, rt: &Runtime, alpha: f64) {
     }
     if let Some(view) = item_view(&toolbar, CONTENTS_ID) {
         record_gap(window, rt, &view);
+    }
+}
+
+/// The library title is the card header. A window title or a reader toolbar
+/// item would sit in that band while the window is windowed and vanish in
+/// fullscreen.
+fn clear_shell_chrome(window: &NSWindow) {
+    window.setTitle(&NSString::from_str(""));
+    if let Some(toolbar) = window.toolbar() {
+        clear_contents(&toolbar);
     }
 }
 

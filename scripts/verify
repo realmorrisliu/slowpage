@@ -1627,6 +1627,22 @@ def form_diff_self_check():
     assert clipping_report(nested) == []
     bare = {"window": [100, 100], "nodes": [dict(nested["nodes"][0])]}
     assert any("no type" in item for item in plate_report(bare, None))
+    assert any("plate has no type" in item for item in plate_report(nested, None))
+    with tempfile.TemporaryDirectory() as tmp:
+        width, height = 578, 514
+        face_px = bytes([0xC8, 0xA2, 0x4C, 0xFF])
+        blank_px = bytearray(face_px * (width * height))
+        blank = Path(tmp) / "blank.png"
+        blank.write_bytes(encode_png(width, height, bytes(blank_px)))
+        assert any("plate has no type" in item for item in plate_report(nested, blank))
+        inked_px = bytearray(blank_px)
+        for y in range(100, 150):
+            for x in range(70, 120):
+                start = (y * width + x) * 4
+                inked_px[start : start + 4] = bytes([0x1D, 0x1D, 0x1F, 0xFF])
+        inked = Path(tmp) / "inked.png"
+        inked.write_bytes(encode_png(width, height, bytes(inked_px)))
+        assert plate_report(nested, inked) == [], plate_report(nested, inked)
     face = bytearray([0xC8, 0xA2, 0x4C])
     ink = bytearray([0xFF, 0xFF, 0xFF])
     row = bytearray(face * 20)
@@ -1989,6 +2005,7 @@ def plate_report(layout, png):
             if inner is None or inner[2] < 1 or inner[3] < 1 or not _contains(frame, inner):
                 problems.append(f"{name} {kind} is outside the plate")
         if rows is None:
+            problems.append(f"{name} plate has no type")
             continue
         face = _sample(rows, channels, scale, frame, 0.22, 0.16)
         want = str(plate.get("plate_rgb") or "")

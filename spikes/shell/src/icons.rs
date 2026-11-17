@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use nsh_platform_macos::objc2::rc::Retained;
 use nsh_platform_macos::objc2::AnyThread;
 use objc2_app_kit::NSImage;
@@ -58,20 +61,58 @@ pub fn notes_image() -> Option<Retained<NSImage>> {
     image(NOTE)
 }
 
-pub fn glyph_file(name: &str) -> Option<std::path::PathBuf> {
+pub fn glyph_file(name: &str) -> Option<String> {
     glyph_ink(name, "000000")
 }
 
-pub fn glyph_ink(name: &str, hex: &str) -> Option<std::path::PathBuf> {
-    let svg = named_svg(name)?;
-    let dir = crate::settings::glyph_cache_dir();
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join(format!("{name}-{hex}.png"));
-    if !path.is_file() {
-        let png = raster_png(&paint_hex(svg, hex), 48).ok()?;
-        std::fs::write(&path, png).ok()?;
+/// A `data:` URL for the painted glyph. The bytes stay in this process.
+/// Nothing is written under Application Support, including when
+/// `SUPERREADER_SUPPORT_DIR` is unset.
+pub fn glyph_ink(name: &str, hex: &str) -> Option<String> {
+    let key = format!("{name}-{hex}");
+    if let Some(hit) = glyph_memory()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&key).cloned())
+    {
+        return Some(hit);
     }
-    Some(path)
+    let svg = named_svg(name)?;
+    let png = raster_png(&paint_hex(svg, hex), 48).ok()?;
+    let src = format!("data:image/png;base64,{}", base64(&png));
+    if let Ok(mut map) = glyph_memory().lock() {
+        map.insert(key, src.clone());
+    }
+    Some(src)
+}
+
+fn glyph_memory() -> &'static Mutex<HashMap<String, String>> {
+    static MEMORY: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    MEMORY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let bits = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((bits >> 18) & 63) as usize] as char);
+        out.push(TABLE[((bits >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((bits >> 6) & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(bits & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 fn named_svg(name: &str) -> Option<&'static str> {
@@ -187,5 +228,44 @@ mod tests {
             let ink = pixmap.pixels().iter().filter(|px| px.alpha() > 0).count();
             assert!(ink > 20, "ink pixels {ink}");
         }
+    }
+
+    #[test]
+    fn glyph_ink_writes_nothing_when_the_support_dir_is_overridden() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-glyph-memory-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let previous = std::env::var("SUPERREADER_SUPPORT_DIR").ok();
+        std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
+        let real = crate::settings::support_dir();
+        assert_eq!(real, dir);
+        let home = crate::settings::default_support_dir().join("shell-glyphs");
+        let before = names_in(&home);
+        let src = glyph_ink("search", "1D1D1F").expect("search raster");
+        assert!(src.starts_with("data:image/png;base64,"));
+        assert!(src.len() > 80);
+        assert_eq!(names_in(&home), before);
+        assert!(
+            std::fs::read_dir(&dir).unwrap().next().is_none(),
+            "glyph raster created a file under {dir:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        match previous {
+            Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+            None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+        }
+    }
+
+    fn names_in(path: &std::path::Path) -> Vec<String> {
+        let mut names = Vec::new();
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return names;
+        };
+        for entry in entries.flatten() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        names.sort();
+        names
     }
 }

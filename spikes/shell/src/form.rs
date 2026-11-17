@@ -977,7 +977,9 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             cover["plate"] = serde_json::json!(true);
             cover["plate_rgb"] = serde_json::json!(format!("{:06X}", color & 0x00FF_FFFF));
             nodes.push(cover);
-            let (title_h, author_h) = plate_type_size(grid.cover_h);
+            let (title_size, author_size) = plate_type_size(grid.cover_h);
+            let title_h = plate_line_box(title_size);
+            let author_h = plate_line_box(author_size);
             let text_w = (grid.cover_w - crate::tokens::COVER_LABEL_PX * 2.0).max(0.0);
             let block = title_h + crate::tokens::SHELF_META_GAP + author_h;
             let text_x = x + crate::tokens::COVER_LABEL_PX;
@@ -987,7 +989,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
                 &format!("cover.{index}.type.title"),
                 "text",
                 [text_x, text_y, text_w, title_h],
-                [text_width(title, title_h), title_h],
+                [text_width(title, title_size), title_h],
                 frame,
                 true,
                 title,
@@ -1002,7 +1004,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
                     text_w,
                     author_h,
                 ],
-                [text_width(author, author_h), author_h],
+                [text_width(author, author_size), author_h],
                 frame,
                 true,
                 author,
@@ -1593,6 +1595,12 @@ fn plate_type_size(height: f32) -> (f32, f32) {
     }
 }
 
+/// NSH's line box is 1.2 of the font size when line height is unset. The
+/// cover clips its children, so the frame has to hold that box.
+fn plate_line_box(size: f32) -> f32 {
+    (size * 1.2).ceil()
+}
+
 fn write_frames(placed: &Placement, library: &LibraryIn) {
     let CardBox::Placed { rect, .. } = placed.card else {
         return;
@@ -1832,9 +1840,7 @@ fn sidebar_toggle_button(row: crate::tokens::ChromeRow, form: Signal<Form>) -> A
             form.set(next);
         });
     if let Some(path) = crate::icons::glyph_ink("sidebar-left", "6E6E73") {
-        button = button.child(
-            image(format!("file://{}", path.display())).size(px(crate::tokens::SIDEBAR_ICON)),
-        );
+        button = button.child(image(path).size(px(crate::tokens::SIDEBAR_ICON)));
     }
     button.into_element()
 }
@@ -1879,8 +1885,7 @@ fn panel_toggle_button(
             .top(px(row.toggle_y));
     }
     if let Some(path) = crate::icons::glyph_ink("sidebar-right", "6E6E73") {
-        button = button
-            .child(image(format!("file://{}", path.display())).size(px(crate::tokens::PANEL_ICON)));
+        button = button.child(image(path).size(px(crate::tokens::PANEL_ICON)));
     }
     button.into_element()
 }
@@ -2053,9 +2058,7 @@ fn glyph_box(name: &str, solid: bool, size: f32, hex: Option<&str>) -> AnyElemen
     let ink = hex.unwrap_or("1D1D1F");
     let path = crate::icons::glyph_ink(&key, ink).or_else(|| crate::icons::glyph_ink(name, ink));
     match path {
-        Some(path) => image(format!("file://{}", path.display()))
-            .size(px(size))
-            .into_element(),
+        Some(path) => image(path).size(px(size)).into_element(),
         None => view().size(px(size)).into_element(),
     }
 }
@@ -2140,7 +2143,7 @@ fn icon_button(name: &str, label: &str, size: f32) -> AnyElement {
         .accessible(true)
         .label(label.to_string());
     if let Some(path) = crate::icons::glyph_ink(name, "6E6E73") {
-        button = button.child(image(format!("file://{}", path.display())).size(px(size)));
+        button = button.child(image(path).size(px(size)));
     }
     button.into_element()
 }
@@ -2304,9 +2307,7 @@ fn attach_button() -> AnyElement {
         .accessible(true)
         .label("附件");
     if let Some(path) = crate::icons::glyph_ink("paperclip", "6E6E73") {
-        button = button.child(
-            image(format!("file://{}", path.display())).size(px(crate::tokens::ATTACH_ICON)),
-        );
+        button = button.child(image(path).size(px(crate::tokens::ATTACH_ICON)));
     }
     button.into_element()
 }
@@ -2352,8 +2353,7 @@ fn send_button() -> AnyElement {
         .accessible(true)
         .label("发送");
     if let Some(path) = crate::icons::glyph_ink("arrow-up", "FFFFFF") {
-        button = button
-            .child(image(format!("file://{}", path.display())).size(px(crate::tokens::SEND_ICON)));
+        button = button.child(image(path).size(px(crate::tokens::SEND_ICON)));
     }
     button.into_element()
 }
@@ -2464,8 +2464,7 @@ fn sort_control() -> AnyElement {
         .accessible(true)
         .label("最近阅读");
     if let Some(path) = crate::icons::glyph_ink("sort-desc", "6E6E73") {
-        control = control
-            .child(image(format!("file://{}", path.display())).size(px(crate::tokens::SORT_ICON)));
+        control = control.child(image(path).size(px(crate::tokens::SORT_ICON)));
     }
     control = control.child(view().flex_1().min_w(px(0.0)).child(fit_text(
         "最近阅读".to_string(),
@@ -2475,9 +2474,7 @@ fn sort_control() -> AnyElement {
         crate::tokens::BODY_TRACK_EM,
     )));
     if let Some(path) = crate::icons::glyph_ink("chevron-down", "6E6E73") {
-        control = control.child(
-            image(format!("file://{}", path.display())).size(px(crate::tokens::CHEVRON_ICON)),
-        );
+        control = control.child(image(path).size(px(crate::tokens::CHEVRON_ICON)));
     }
     control.into_element()
 }
@@ -2511,8 +2508,7 @@ fn view_button(name: &str, label: &str, on: bool) -> AnyElement {
     }
     let hex = if on { "1D1D1F" } else { "6E6E73" };
     if let Some(path) = crate::icons::glyph_ink(name, hex) {
-        button = button
-            .child(image(format!("file://{}", path.display())).size(px(crate::tokens::VIEW_ICON)));
+        button = button.child(image(path).size(px(crate::tokens::VIEW_ICON)));
     }
     button.into_element()
 }
@@ -2524,13 +2520,21 @@ fn card_header(title: &str, count: u32) -> AnyElement {
         .flex_row()
         .items_baseline()
         .gap(px(crate::tokens::TITLE_GAP))
-        .child(view().flex_1().min_w(px(0.0)).child(fit_text(
-            title.to_string(),
-            crate::tokens::H1_SIZE,
-            crate::tokens::H1_WEIGHT,
-            ink(),
-            crate::tokens::H1_TRACK_EM,
-        )))
+        .child(view().flex_1().min_w(px(0.0)).child({
+            // No tooltip. The slot is the width of the card, and a hint of
+            // this same string sits centered in the toolbar.
+            remember_font(title, crate::tokens::H1_SIZE, crate::tokens::H1_WEIGHT);
+            line!(
+                title.to_string(),
+                crate::tokens::H1_SIZE,
+                crate::tokens::H1_WEIGHT,
+                ink(),
+                crate::tokens::H1_TRACK_EM
+            )
+            .truncate()
+            .accessible(true)
+            .label(title.to_string())
+        }))
         .child({
             let count_label = format!("{count} 本");
             remember_font(
@@ -2955,17 +2959,20 @@ fn plate_line(
     tracking: f32,
 ) -> AnyElement {
     remember_font(&label, size, weight);
+    let line_h = plate_line_box(size);
     view()
         .w(px(width))
+        .h(px(line_h))
         .min_w(px(0.0))
+        .flex_shrink(0.0)
         .child(
             line!(label.clone(), size, weight, color, tracking)
-                .w_full()
+                .w(px(width))
+                .h(px(line_h))
                 .text_center()
                 .truncate()
                 .accessible(true)
-                .label(label.clone())
-                .tooltip(text(label).text_size(px(size)).text_color(color)),
+                .label(label),
         )
         .into_element()
 }

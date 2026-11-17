@@ -16,7 +16,7 @@ pub fn support_dir() -> PathBuf {
     default_support_dir()
 }
 
-/// Icon rasters, settings, and history. A set env wins, and a blank env means
+/// Settings and history. A set env wins, and a blank env means
 /// the real directory. The file is the same override for a process that was
 /// not given the env, such as `open -a`.
 pub fn configured_support_dir() -> Option<PathBuf> {
@@ -41,7 +41,7 @@ fn trimmed_dir(value: &str) -> Option<PathBuf> {
     }
 }
 
-fn default_support_dir() -> PathBuf {
+pub(crate) fn default_support_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     PathBuf::from(home).join("Library/Application Support/app.slowpage.reader")
 }
