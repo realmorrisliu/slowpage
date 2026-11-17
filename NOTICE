@@ -38,3 +38,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+`.cursor/skills/slowpage-design/SKILL.md` borrows two ideas from Anthropic's
+frontend-design skill. The ideas are the anti-slop list and the check that
+plans first and then compares screenshots. That skill is Apache-2.0.
+Upstream is
+https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md.
+The Apache terms are the upstream `LICENSE.txt` next to that file. Slowpage
+does not follow that skill's instruction to avoid system fonts or to invent
+a display face.
+
+`.cursor/skills/apple-design/` vendors Emil Kowalski's apple-design skill.
+The license in that directory is MIT, Copyright (c) 2026 Emil Kowalski.
+Upstream is
+https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md.
+The vendored copy removes the opening section that tells an agent to reply
+"I'm ready" and then stop. A note at the top says to use the principles and
+not the web or CSS snippets.
