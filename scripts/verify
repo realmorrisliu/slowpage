@@ -692,6 +692,9 @@ def alignment_report(layout):
         side_pad = float(layout["sidebar_pad_x"])
         card_pad = float(layout["card_pad_x"])
         chat_pad = float(layout["chat_pad_x"])
+        corner = float(layout["window_corner"])
+        composer_inset = float(layout["composer_inset"])
+        composer_pad = float(layout["composer_pad"])
         window_w = float(layout["window"][0])
         window_h = float(layout["window"][1])
     except (KeyError, TypeError, ValueError, IndexError):
@@ -748,6 +751,9 @@ def alignment_report(layout):
         return problems
     if abs(card[1] - inset) > ALIGN_TOL:
         problems.append(f"card Y {card[1] - inset:+.2f}")
+    card_bottom = window_h - (card[1] + card[3])
+    if abs(card_bottom - inset) > ALIGN_TOL:
+        problems.append(f"card bottom {card_bottom - inset:+.2f}")
     sidebar = frame("sidebar")
     if sidebar is None:
         delta = card[0] - inset
@@ -778,6 +784,13 @@ def alignment_report(layout):
                 problems.append(f"chat.sub baseline {delta:+.2f}")
     content_x = card[0] + card_pad
     for node_id in ("shelf.header", "shelf.section", "continue.section"):
+        box = frame(node_id)
+        if box is None:
+            continue
+        delta = box[0] - content_x
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"{node_id} X {delta:+.2f}")
+    for node_id in ("continue.0", "cover.0"):
         box = frame(node_id)
         if box is None:
             continue
@@ -845,15 +858,83 @@ def alignment_report(layout):
         gaps = [right[0] - (left[0] + left[2]) for left, right in zip(continues, continues[1:])]
         if any(abs(gap - gaps[0]) > ALIGN_TOL for gap in gaps[1:]):
             problems.append(f"continue gap {gaps[-1] - gaps[0]:+.2f}")
+    cover = frame("continue.0.cover")
+    title = frame("continue.0.title")
+    if cover is not None and title is not None:
+        delta = title[1] - cover[1]
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"continue.0.title Y {delta:+.2f}")
+    search = frame("sidebar.search")
+    if search is not None:
+        delta = search[0] - side_pad
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"sidebar.search X {delta:+.2f}")
+    if sidebar is not None:
+        settings = frame("sidebar.settings")
+        if settings is None:
+            problems.append("sidebar.settings missing")
+        else:
+            gap = window_h - (settings[1] + settings[3])
+            delta = gap - corner
+            if abs(delta) > ALIGN_TOL:
+                problems.append(f"sidebar.settings bottom {delta:+.2f}")
+    composer = frame("composer")
+    if composer is not None:
+        right_gap = window_w - (composer[0] + composer[2])
+        bottom_gap = window_h - (composer[1] + composer[3])
+        if abs(right_gap - composer_inset) > ALIGN_TOL:
+            problems.append(f"composer right {right_gap - composer_inset:+.2f}")
+        if abs(bottom_gap - composer_inset) > ALIGN_TOL:
+            problems.append(f"composer bottom {bottom_gap - composer_inset:+.2f}")
+        if composer_inset + ALIGN_TOL < corner:
+            problems.append(f"composer inset {composer_inset - corner:+.2f}")
+        placeholder = frame("composer.placeholder")
+        attach = frame("composer.attach")
+        send = frame("composer.send")
+        chip = frame("composer.chip")
+        if placeholder is None or attach is None or send is None:
+            problems.append("composer controls missing")
+        else:
+            if abs(placeholder[0] - attach[0]) > ALIGN_TOL:
+                problems.append(f"composer.attach X {attach[0] - placeholder[0]:+.2f}")
+            if abs(placeholder[0] - (composer[0] + composer_pad)) > ALIGN_TOL:
+                problems.append(
+                    f"composer.placeholder X {placeholder[0] - (composer[0] + composer_pad):+.2f}"
+                )
+            if abs(placeholder[1] - (composer[1] + composer_pad)) > ALIGN_TOL:
+                problems.append(
+                    f"composer.placeholder Y {placeholder[1] - (composer[1] + composer_pad):+.2f}"
+                )
+            send_gap = (composer[0] + composer[2]) - (send[0] + send[2])
+            if abs(send_gap - composer_pad) > ALIGN_TOL:
+                problems.append(f"composer.send X {send_gap - composer_pad:+.2f}")
+            row_mid = _mid(attach)
+            for node_id, box in (("composer.send", send), ("composer.chip", chip)):
+                if box is None:
+                    continue
+                delta = _mid(box) - row_mid
+                if abs(delta) > ALIGN_TOL:
+                    problems.append(f"{node_id} Y {delta:+.2f}")
+                if abs(box[3] - attach[3]) > ALIGN_TOL:
+                    problems.append(f"{node_id} height {box[3] - attach[3]:+.2f}")
+            if chip is not None:
+                raw = by_id.get("composer.chip") or {}
+                try:
+                    natural = float(raw.get("intrinsic")[0])
+                except (TypeError, ValueError, IndexError):
+                    natural = None
+                if natural is not None and chip[2] > natural + ALIGN_TOL:
+                    problems.append(f"composer.chip stretches {chip[2] - natural:+.2f}")
     return problems
 
 
 def _sample_layout(shift=0.0):
-    def node(node_id, kind, frame):
+    def node(node_id, kind, frame, intrinsic=None):
         return {
             "id": node_id,
             "kind": kind,
             "frame": frame,
+            "intrinsic": intrinsic if intrinsic is not None else [frame[2], frame[3]],
             "container": [0, 0, 800, 600],
             "ellipsis": False,
             "scroll_child": False,
@@ -866,6 +947,9 @@ def _sample_layout(shift=0.0):
         "sidebar_pad_x": 10.0,
         "card_pad_x": 40.0,
         "chat_pad_x": 16.0,
+        "window_corner": 18.0,
+        "composer_inset": 18.0,
+        "composer_pad": 12.0,
         "nodes": [
             node("sidebar", "container", [0, 0, 220, 600]),
             node("card", "container", [226, 6, 248, 588]),
@@ -889,6 +973,14 @@ def _sample_layout(shift=0.0):
             node("chat.sub", "text", [604, 20, 50, 14]),
             node("chat.new", "chrome", [720, 10, 28, 28]),
             node("chat.panel", "chrome", [750, 10, 28, 28]),
+            node("sidebar.settings", "sidebar-row", [10, 554, 200, 28]),
+            node("sidebar.settings.icon", "icon", [18, 561, 14, 14]),
+            node("sidebar.settings.label", "text", [44, 560.4, 120, 15.2]),
+            node("composer", "container", [498, 496.4, 284, 85.6]),
+            node("composer.placeholder", "text", [510, 508.4, 80, 15.6]),
+            node("composer.attach", "chrome", [510, 544, 16, 26]),
+            node("composer.chip", "button", [532, 544, 80, 26], intrinsic=[80, 26]),
+            node("composer.send", "chrome", [744, 544, 26, 26]),
         ],
     }
 
@@ -966,6 +1058,27 @@ def save_alignment_crops(out, stem, png):
             header[2] + 16.0,
             header[3] + 12.0,
         ]
+    try:
+        window_h = float(window[1])
+    except (TypeError, ValueError, IndexError):
+        window_h = None
+    settings = _box((nodes.get("sidebar.settings") or {}).get("frame"))
+    sidebar = _box((nodes.get("sidebar") or {}).get("frame"))
+    if settings is not None and sidebar is not None and window_h is not None:
+        top = max(0.0, settings[1] - 8.0)
+        boxes["sidebar-bottom"] = [sidebar[0], top, sidebar[2], max(1.0, window_h - top)]
+    composer = _box((nodes.get("composer") or {}).get("frame"))
+    chat = _box((nodes.get("chat") or {}).get("frame"))
+    if composer is not None and window_h is not None:
+        top = max(0.0, composer[1] - 8.0)
+        boxes["composer"] = [
+            max(0.0, composer[0] - 8.0),
+            top,
+            composer[2] + 16.0,
+            max(1.0, window_h - top),
+        ]
+        if chat is not None:
+            boxes["chat-bottom"] = [chat[0], top, chat[2], max(1.0, window_h - top)]
     for name, box in boxes.items():
         try:
             save_zoom_crop(Path(png), layout, out / f"{stem}-{name}-4x.png", box)
@@ -1383,6 +1496,18 @@ def form_diff_self_check():
     assert alignment_report(_sample_layout()) == []
     shifted = alignment_report(_sample_layout(2.0))
     assert any(item.startswith("toolbar Y +2.00") for item in shifted), shifted
+    stretched = _sample_layout()
+    for node in stretched["nodes"]:
+        if node["id"] == "composer.chip":
+            node["frame"][2] = 206.0
+    stretch = alignment_report(stretched)
+    assert any(item.startswith("composer.chip stretches") for item in stretch), stretch
+    short = _sample_layout()
+    for node in short["nodes"]:
+        if node["id"] == "sidebar.settings":
+            node["frame"][1] = 560.0
+    corner = alignment_report(short)
+    assert any(item.startswith("sidebar.settings bottom") for item in corner), corner
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "tiny.png"
         dest = Path(tmp) / "tiny-4x.png"

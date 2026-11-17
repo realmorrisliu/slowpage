@@ -82,7 +82,11 @@ pub const WINDOW_H: f64 = 900.0;
 
 pub const SIDE_PAD_X: f32 = 10.0;
 pub const SIDE_PAD_TOP: f32 = 52.0;
-pub const SIDE_PAD_BOTTOM: f32 = 12.0;
+/// The macOS window corner. The card radius plus the card inset.
+/// A pinned row or a rounded card closer than this is clipped.
+pub const WINDOW_CORNER: f32 = CARD_RADIUS as f32 + INSET as f32;
+/// Clears the window corner. The stylesheet's 12 sits inside it.
+pub const SIDE_PAD_BOTTOM: f32 = WINDOW_CORNER;
 pub const TOP_ROW_H: f32 = CHROME_H;
 pub const TOGGLE_SIZE: f32 = 28.0;
 pub const TOGGLE_RADIUS: f32 = 7.0;
@@ -186,22 +190,27 @@ pub const BUBBLE_PX: f32 = 12.0;
 pub const BUBBLE_PY: f32 = 8.0;
 pub const BUBBLE_MAX: f32 = 250.0;
 pub const COMPOSER_CLEAR: f32 = 120.0;
-pub const COMPOSER_INSET: f32 = 12.0;
+/// The composer card clears the window corner on every side.
+pub const COMPOSER_INSET: f32 = WINDOW_CORNER;
 pub const COMPOSER_RADIUS: f32 = 14.0;
-pub const COMPOSER_PT: f32 = 12.0;
-pub const COMPOSER_PR: f32 = 10.0;
-pub const COMPOSER_PB: f32 = 8.0;
-pub const COMPOSER_PL: f32 = 14.0;
+/// One pad inside the composer. The stylesheet's 12, 10, 8, and 14 do not share an edge.
+pub const COMPOSER_PAD: f32 = 12.0;
+pub const COMPOSER_PT: f32 = COMPOSER_PAD;
+pub const COMPOSER_PR: f32 = COMPOSER_PAD;
+pub const COMPOSER_PB: f32 = COMPOSER_PAD;
+pub const COMPOSER_PL: f32 = COMPOSER_PAD;
 pub const PLACEHOLDER_H: f32 = 20.0;
 pub const COMPOSER_ROW_MT: f32 = 20.0;
 pub const COMPOSER_ROW_GAP: f32 = 6.0;
 pub const ATTACH: f32 = 24.0;
 pub const ATTACH_ICON: f32 = 16.0;
 pub const SCOPE_PX: f32 = 7.0;
-pub const SCOPE_H: f32 = 22.0;
+/// The chip and the send button are one control, so the row has one center and one height.
+pub const COMPOSER_CONTROL: f32 = 26.0;
+pub const SCOPE_H: f32 = COMPOSER_CONTROL;
 pub const SCOPE_RADIUS: f32 = 6.0;
 pub const SCOPE_GAP: f32 = 4.0;
-pub const SEND: f32 = 26.0;
+pub const SEND: f32 = COMPOSER_CONTROL;
 pub const SEND_ICON: f32 = 14.0;
 pub const CHIP_RADIUS: f32 = 999.0;
 pub const CHIP_GAP: f32 = 6.0;
@@ -420,5 +429,13 @@ mod tests {
         assert!((TOGGLE_TOP + TOGGLE_SIZE / 2.0 - center).abs() < 0.01);
         assert!((INSET as f32 + TOOLBAR_H / 2.0 - center).abs() < 0.01);
         assert!((library_min_height() - 516.0).abs() < 0.1);
+        assert!((WINDOW_CORNER - 18.0).abs() < 0.01);
+        assert!((COMPOSER_INSET - WINDOW_CORNER).abs() < 0.01);
+        assert!((SIDE_PAD_BOTTOM - WINDOW_CORNER).abs() < 0.01);
+        assert!((COMPOSER_PT - COMPOSER_PAD).abs() < 0.01);
+        assert!((COMPOSER_PR - COMPOSER_PAD).abs() < 0.01);
+        assert!((COMPOSER_PB - COMPOSER_PAD).abs() < 0.01);
+        assert!((COMPOSER_PL - COMPOSER_PAD).abs() < 0.01);
+        assert!((SCOPE_H - SEND).abs() < 0.01);
     }
 }

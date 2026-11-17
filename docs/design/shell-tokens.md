@@ -23,7 +23,7 @@ The card in the stylesheet starts at the sidebar's right edge. The shell keeps a
 
 | CSS | Value | Rust |
 | --- | --- | --- |
-| `.side` padding | 52px 10px 12px | `SIDE_PAD_TOP` (stylesheet only), `SIDE_PAD_X`, `SIDE_PAD_BOTTOM` |
+| `.side` padding | 52px 10px 12px | `SIDE_PAD_TOP` (stylesheet only), `SIDE_PAD_X`, `SIDE_PAD_BOTTOM` is `WINDOW_CORNER` (18) |
 | `.side-top` height | 52px in the stylesheet | `TOP_ROW_H` is `CHROME_H`, 48 |
 | `.tb` | 28px, radius 7px | `TOGGLE_SIZE`, `TOGGLE_RADIUS` |
 | sidebar glyph | 18px, IconMCP `sidebar-left` | `SIDEBAR_ICON` |
@@ -100,7 +100,9 @@ Horizontal edges share one pad:
 
 An icon and a label in one row share that row's vertical center. A pair on one baseline (the shelf title and its count, the chat name and its subtitle) shares the bottom of the line box. Repeated gaps stay on their tokens: the shelf column gap is 42, the shelf row gap is `SHELF_ROW_GAP` (28), and the continue gap is `CONTINUE_GAP` (16). The source menu clears the settings stack `SIDE_PAD_BOTTOM + ROW_H`, not a copy of the old 52-point row.
 
-`layout.json` records `chrome_center`, `inset`, `sidebar_pad_x`, `card_pad_x`, and `chat_pad_x` with the frames. `shell-clip` checks those centers, edges, and gaps within 0.5 points at the minimum window, at 1440 by 900, and at full screen. Measured traffic-light frames from `chrome.json` are included when that file is the same window.
+`layout.json` records `chrome_center`, `inset`, `sidebar_pad_x`, `card_pad_x`, `chat_pad_x`, `window_corner`, `composer_inset`, and `composer_pad` with the frames. `shell-clip` checks those centers, edges, and gaps within 0.5 points at the minimum window, at 1440 by 900, and at full screen. Measured traffic-light frames from `chrome.json` are included when that file is the same window.
+
+`WINDOW_CORNER` is `CARD_RADIUS + INSET` (18). It is the macOS window corner. The gray sidebar and the gray chat panel are the window base, so they meet the window edge. The pinned settings row and the composer card stay outside that corner. The library card keeps the 6-point inset on every side. Its own 12-point radius keeps the painted corner inside the window.
 
 ## Chat
 
@@ -116,15 +118,17 @@ An icon and a label in one row share that row's vertical center. A pair on one b
 | bubble shadow | 0.5px ring, 1px/2px | `bubble_shadows` |
 | `.msg-a` | 13px `#1d1d1f` | `MSG_SIZE`, `INK` |
 | `.chip` | 12px, pad 4 10, radius 999 | `CHIP_SIZE`, `CHIP_PY`, `CHIP_PX`, `CHIP_RADIUS` |
-| `.composer` | inset 12, radius 14, pad 12 10 8 14 | `COMPOSER_INSET`, `COMPOSER_RADIUS`, `COMPOSER_PT`, `COMPOSER_PR`, `COMPOSER_PB`, `COMPOSER_PL` |
+| `.composer` | stylesheet inset 12, radius 14, pad 12 10 8 14 | `COMPOSER_INSET` is `WINDOW_CORNER` (18), `COMPOSER_RADIUS`, `COMPOSER_PAD` (12) on every side |
 | composer shadow | 0.5px ring, 2px/10px | `composer_shadows` |
 | `.ph` | 13px `#A1A1A6` | `BODY_SIZE`, `FAINT` |
 | `.cmp-row` | margin-top 20, gap 6 | `COMPOSER_ROW_MT`, `COMPOSER_ROW_GAP` |
-| `.scope` | height 22, radius 6, `#F2F2F4`, 11.5px | `SCOPE_H`, `SCOPE_RADIUS`, `SCOPE_BG`, `SUB_SIZE` |
-| `.send` | 26px, `#D8D8DD` | `SEND`, `SEND_BG` |
+| `.scope` | stylesheet height 22, radius 6, `#F2F2F4`, 11.5px | `SCOPE_H` is `COMPOSER_CONTROL` (26), `SCOPE_RADIUS`, `SCOPE_BG`, `SUB_SIZE`. The chip hugs its text. |
+| `.send` | 26px, `#D8D8DD` | `SEND` is `COMPOSER_CONTROL`, `SEND_BG` |
 | paperclip / send glyph | 16px, 14px | `ATTACH_ICON`, `SEND_ICON` |
 
 With no stored chat lines the thread is empty. The placeholder **问问 Slowpage…** stays on the composer. The fixture writes two exchanges when `SUPERREADER_FORM_FIXTURE=1`.
+
+The composer is one card. Its outer gap is `COMPOSER_INSET` on the left, the right, and the bottom, and that gap is the window corner, so the radius is fully inside the window. Its inner pad is `COMPOSER_PAD` on every side. The placeholder and the paperclip share that left edge. The paperclip is the 16-point glyph in a control of height `COMPOSER_CONTROL`, not the 28-point sidebar toggle. The book chip is the same height as the send button and as wide as its icon, its text, and `SCOPE_PX`. The free space in the row sits between the chip and the send button. The chip does not grow.
 
 ## Icons
 

@@ -758,6 +758,22 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             "",
             false,
         ));
+        let search_w = (side.w as f32 - crate::tokens::SIDE_PAD_X * 2.0).max(0.0);
+        nodes.push(layout_node(
+            "sidebar.search",
+            "container",
+            [
+                side.x as f32 + crate::tokens::SIDE_PAD_X,
+                side.y as f32 + crate::tokens::TOP_ROW_H,
+                search_w,
+                crate::tokens::SEARCH_H,
+            ],
+            [search_w, crate::tokens::SEARCH_H],
+            side_frame,
+            false,
+            "搜索",
+            false,
+        ));
         let row_w = (side.w as f32 - crate::tokens::SIDE_PAD_X * 2.0).max(0.0);
         let scroll_top =
             crate::tokens::TOP_ROW_H + crate::tokens::SEARCH_MB + crate::tokens::SEARCH_H;
@@ -844,7 +860,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             "",
             false,
         ));
-        push_chat_boxes(&mut nodes, chat);
+        push_chat_boxes(&mut nodes, chat, library);
     }
     let grid = spike_library::shelf_grid(content_w);
     let row_w = spike_library::row_width(grid);
@@ -1078,7 +1094,7 @@ fn push_row_pair(nodes: &mut Vec<serde_json::Value>, id: &str, frame: [f32; 4], 
     ));
 }
 
-fn push_chat_boxes(nodes: &mut Vec<serde_json::Value>, chat: Rect) {
+fn push_chat_boxes(nodes: &mut Vec<serde_json::Value>, chat: Rect, library: &LibraryIn) {
     let chat_box = [chat.x as f32, chat.y as f32, chat.w as f32, chat.h as f32];
     let head_h = crate::tokens::CHAT_HEAD_H;
     let head = [chat.x as f32, chat.y as f32, chat.w as f32, head_h];
@@ -1172,6 +1188,109 @@ fn push_chat_boxes(nodes: &mut Vec<serde_json::Value>, chat: Rect) {
         head,
         false,
         "对话",
+        false,
+    ));
+    push_composer(nodes, chat, library);
+}
+
+fn scope_chip_width(title: &str) -> f32 {
+    crate::tokens::SCOPE_PX * 2.0
+        + crate::tokens::SOURCE_GLYPH
+        + crate::tokens::SCOPE_GAP
+        + text_width(title, crate::tokens::SUB_SIZE)
+}
+
+fn chip_limit(chat_w: f32) -> f32 {
+    let inner = chat_w - crate::tokens::COMPOSER_INSET * 2.0 - crate::tokens::COMPOSER_PAD * 2.0;
+    (inner
+        - crate::tokens::ATTACH_ICON
+        - crate::tokens::COMPOSER_ROW_GAP
+        - crate::tokens::COMPOSER_CONTROL
+        - crate::tokens::COMPOSER_ROW_GAP)
+        .max(0.0)
+}
+
+fn push_composer(nodes: &mut Vec<serde_json::Value>, chat: Rect, library: &LibraryIn) {
+    let inset = crate::tokens::COMPOSER_INSET;
+    let pad = crate::tokens::COMPOSER_PAD;
+    let control = crate::tokens::COMPOSER_CONTROL;
+    let line = crate::tokens::BODY_SIZE * 1.2;
+    let composer_h = pad + line + crate::tokens::COMPOSER_ROW_MT + control + pad;
+    let composer_w = (chat.w as f32 - inset * 2.0).max(0.0);
+    let composer_x = chat.x as f32 + inset;
+    let composer_y = chat.y as f32 + chat.h as f32 - inset - composer_h;
+    let composer = [composer_x, composer_y, composer_w, composer_h];
+    let chat_box = [chat.x as f32, chat.y as f32, chat.w as f32, chat.h as f32];
+    nodes.push(layout_node(
+        "composer",
+        "container",
+        composer,
+        [composer_w, composer_h],
+        chat_box,
+        false,
+        "问问 Slowpage…",
+        false,
+    ));
+    let placeholder = "问问 Slowpage…";
+    nodes.push(layout_node(
+        "composer.placeholder",
+        "text",
+        [
+            composer_x + pad,
+            composer_y + pad,
+            text_width(placeholder, crate::tokens::BODY_SIZE),
+            line,
+        ],
+        [text_width(placeholder, crate::tokens::BODY_SIZE), line],
+        composer,
+        true,
+        placeholder,
+        false,
+    ));
+    let row_y = composer_y + pad + line + crate::tokens::COMPOSER_ROW_MT;
+    nodes.push(layout_node(
+        "composer.attach",
+        "chrome",
+        [composer_x + pad, row_y, crate::tokens::ATTACH_ICON, control],
+        [crate::tokens::ATTACH_ICON, control],
+        composer,
+        false,
+        "附件",
+        false,
+    ));
+    let book = library
+        .continue_reading
+        .first()
+        .map(|card| card.title.as_str())
+        .unwrap_or("");
+    let send_x = composer_x + composer_w - pad - control;
+    if !book.is_empty() {
+        let natural = scope_chip_width(book);
+        let width = natural.min(chip_limit(chat.w as f32));
+        nodes.push(layout_node(
+            "composer.chip",
+            "button",
+            [
+                composer_x + pad + crate::tokens::ATTACH_ICON + crate::tokens::COMPOSER_ROW_GAP,
+                row_y,
+                width,
+                control,
+            ],
+            [natural, control],
+            composer,
+            natural > width,
+            book,
+            false,
+        ));
+    }
+    nodes.push(layout_node(
+        "composer.send",
+        "chrome",
+        [send_x, row_y, control, control],
+        [control, control],
+        composer,
+        false,
+        "发送",
         false,
     ));
 }
@@ -1483,6 +1602,9 @@ fn write_frames(placed: &Placement, library: &LibraryIn) {
         "sidebar_pad_x": crate::tokens::SIDE_PAD_X,
         "card_pad_x": crate::tokens::CARD_PAD_X,
         "chat_pad_x": crate::tokens::CHAT_PAD_X,
+        "window_corner": crate::tokens::WINDOW_CORNER,
+        "composer_inset": crate::tokens::COMPOSER_INSET,
+        "composer_pad": crate::tokens::COMPOSER_PAD,
         "nodes": nodes,
     });
     let path = std::path::Path::new("/tmp/superreader-spike/layout.json");
@@ -2111,42 +2233,16 @@ fn chat_line(line: &ChatLine) -> AnyElement {
 fn composer(book: &str) -> AnyElement {
     let mut tools = view()
         .mt(px(crate::tokens::COMPOSER_ROW_MT))
+        .h(px(crate::tokens::COMPOSER_CONTROL))
         .flex()
         .flex_row()
         .items_center()
         .gap(px(crate::tokens::COMPOSER_ROW_GAP))
-        .child(icon_button("paperclip", "附件", crate::tokens::ATTACH_ICON));
+        .child(attach_button());
     if !book.is_empty() {
-        tools = tools.child(
-            view()
-                .flex_1()
-                .min_w(px(0.0))
-                .h(px(crate::tokens::SCOPE_H))
-                .rounded(px(crate::tokens::SCOPE_RADIUS))
-                .px(px(crate::tokens::SCOPE_PX))
-                .gap(px(crate::tokens::SCOPE_GAP))
-                .flex()
-                .flex_row()
-                .items_center()
-                .bg(rgb(crate::tokens::SCOPE_BG).to_hsla())
-                .child(glyph_box(
-                    "book-open",
-                    false,
-                    crate::tokens::SOURCE_GLYPH,
-                    Some("6E6E73"),
-                ))
-                .child(view().flex_1().min_w(px(0.0)).child(fit_text(
-                    book.to_string(),
-                    crate::tokens::SUB_SIZE,
-                    crate::tokens::BODY_WEIGHT,
-                    icon_ink(),
-                    crate::tokens::BODY_TRACK_EM,
-                ))),
-        );
+        tools = tools.child(scope_chip(book));
     }
-    if book.is_empty() {
-        tools = tools.child(view().flex_1());
-    }
+    tools = tools.child(view().flex_1().min_w(px(0.0)));
     tools = tools.child(send_button());
     view()
         .absolute()
@@ -2154,10 +2250,7 @@ fn composer(book: &str) -> AnyElement {
         .right(px(crate::tokens::COMPOSER_INSET))
         .bottom(px(crate::tokens::COMPOSER_INSET))
         .rounded(px(crate::tokens::COMPOSER_RADIUS))
-        .pt(px(crate::tokens::COMPOSER_PT))
-        .pr(px(crate::tokens::COMPOSER_PR))
-        .pb(px(crate::tokens::COMPOSER_PB))
-        .pl(px(crate::tokens::COMPOSER_PL))
+        .p(px(crate::tokens::COMPOSER_PAD))
         .bg(rgb(crate::tokens::CARD).to_hsla())
         .shadow(crate::tokens::composer_shadows())
         .accessible(true)
@@ -2177,6 +2270,53 @@ fn composer(book: &str) -> AnyElement {
             ))
         })
         .child(tools)
+        .into_element()
+}
+
+fn attach_button() -> AnyElement {
+    let mut button = view()
+        .w(px(crate::tokens::ATTACH_ICON))
+        .h(px(crate::tokens::COMPOSER_CONTROL))
+        .flex()
+        .items_center()
+        .justify_center()
+        .accessible(true)
+        .label("附件");
+    if let Some(path) = crate::icons::glyph_ink("paperclip", "6E6E73") {
+        button = button.child(
+            image(format!("file://{}", path.display())).size(px(crate::tokens::ATTACH_ICON)),
+        );
+    }
+    button.into_element()
+}
+
+fn scope_chip(book: &str) -> AnyElement {
+    let natural = scope_chip_width(book);
+    let width = natural.min(chip_limit(CHAT_W as f32));
+    view()
+        .w(px(width))
+        .h(px(crate::tokens::COMPOSER_CONTROL))
+        .flex_shrink(0.0)
+        .rounded(px(crate::tokens::SCOPE_RADIUS))
+        .px(px(crate::tokens::SCOPE_PX))
+        .gap(px(crate::tokens::SCOPE_GAP))
+        .flex()
+        .flex_row()
+        .items_center()
+        .bg(rgb(crate::tokens::SCOPE_BG).to_hsla())
+        .child(glyph_box(
+            "book-open",
+            false,
+            crate::tokens::SOURCE_GLYPH,
+            Some("6E6E73"),
+        ))
+        .child(view().flex_1().min_w(px(0.0)).child(fit_text(
+            book.to_string(),
+            crate::tokens::SUB_SIZE,
+            crate::tokens::BODY_WEIGHT,
+            icon_ink(),
+            crate::tokens::BODY_TRACK_EM,
+        )))
         .into_element()
 }
 
@@ -3239,7 +3379,40 @@ mod tests {
             let avatar = frame_of(&nodes, "chat.avatar");
             let chat = frame_of(&nodes, "chat");
             assert!((avatar[0] - (chat[0] + crate::tokens::CHAT_PAD_X)).abs() < 0.01);
+            let composer = frame_of(&nodes, "composer");
+            let placeholder = frame_of(&nodes, "composer.placeholder");
+            let attach = frame_of(&nodes, "composer.attach");
+            let send = frame_of(&nodes, "composer.send");
+            let window_h = height as f32;
+            let window_w = width as f32;
+            let bottom = window_h - (composer[1] + composer[3]);
+            let right = window_w - (composer[0] + composer[2]);
+            assert!(
+                (bottom - crate::tokens::WINDOW_CORNER).abs() < 0.5,
+                "{bottom}"
+            );
+            assert!(
+                (right - crate::tokens::WINDOW_CORNER).abs() < 0.5,
+                "{right}"
+            );
+            assert!((placeholder[0] - attach[0]).abs() < 0.01);
+            assert!((placeholder[0] - (composer[0] + crate::tokens::COMPOSER_PAD)).abs() < 0.01);
+            assert!(
+                ((composer[0] + composer[2]) - (send[0] + send[2]) - crate::tokens::COMPOSER_PAD)
+                    .abs()
+                    < 0.01
+            );
+            assert!((attach[1] + attach[3] / 2.0 - (send[1] + send[3] / 2.0)).abs() < 0.01);
+            assert!((attach[3] - send[3]).abs() < 0.01);
         }
+        let settings = frame_of(&nodes, "sidebar.settings");
+        let settings_gap = height as f32 - (settings[1] + settings[3]);
+        assert!(
+            (settings_gap - crate::tokens::WINDOW_CORNER).abs() < 0.5,
+            "{settings_gap}"
+        );
+        let search = frame_of(&nodes, "sidebar.search");
+        assert!((search[0] - crate::tokens::SIDE_PAD_X).abs() < 0.01);
         let row = frame_of(&nodes, "sidebar.row.0");
         let icon = frame_of(&nodes, "sidebar.row.0.icon");
         let label = frame_of(&nodes, "sidebar.row.0.label");
@@ -3255,6 +3428,45 @@ mod tests {
         assert!((header[0] - section[0]).abs() < 0.01);
         let card = frame_of(&nodes, "card");
         assert!((header[0] - (card[0] + crate::tokens::CARD_PAD_X)).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_scope_chip_hugs_its_title() {
+        let mut library = empty_library();
+        library.continue_reading.push(CoverCard {
+            title: "Pride and Prejudice".into(),
+            author: String::new(),
+            cover: None,
+            open_path: None,
+            pdf: false,
+            percent: None,
+            page: None,
+            position: String::new(),
+            opened: String::new(),
+            plate: true,
+            plate_rgb: None,
+            unavailable: None,
+        });
+        let placed = place(
+            &PlaceIn {
+                form: launch(),
+                window: window(),
+                traffic: 92.0,
+            },
+            &library,
+        );
+        let nodes = layout_nodes(&placed, &library);
+        let chip = frame_of(&nodes, "composer.chip");
+        let natural = scope_chip_width("Pride and Prejudice");
+        assert!((chip[2] - natural).abs() < 0.01, "{}", chip[2]);
+        assert!(chip[2] < 180.0, "{}", chip[2]);
+        let send = frame_of(&nodes, "composer.send");
+        let attach = frame_of(&nodes, "composer.attach");
+        assert!((chip[1] + chip[3] / 2.0 - (send[1] + send[3] / 2.0)).abs() < 0.01);
+        assert!((chip[3] - send[3]).abs() < 0.01);
+        assert!((attach[1] + attach[3] / 2.0 - (chip[1] + chip[3] / 2.0)).abs() < 0.01);
+        assert!(chip[0] > attach[0] + attach[2]);
+        assert!(chip[0] + chip[2] < send[0]);
     }
 
     #[test]
