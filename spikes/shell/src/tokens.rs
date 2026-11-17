@@ -207,6 +207,7 @@ pub const ATTACH_ICON: f32 = 16.0;
 pub const SCOPE_PX: f32 = 7.0;
 /// The chip and the send button are one control, so the row has one center and one height.
 pub const COMPOSER_CONTROL: f32 = 26.0;
+#[allow(dead_code)]
 pub const SCOPE_H: f32 = COMPOSER_CONTROL;
 pub const SCOPE_RADIUS: f32 = 6.0;
 pub const SCOPE_GAP: f32 = 4.0;
@@ -334,6 +335,7 @@ pub fn continue_card_h() -> f32 {
 }
 
 /// Toolbar, title, the continue row, and one full shelf row, with both section labels.
+/// The last `CARD_RADIUS` is empty card, so the caption clears the rounded corner.
 pub fn library_stack() -> f32 {
     let shelf = spike_library::shelf_grid(TWO_COLUMN_CONTENT);
     TOOLBAR_H
@@ -344,6 +346,7 @@ pub fn library_stack() -> f32 {
         + section_block()
         + shelf.cover_h
         + shelf.caption_h
+        + CARD_RADIUS as f32
 }
 
 /// The stack plus the inset above and below the card.
@@ -503,7 +506,7 @@ mod tests {
         assert!((CHAT_HEAD_H / 2.0 - center).abs() < 0.01);
         assert!((TOGGLE_TOP + TOGGLE_SIZE / 2.0 - center).abs() < 0.01);
         assert!((INSET as f32 + TOOLBAR_H / 2.0 - center).abs() < 0.01);
-        assert!((library_min_height() - 516.0).abs() < 0.1);
+        assert!((library_min_height() - 528.0).abs() < 0.1);
         assert!((WINDOW_CORNER - 18.0).abs() < 0.01);
         assert!((COMPOSER_INSET - WINDOW_CORNER).abs() < 0.01);
         assert!((SIDE_PAD_BOTTOM - WINDOW_CORNER).abs() < 0.01);

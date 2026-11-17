@@ -37,7 +37,7 @@ If doctor says one is missing, run `spikes/fetch-fixtures.sh`. That script downl
 scripts/verify --doctor
 ```
 
-This is read-only. It checks `nsh` is 0.5.0, the shell crate pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.5.0`, the fixtures exist, Cargo.lock has neither the `epub` crate nor `mupdf`, the machine is macOS, and no `spike-shell` process is already running. A running shell belongs to someone else. Do not kill it.
+This is read-only. It checks `nsh` is 0.5.1, the shell crate pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.5.1`, the fixtures exist, Cargo.lock has neither the `epub` crate nor `mupdf`, the machine is macOS, and no `spike-shell` process is already running. A running shell belongs to someone else. Do not kill it.
 
 ## Drive
 
@@ -47,7 +47,7 @@ Headless `nsh test` reads the NSH tree. The test file is `spikes/shell/shell.tes
 
 `nsh test` does not see pixels inside a native `NSView`. pdfium bitmaps and WKWebView are invisible to it. The headless runner also does not construct `reader.stage`, so it never receives the footer strings the stage publishes.
 
-The window driver launches `spikes/target/release/spike-shell` and captures that process's window with `screencapture -l` after `CGWindowListCopyWindowInfo` finds the window id. It does not click the user's other apps and it does not call `screencapture` on a rectangle of the desktop. PDF footer strings come from Accessibility. WKWebView hides those NSH texts from Accessibility, so the EPUB footer is read with Vision from the captured PNG.
+The window driver launches the release `spike-shell` from the target directory `cargo metadata` reports. It does not assume `spikes/target/release`, and it does not set `CARGO_TARGET_DIR`. It captures that process's window with `screencapture -l` after `CGWindowListCopyWindowInfo` finds the window id. It does not click the user's other apps and it does not call `screencapture` on a rectangle of the desktop. PDF footer strings come from Accessibility. WKWebView hides those NSH texts from Accessibility, so the EPUB footer is read with Vision from the captured PNG.
 
 The env vars are the same commands the keys send. The reading window hides the traffic lights and the book title until the pointer is at the top. `SPIKE_DRAG=1` is the two-line drag. `SPIKE_SCALE=zoom-2x` is Command plus. `SPIKE_MODE=webkit` is the EPUB page. `SPIKE_SELECT=1` with `SPIKE_RELOAD=1` marks `truth universally acknowledged` and reloads. `SPIKE_TURN=1` turns one page. `SPIKE_PLAY=1` turns three times so a recording can see the slide. `SPIKE_BOOK` selects `pride`, `zhaohua`, `styled`, `plain-en`, `plain-zh`, or `fixed`. The trim is the View menu. A real launch saves it in `~/Library/Application Support/app.slowpage.reader/settings.json`. `scripts/verify` sets `SUPERREADER_SUPPORT_DIR` to a fresh temp directory for that run, and the shell reads settings and the line-break cache from there. An empty override is the real directory. The footer is `N/M页` and `本章还剩X页`.
 
@@ -55,7 +55,7 @@ Perf numbers come from `spike-measure pdf pdfium retina-1x`, five release runs. 
 
 ## Evidence
 
-The run directory holds `summary.json`, the screenshots, the Accessibility dumps, `nsh-junit.xml`, and `measure.json`. `summary.json` is the result. `ok` is true only when no check has status `fail`. Each check has `id`, `feature`, `status` of `pass`, `fail`, or `pending`, `driver`, and `detail`.
+The run directory holds `summary.json`, the screenshots, the Accessibility dumps, `nsh-junit.xml`, and `measure.json`. `summary.json` is the result. `ok` is true only when no check has status `fail`. Its `head` field is `git rev-parse HEAD`. Each check has `id`, `feature`, `status` of `pass`, `fail`, or `pending`, `driver`, and `detail`.
 
 A proof shows the action and the resulting state. The PDF shots are the highlight at retina 1x and at zoom 2x. The EPUB shot is Pride with the footer and the mark. The highlight check counts yellow paper pixels and dark ink pixels inside that band. A yellow band with no ink fails.
 

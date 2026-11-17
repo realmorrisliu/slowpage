@@ -614,6 +614,18 @@ fn remember_font(label: &str, size: f32, weight: FontWeight) {
 thread_local! {
     static SHELF_SCROLL: RefCell<Option<ElementRef>> = const { RefCell::new(None) };
     static SHELF_OFFSET: Cell<f32> = const { Cell::new(0.0) };
+    static SHELF_HIT: Cell<[f32; 4]> = const { Cell::new([0.0, 0.0, 0.0, 0.0]) };
+}
+
+fn note_shelf_hit(frame: [f32; 4]) {
+    SHELF_HIT.with(|hit| hit.set(frame));
+}
+
+/// Window coordinates, origin at the top left. A wheel inside this rectangle
+/// scrolls the shelf. A wheel outside it is left for the sidebar or the chat.
+pub fn shelf_hit_contains(x: f32, y: f32) -> bool {
+    let [left, top, width, height] = SHELF_HIT.with(|hit| hit.get());
+    width > 1.0 && height > 1.0 && x >= left && y >= top && x < left + width && y < top + height
 }
 
 fn remember_shelf(shelf: &ElementRef) {
@@ -876,6 +888,11 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
     let row_w = spike_library::row_width(grid);
     let header_y = rect.y as f32 + chrome.toolbar_h;
     let mut y = header_y + crate::tokens::CARD_PAD_TOP + crate::tokens::TITLE_ROW_H;
+    let scroll_top = y;
+    let scroll_bottom = rect.y as f32 + rect.h as f32 - crate::tokens::CARD_RADIUS as f32;
+    if scroll_bottom > scroll_top {
+        note_shelf_hit([origin_x, scroll_top, content_w, scroll_bottom - scroll_top]);
+    }
     let continued =
         crate::tokens::continue_layout(content_w, library.continue_reading.len() as u32);
     let continue_section_y = y;
@@ -972,7 +989,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
         );
         if card.is_some_and(coverless) {
             let color = card
-                .and_then(|item| item.plate_rgb)
+                .map(painted_plate_color)
                 .unwrap_or_else(|| fallback_color(title));
             cover["plate"] = serde_json::json!(true);
             cover["plate_rgb"] = serde_json::json!(format!("{:06X}", color & 0x00FF_FFFF));
@@ -2395,6 +2412,9 @@ fn card_face(
         .flex_col()
         .px(px(crate::tokens::CARD_PAD_X))
         .pt(px(crate::tokens::CARD_PAD_TOP));
+    if matches!(face, CardFace::Grid) {
+        column = column.pb(px(crate::tokens::CARD_RADIUS as f32));
+    }
     if !matches!(face, CardFace::Page) {
         column = column.child(card_header(&title, library.book_count));
     }
@@ -2877,9 +2897,12 @@ fn pdf_tag(small: bool) -> AnyElement {
 }
 
 fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
-    let sampled = card.plate_rgb.or_else(|| sample_cover(card));
-    let color = sampled.unwrap_or_else(|| fallback_color(&card.title));
+    let color = painted_plate_color(card);
     let photo = card.cover.is_some() && card.plate_rgb.is_none() && !card.pdf;
+    // A generated plate is a flat token. Its PNG is the same color plus a
+    // spine, and an in-flow image of the cover's full height pushes the type
+    // below the clip. A photo or a PDF page is the image itself.
+    let draw_image = card.cover.is_some() && card.plate_rgb.is_none();
     let (title_ink, author_ink) = plate_inks(color);
     let mut art = view()
         .w(px(width))
@@ -2888,7 +2911,24 @@ fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
         .overflow_hidden()
         .shadow(crate::tokens::cover_shadows())
         .bg(rgb(color).to_hsla());
-    if card.cover.is_none() {
+    if let Some(path) = &card.cover {
+        if draw_image {
+            art = art.child(
+                view()
+                    .absolute()
+                    .left(px(0.0))
+                    .top(px(0.0))
+                    .w(px(width))
+                    .h(px(height))
+                    .child(
+                        image(format!("file://{}", path.display()))
+                            .w(px(width))
+                            .h(px(height)),
+                    ),
+            );
+        }
+    }
+    if !draw_image {
         art = art.child(
             view()
                 .absolute()
@@ -2899,19 +2939,16 @@ fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
                 .bg(hsla(0.0, 0.0, 0.0, 0.18)),
         );
     }
-    if let Some(path) = &card.cover {
-        art = art.child(
-            image(format!("file://{}", path.display()))
-                .w(px(width))
-                .h(px(height)),
-        );
-    }
     if !photo {
         let (title_size, author_size) = plate_type_size(height);
         let text_w = (width - crate::tokens::COVER_LABEL_PX * 2.0).max(0.0);
         art = art.child(
             view()
-                .size_full()
+                .absolute()
+                .left(px(0.0))
+                .top(px(0.0))
+                .w(px(width))
+                .h(px(height))
                 .flex()
                 .flex_col()
                 .items_center()
@@ -2975,6 +3012,14 @@ fn plate_line(
                 .label(label),
         )
         .into_element()
+}
+
+fn face_color(plate: Option<u32>, sampled: Option<u32>, title: &str) -> u32 {
+    plate.or(sampled).unwrap_or_else(|| fallback_color(title))
+}
+
+fn painted_plate_color(card: &CoverCard) -> u32 {
+    face_color(card.plate_rgb, sample_cover(card), &card.title)
 }
 
 fn sample_cover(card: &CoverCard) -> Option<u32> {
@@ -3118,6 +3163,23 @@ mod tests {
             width: 1440.0,
             height: 900.0,
         }
+    }
+
+    #[test]
+    fn plate_ink_uses_the_marker_or_the_sampled_page_before_the_title_hash() {
+        let title = "The Art of Computer Programming";
+        assert_eq!(fallback_color(title), 0x002F_4F3E);
+        assert_eq!(face_color(Some(0x7D8C6A), Some(0xEDE6D5), title), 0x7D8C6A);
+        assert_eq!(face_color(None, Some(0xEDE6D5), title), 0xEDE6D5);
+        assert_eq!(face_color(None, None, title), 0x2F4F3E);
+    }
+
+    #[test]
+    fn a_wheel_on_the_shelf_is_the_shelf_and_a_wheel_on_the_chat_is_not() {
+        note_shelf_hit([266.0, 180.0, 808.0, 600.0]);
+        assert!(shelf_hit_contains(700.0, 613.0));
+        assert!(!shelf_hit_contains(1200.0, 613.0));
+        assert!(!shelf_hit_contains(700.0, 40.0));
     }
 
     fn empty_library() -> LibraryIn {

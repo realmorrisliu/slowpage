@@ -38,9 +38,9 @@ You need **Rust 1.98.1** (`rust-toolchain.toml` at the repo root and `spikes/rus
    just test
    ```
 
-   Release binary: `spikes/target/release/spike-shell`.
+   Release binary: `spike-shell` in the target directory reported by `cargo metadata`. A cargo wrapper may put that outside `spikes/target`.
 
-4. Full UI verification (release build, NSH **0.5.0** on `PATH`, calm machine):
+4. Full UI verification (release build, NSH **0.5.1** on `PATH`, calm machine):
 
    ```sh
    just verify

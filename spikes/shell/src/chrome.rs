@@ -8,11 +8,11 @@ use nsh_platform_macos::objc2::{
 };
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSButton, NSColor, NSColorSpace, NSFont, NSFontWeightRegular, NSImage, NSImageAlignment,
-    NSImageScaling, NSImageSymbolConfiguration, NSImageView, NSLineBreakMode, NSScreen,
-    NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode,
-    NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem, NSView, NSWindow, NSWindowButton,
-    NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSButton, NSColor, NSColorSpace, NSEvent, NSEventMask, NSFont, NSFontWeightRegular, NSImage,
+    NSImageAlignment, NSImageScaling, NSImageSymbolConfiguration, NSImageView, NSLineBreakMode,
+    NSScreen, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSToolbarDelegate,
+    NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem, NSView, NSWindow,
+    NSWindowButton, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
 
@@ -311,6 +311,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     let _release = Release(&rt.entering);
     rt.page.set(page);
     style_window(window, rt);
+    if shell_on() {
+        install_shelf_wheel();
+    }
     window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
     if shell_on() && !window.styleMask().contains(NSWindowStyleMask::FullScreen) {
         center_traffic_lights(window);
@@ -318,7 +321,15 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     note_immersive(rt);
     settle_bar(window, rt);
     let fullscreen = window.styleMask().contains(NSWindowStyleMask::FullScreen);
-    if !fullscreen && !rt.laying_out.get() {
+    // The pin branch below may mark the window shown. Fullscreen has to see
+    // the previous sync, so the toggle is not in the same turn as orderFront.
+    let armed = rt.shown.get();
+    if hold_pinned_frame(
+        fullscreen,
+        rt.fullscreen_sent.get(),
+        rt.fullscreen_exit_sent.get(),
+    ) && !rt.laying_out.get()
+    {
         if let Some((width, height)) = pinned_frame() {
             if let Some(screen) = window
                 .screen()
@@ -337,6 +348,7 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
         }
     }
     note_fullscreen_hook(window, rt);
+    request_fullscreen(window, rt, fullscreen, armed);
     if fullscreen {
         let shown = hover_target(window);
         if shell_on() {
@@ -440,17 +452,8 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     if shell_on() && !rt.settled.get() {
         rt.settled.set(true);
     }
-    if rt.settled.get() && !rt.fullscreen_sent.get() && flag("SPIKE_FULLSCREEN") {
-        window.toggleFullScreen(None);
-        rt.fullscreen_sent.set(true);
-    }
-    if rt.fullscreen_sent.get()
-        && !rt.fullscreen_exit_sent.get()
-        && flag("SPIKE_FULLSCREEN")
-        && std::path::Path::new("/tmp/superreader-spike/fullscreen-exit").is_file()
-    {
-        window.toggleFullScreen(None);
-        rt.fullscreen_exit_sent.set(true);
+    if shell_on() && window.isVisible() {
+        rt.shown.set(true);
     }
     write_json(window, rt, false);
 }
@@ -476,6 +479,7 @@ fn style_window(window: &NSWindow, rt: &Runtime) {
         window.collectionBehavior() | NSWindowCollectionBehavior::FullScreenPrimary,
     );
     window.makeKeyAndOrderFront(None);
+    expose_window(window);
     let mtm = MainThreadMarker::from(&*window);
     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
     unsafe {
@@ -739,6 +743,128 @@ fn note_fullscreen_hook(window: &NSWindow, rt: &Runtime) {
     rt.bar_fullscreen_sent.set(true);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FullscreenDecision {
+    enter: bool,
+    exit: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FullscreenInput {
+    is_full: bool,
+    want: bool,
+    exit_file: bool,
+    enter_sent: bool,
+    exit_sent: bool,
+    window_ready: bool,
+}
+
+fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
+    let none = FullscreenDecision {
+        enter: false,
+        exit: false,
+    };
+    if !input.want {
+        return none;
+    }
+    if input.exit_file {
+        if input.is_full && !input.exit_sent {
+            return FullscreenDecision {
+                enter: false,
+                exit: true,
+            };
+        }
+        return none;
+    }
+    if input.is_full || !input.window_ready || input.enter_sent {
+        return none;
+    }
+    FullscreenDecision {
+        enter: true,
+        exit: false,
+    }
+}
+
+/// A pinned window size must not be reapplied while fullscreen is in progress.
+/// The exit file is what returns the window to that size.
+fn hold_pinned_frame(is_full: bool, enter_sent: bool, exit_sent: bool) -> bool {
+    if is_full {
+        return false;
+    }
+    if enter_sent && !exit_sent {
+        return false;
+    }
+    true
+}
+
+fn request_fullscreen(window: &NSWindow, rt: &Runtime, is_full: bool, armed: bool) {
+    let decision = fullscreen_decision(FullscreenInput {
+        is_full,
+        want: flag("SPIKE_FULLSCREEN"),
+        exit_file: std::path::Path::new("/tmp/superreader-spike/fullscreen-exit").is_file(),
+        enter_sent: rt.fullscreen_sent.get(),
+        exit_sent: rt.fullscreen_exit_sent.get(),
+        window_ready: armed && window.isVisible() && window.isKeyWindow(),
+    });
+    if decision.enter {
+        window.toggleFullScreen(None);
+        rt.fullscreen_sent.set(true);
+    } else if decision.exit {
+        window.toggleFullScreen(None);
+        rt.fullscreen_exit_sent.set(true);
+    }
+}
+
+fn install_shelf_wheel() {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let block = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        let e = unsafe { event.as_ref() };
+        if !shell_on() {
+            return event.as_ptr();
+        }
+        let Some(mtm) = MainThreadMarker::new() else {
+            return event.as_ptr();
+        };
+        let Some(window) = e.window(mtm) else {
+            return event.as_ptr();
+        };
+        let Some(content) = window.contentView() else {
+            return event.as_ptr();
+        };
+        let height = content.frame().size.height;
+        if !height.is_finite() || height <= 1.0 {
+            return event.as_ptr();
+        }
+        let point = e.locationInWindow();
+        let x = point.x as f32;
+        let y = (height - point.y) as f32;
+        if !crate::form::shelf_hit_contains(x, y) {
+            return event.as_ptr();
+        }
+        let mut dy = e.scrollingDeltaY();
+        if dy.abs() < 0.01 {
+            dy = e.deltaY() * 16.0;
+        }
+        if dy.abs() < 0.01 {
+            return event.as_ptr();
+        }
+        crate::form::nudge_shelf(-dy as f32);
+        std::ptr::null_mut()
+    });
+    let monitor = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::ScrollWheel, &block)
+    };
+    std::mem::forget(monitor);
+}
+
+fn expose_window(window: &NSWindow) {
+    let title = NSString::from_str("Slowpage");
+    let _: () = unsafe { msg_send![window, setAccessibilityTitle: &*title] };
+}
+
 fn pinned_frame() -> Option<(f64, f64)> {
     let raw = std::fs::read_to_string("/tmp/superreader-spike/shell-frame").ok()?;
     let mut parts = raw.split_whitespace();
@@ -960,6 +1086,7 @@ fn place_contents(window: &NSWindow, rt: &Runtime, alpha: f64) {
 /// fullscreen.
 fn clear_shell_chrome(window: &NSWindow) {
     window.setTitle(&NSString::from_str(""));
+    expose_window(window);
     if let Some(toolbar) = window.toolbar() {
         clear_contents(&toolbar);
     }
@@ -1377,6 +1504,51 @@ mod tests {
 
     fn close(got: f64, want: f64) {
         assert!((got - want).abs() < 0.02, "{got} vs {want}");
+    }
+
+    #[test]
+    fn fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice() {
+        let idle = FullscreenInput {
+            is_full: false,
+            want: true,
+            exit_file: false,
+            enter_sent: false,
+            exit_sent: false,
+            window_ready: false,
+        };
+        assert_eq!(
+            fullscreen_decision(idle),
+            FullscreenDecision {
+                enter: false,
+                exit: false,
+            }
+        );
+        let ready = FullscreenInput {
+            window_ready: true,
+            ..idle
+        };
+        assert!(fullscreen_decision(ready).enter);
+        let sent = FullscreenInput {
+            enter_sent: true,
+            ..ready
+        };
+        assert_eq!(
+            fullscreen_decision(sent),
+            FullscreenDecision {
+                enter: false,
+                exit: false,
+            }
+        );
+        let inside = FullscreenInput {
+            is_full: true,
+            exit_file: true,
+            enter_sent: true,
+            ..ready
+        };
+        assert!(fullscreen_decision(inside).exit);
+        assert!(!hold_pinned_frame(false, true, false));
+        assert!(hold_pinned_frame(false, true, true));
+        assert!(!hold_pinned_frame(true, true, false));
     }
 
     #[test]

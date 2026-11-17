@@ -664,6 +664,14 @@ def geometry_matches(geo, content_w=None):
 
 
 ALIGN_TOL = 0.5
+CARD_CORNER = 12.0
+
+
+def continue_card(node_id):
+    """A continue card is continue.0, not the continue.section label."""
+    if not isinstance(node_id, str) or not node_id.startswith("continue."):
+        return False
+    return node_id.split(".", 1)[1].isdigit()
 
 
 def _mid(frame):
@@ -856,7 +864,7 @@ def alignment_report(layout):
             problems.append(f"shelf column gap {gaps[-1] - gaps[0]:+.2f}")
     continues = []
     for node_id in by_id:
-        if node_id.startswith("continue.") and node_id.count(".") == 1:
+        if continue_card(node_id):
             box = frame(node_id)
             if box is not None:
                 continues.append(box)
@@ -865,6 +873,11 @@ def alignment_report(layout):
         gaps = [right[0] - (left[0] + left[2]) for left, right in zip(continues, continues[1:])]
         if any(abs(gap - gaps[0]) > ALIGN_TOL for gap in gaps[1:]):
             problems.append(f"continue gap {gaps[-1] - gaps[0]:+.2f}")
+    caption = frame("cover.0.title")
+    if card is not None and caption is not None:
+        clearance = (card[1] + card[3]) - (caption[1] + caption[3])
+        if clearance + ALIGN_TOL < CARD_CORNER:
+            problems.append(f"cover caption clearance {clearance:.2f}")
     cover = frame("continue.0.cover")
     title = frame("continue.0.title")
     if cover is not None and title is not None:
@@ -1334,6 +1347,88 @@ def frame_outside_x(x, width, origin, span, tol=1.0):
     return x < origin - tol or x + width > origin + span + tol
 
 
+def ax_swift_dump(pid):
+    """System Events sometimes lists no windows for a process CG can see."""
+    binary = Path("/tmp/superreader-spike/ax-walk")
+    source = Path("/tmp/superreader-spike/ax-walk.swift")
+    if not binary.is_file():
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            r"""
+import ApplicationServices
+import Foundation
+
+guard CommandLine.arguments.count > 1, let pid = pid_t(CommandLine.arguments[1]) else {
+  fputs("pid\n", stderr)
+  exit(2)
+}
+
+func copyAttr(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+  var value: CFTypeRef?
+  if AXUIElementCopyAttributeValue(element, name as CFString, &value) != .success {
+    return nil
+  }
+  return value
+}
+
+func pointOrSize(_ value: CFTypeRef?) -> (CGFloat, CGFloat)? {
+  guard let value else { return nil }
+  let ax = value as! AXValue
+  if AXValueGetType(ax) == .cgPoint {
+    var point = CGPoint.zero
+    if AXValueGetValue(ax, .cgPoint, &point) { return (point.x, point.y) }
+  }
+  if AXValueGetType(ax) == .cgSize {
+    var size = CGSize.zero
+    if AXValueGetValue(ax, .cgSize, &size) { return (size.width, size.height) }
+  }
+  return nil
+}
+
+func walk(_ element: AXUIElement, _ depth: Int) {
+  if depth > 14 { return }
+  let role = copyAttr(element, kAXRoleAttribute as String) as? String ?? ""
+  var name = copyAttr(element, kAXTitleAttribute as String) as? String ?? ""
+  if name.isEmpty {
+    name = copyAttr(element, kAXDescriptionAttribute as String) as? String ?? ""
+  }
+  name = name.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+  let pos = pointOrSize(copyAttr(element, kAXPositionAttribute as String))
+  let size = pointOrSize(copyAttr(element, kAXSizeAttribute as String))
+  if !name.isEmpty, let pos, let size {
+    print("\(role)\t\(name)\t\(pos.0)\t\(pos.1)\t\(size.0)\t\(size.1)")
+  }
+  if let children = copyAttr(element, kAXChildrenAttribute as String) as? [AXUIElement] {
+    for child in children { walk(child, depth + 1) }
+  }
+}
+
+let app = AXUIElementCreateApplication(pid)
+guard let windows = copyAttr(app, kAXWindowsAttribute as String) as? [AXUIElement], !windows.isEmpty else {
+  fputs("accessibility saw no windows\n", stderr)
+  exit(3)
+}
+for window in windows {
+  let pos = pointOrSize(copyAttr(window, kAXPositionAttribute as String)) ?? (0, 0)
+  let size = pointOrSize(copyAttr(window, kAXSizeAttribute as String)) ?? (0, 0)
+  print("WIN \(pos.0) \(pos.1) \(size.0) \(size.1)")
+  walk(window, 0)
+}
+"""
+        )
+        proc = subprocess.run(
+            ["swiftc", "-O", "-o", str(binary), str(source)],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return "", (proc.stderr or "ax walker failed to compile").strip()
+    proc = subprocess.run([str(binary), str(pid)], capture_output=True, text=True)
+    if proc.returncode != 0 and not proc.stdout.strip():
+        return "", (proc.stderr or proc.stdout or "accessibility saw no windows").strip()
+    return proc.stdout, ""
+
+
 def ax_overflow(pid):
     """Named accessibility elements whose horizontal frame leaves the window.
 
@@ -1373,9 +1468,7 @@ tell application "System Events"
           set r to role of e as text
           set n to name of e as text
           if n is "missing value" or n is "" then
-            if r is "AXButton" then
-              set n to description of e as text
-            end if
+            set n to description of e as text
           end if
           set p to position of e
           set s to size of e
@@ -1390,10 +1483,17 @@ end tell
     proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     if proc.returncode != 0:
         return [(proc.stderr or proc.stdout or "accessibility walk failed").strip()]
+    text = proc.stdout
+    if "WIN " not in text:
+        swift_text, swift_err = ax_swift_dump(pid)
+        if "WIN " in swift_text:
+            text = swift_text
+        elif swift_err and not text.strip():
+            return [swift_err]
     window = None
     problems = []
     seen = 0
-    for line in proc.stdout.splitlines():
+    for line in text.splitlines():
         if line.startswith("WIN "):
             parts = line.split()
             if len(parts) == 5:
@@ -1441,6 +1541,52 @@ def read_shell_layout():
     except json.JSONDecodeError:
         return {}
     return body if isinstance(body, dict) else {}
+
+
+def archive_frame(out, label):
+    dest = out / "frames"
+    dest.mkdir(parents=True, exist_ok=True)
+    root = Path("/tmp/superreader-spike")
+    for name in ("layout.json", "chrome.json", "geometry.json", "shell-layout.json"):
+        src = root / name
+        if src.is_file():
+            (dest / f"{label}-{name}").write_bytes(src.read_bytes())
+
+
+def read_chrome():
+    path = Path("/tmp/superreader-spike/chrome.json")
+    if not path.is_file():
+        return {}
+    try:
+        body = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def fullscreen_shot_problems(chrome, windowed_png, full_png, windowed_size):
+    """A windowed capture must not count as fullscreen."""
+    problems = []
+    if not isinstance(chrome, dict) or chrome.get("fullscreen") is not True:
+        problems.append("fullscreen flag was not set")
+    try:
+        width = float(chrome.get("window_w") or 0)
+        height = float(chrome.get("window_h") or 0)
+    except (TypeError, ValueError):
+        width = height = 0.0
+    if (
+        windowed_size
+        and abs(width - windowed_size[0]) < 2.0
+        and abs(height - windowed_size[1]) < 2.0
+    ):
+        problems.append("fullscreen window is still the windowed size")
+    if (
+        Path(windowed_png).is_file()
+        and Path(full_png).is_file()
+        and Path(windowed_png).read_bytes() == Path(full_png).read_bytes()
+    ):
+        problems.append("fullscreen capture matches the windowed fixture")
+    return problems
 
 
 def clear_layout_files():
@@ -1656,8 +1802,99 @@ def form_diff_self_check():
     assert not _plate_has_ink(flat, 3, 1.0, [0, 0, 20, 10], "#C8A24C")
     assert pixel_changes(band, flat) > 0
     assert pixel_changes(flat, flat) == 0
-    assert library_min_height() == 516
+    assert library_min_height() == 528
     assert alignment_report(_sample_layout()) == []
+    gapped = _sample_layout()
+    gapped["nodes"].extend(
+        [
+            {
+                "id": "continue.section",
+                "kind": "text",
+                "frame": [266, 110, 808, 18],
+                "intrinsic": [808, 18],
+                "container": [0, 0, 800, 600],
+            },
+            {
+                "id": "continue.0",
+                "kind": "button",
+                "frame": [266, 140, 258.67, 102],
+                "intrinsic": [258.67, 102],
+                "container": [0, 0, 800, 600],
+            },
+            {
+                "id": "continue.1",
+                "kind": "button",
+                "frame": [540.67, 140, 258.67, 102],
+                "intrinsic": [258.67, 102],
+                "container": [0, 0, 800, 600],
+            },
+            {
+                "id": "continue.2",
+                "kind": "button",
+                "frame": [815.33, 140, 258.67, 102],
+                "intrinsic": [258.67, 102],
+                "container": [0, 0, 800, 600],
+            },
+        ]
+    )
+    assert not any(item.startswith("continue gap") for item in alignment_report(gapped)), alignment_report(gapped)
+    uneven = json.loads(json.dumps(gapped))
+    for item in uneven["nodes"]:
+        if item["id"] == "continue.2":
+            item["frame"][0] += 40
+    assert any(item.startswith("continue gap") for item in alignment_report(uneven))
+    clipped = _sample_layout()
+    clipped["nodes"].append(
+        {
+            "id": "cover.0.title",
+            "kind": "text",
+            "frame": [266, 552, 70, 42],
+            "intrinsic": [70, 42],
+            "container": [0, 0, 800, 600],
+        }
+    )
+    assert any("cover caption clearance" in item for item in alignment_report(clipped))
+    cleared = json.loads(json.dumps(clipped))
+    for item in cleared["nodes"]:
+        if item["id"] == "cover.0.title":
+            item["frame"][1] = 540
+    assert not any("cover caption clearance" in item for item in alignment_report(cleared)), alignment_report(cleared)
+    point_x, point_y = cg_event_point(100, 38, 700, 613, 900)
+    assert point_x == 800
+    assert point_y == 38 + 613
+    assert point_y != 900 - (38 + 613)
+    assert fullscreen_shot_problems(
+        {"fullscreen": False, "window_w": 1440, "window_h": 855},
+        Path("missing-a"),
+        Path("missing-b"),
+        (1440, 855),
+    )
+    assert "fullscreen window is still the windowed size" in fullscreen_shot_problems(
+        {"fullscreen": True, "window_w": 1440, "window_h": 855},
+        Path("missing-a"),
+        Path("missing-b"),
+        (1440, 855),
+    )
+    head = git_head()
+    assert head == "" or (len(head) == 40 and int(head, 16) >= 0)
+    try:
+        require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(READER_PROFILE)})
+        raise AssertionError("real support was accepted")
+    except RuntimeError:
+        pass
+    with tempfile.TemporaryDirectory() as support_root:
+        one = Path(support_root) / "a.png"
+        two = Path(support_root) / "b.png"
+        one.write_bytes(b"same-bytes")
+        two.write_bytes(b"same-bytes")
+        assert "fullscreen capture matches the windowed fixture" in fullscreen_shot_problems(
+            {"fullscreen": True, "window_w": 1600, "window_h": 1000},
+            one,
+            two,
+            (1440, 855),
+        )
+        isolated = Path(support_root) / "support"
+        assert require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(isolated)}) == isolated.resolve()
     parked = _sample_layout()
     parked["lights"] = False
     assert any(item.startswith("sidebar.toggle") for item in alignment_report(parked))
@@ -2072,6 +2309,16 @@ def _plate_has_ink(rows, channels, scale, frame, face):
     return False
 
 
+def cg_event_point(origin_x, origin_y, local_x, local_y, screen_h):
+    """CGWindow bounds and CGEvent.location share the main display's top-left.
+
+    screen_h is accepted so a caller cannot silently switch to the unflipped
+    bottom-left space. That space is CGEventGetUnflippedLocation, not location.
+    """
+    del screen_h
+    return origin_x + local_x, origin_y + local_y
+
+
 def pixel_changes(left, right):
     if not left or not right or len(left) != len(right):
         return 0
@@ -2118,8 +2365,11 @@ def shelf_wheel(out, window_tool, state):
         return False, "shelf wheel had no grid point"
     point_x = float(card[0]) + float(card[2]) * 0.55
     point_y = float(card[1]) + float(card[3]) * 0.72
-    screen_x = metrics["x"] + point_x
-    screen_y = metrics["y"] + point_y
+    if "screen_h" not in metrics:
+        return False, "shelf wheel had no screen point"
+    screen_x, screen_y = cg_event_point(
+        metrics["x"], metrics["y"], point_x, point_y, metrics["screen_h"]
+    )
     window = metrics["id"]
     before = out / "shelf-wheel-before.png"
     after = out / "shelf-wheel-after.png"
@@ -2162,6 +2412,12 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
             matched = False
             note += "; form-fixture.png missing"
         save_alignment_crops(out, "form-fixture", mock_shot)
+        archive_frame(out, "1440")
+        windowed = read_chrome()
+        try:
+            windowed_size = (float(windowed.get("window_w")), float(windowed.get("window_h")))
+        except (TypeError, ValueError):
+            windowed_size = None
         notes.append(note)
         ok = ok and matched
         finish_launch(state)
@@ -2178,6 +2434,7 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         try:
             _capture_form(out, window_tool, state, "form-minimum.png")
             save_alignment_crops(out, "form-minimum", out / "form-minimum.png")
+            archive_frame(out, "minimum")
         except RuntimeError as exc:
             notes.append(f"minimum capture {exc}")
             ok = False
@@ -2203,6 +2460,10 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
             layout = read_layout_frames()
             if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
                 bucket.append(json.loads(json.dumps(layout)))
+                if read_chrome().get("fullscreen") is True:
+                    archive_frame(out, "fullscreen-settled")
+                elif not (out / "frames" / "fullscreen-enter-layout.json").is_file():
+                    archive_frame(out, "fullscreen-enter")
             return False
 
         state = launch(
@@ -2223,19 +2484,24 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         try:
             _capture_form(out, window_tool, state, "form-fullscreen.png")
             save_alignment_crops(out, "form-fullscreen", out / "form-fullscreen.png")
+            archive_frame(out, "fullscreen-settled")
         except RuntimeError as exc:
             notes.append(f"fullscreen capture {exc}")
             ok = False
         matched, note = _size_note("fullscreen", state["pid"] if state["alive"] else None)
-        if not _chrome_fullscreen():
+        shot_problems = fullscreen_shot_problems(
+            read_chrome(), mock_shot, out / "form-fullscreen.png", windowed_size
+        )
+        if shot_problems:
             matched = False
-            note += "; fullscreen flag was not set"
+            note += "; " + "; ".join(shot_problems)
         if not (out / "form-fullscreen.png").exists():
             matched = False
             note += "; png missing"
         try:
             exit_flag.parent.mkdir(parents=True, exist_ok=True)
             exit_flag.write_text("1")
+            was_full = read_chrome().get("fullscreen") is True
             deadline = time.time() + 8
             left = False
             while time.time() < deadline:
@@ -2244,13 +2510,29 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
                     transition.append(json.loads(json.dumps(layout)))
                 chrome_path = Path("/tmp/superreader-spike/chrome.json")
                 chrome = json.loads(chrome_path.read_text()) if chrome_path.is_file() else {}
-                if chrome.get("fullscreen") is False and isinstance(layout, dict) and layout.get("lights") is True:
+                if (
+                    was_full
+                    and chrome.get("fullscreen") is False
+                    and isinstance(layout, dict)
+                    and layout.get("lights") is True
+                ):
                     left = True
                     break
                 time.sleep(0.4)
-            if not left:
+            if left:
+                archive_frame(out, "fullscreen-exit")
+                try:
+                    _capture_form(out, window_tool, state, "form-restored.png")
+                    save_alignment_crops(out, "form-restored", out / "form-restored.png")
+                except RuntimeError as exc:
+                    matched = False
+                    note += f"; restored capture {exc}"
+            else:
                 matched = False
                 note += "; fullscreen did not exit"
+            if not (out / "form-restored.png").is_file():
+                matched = False
+                note += "; restored window missing"
         except (OSError, json.JSONDecodeError, TypeError):
             matched = False
             note += "; fullscreen exit was not requested"
@@ -3186,13 +3468,8 @@ tell application "System Events"
         try
           set r to role of e as text
           set n to name of e as text
-          -- A pressable view is an AXButton whose title is empty. Its
-          -- accessibility label is the description, which is the string
-          -- the shelf checks look for.
           if n is "missing value" or n is "" then
-            if r is "AXButton" then
-              set n to description of e as text
-            end if
+            set n to description of e as text
           end if
           if n is not "missing value" and n is not "" and n is not "button" then
             set out to out & r & tab & n & linefeed
@@ -3207,12 +3484,19 @@ end tell
     proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     if proc.returncode != 0:
         return [], (proc.stderr or proc.stdout or "osascript failed").strip()
+    text = proc.stdout
+    if "WIN " not in text and "\t" not in text:
+        swift_text, swift_err = ax_swift_dump(pid)
+        if "\t" in swift_text or "WIN " in swift_text:
+            text = swift_text
+        elif swift_err:
+            return [], swift_err
     names = []
-    for line in proc.stdout.splitlines():
-        if "\t" in line:
-            _role, name = line.split("\t", 1)
-            names.append(name)
-    return names, proc.stdout
+    for line in text.splitlines():
+        fields = line.split("\t")
+        if len(fields) >= 2:
+            names.append(fields[1])
+    return names, text
 
 
 def compile_window_id(out):
@@ -3370,7 +3654,21 @@ def ocr_lines(tool, png):
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
+def require_isolated_support(env):
+    raw = env.get("SUPERREADER_SUPPORT_DIR") or ""
+    if not raw:
+        raise RuntimeError("refusing to launch without SUPERREADER_SUPPORT_DIR")
+    path = Path(raw)
+    real = READER_PROFILE.resolve()
+    got = path.resolve()
+    if got == real or real in got.parents or got in real.parents:
+        raise RuntimeError("refusing to launch against the real support directory")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def launch(out, name, env, ready, timeout, watch=None, binary=None):
+    require_isolated_support(env)
     log = out / f"{name}.log"
     handle = log.open("w")
     proc = subprocess.Popen(
@@ -4462,12 +4760,12 @@ def private_support(out):
 
 
 def library_min_height():
-    """Toolbar, title, continue row, one shelf row, both section labels, and the insets."""
+    """Toolbar, title, continue row, one shelf row, both section labels, the corner, and the insets."""
     section = 28 + 15 * 1.2 + 12
     continue_h = 12 * 2 + 78
     shelf = 112 * 1.5 + 42
     stack = 36 + 4 + 36 + section + continue_h + section + shelf
-    return stack + 6 * 2
+    return stack + CARD_CORNER + 6 * 2
 
 
 def timed_open(out, name, justify, extra, watch, timeout=45):
@@ -5754,9 +6052,11 @@ def flash_book(out, window_tool, mouse, drag, book):
     write_trim("paperback")
     log = out / f"flash-{book}.log"
     handle = log.open("w")
+    flash_env = child_env({"SPIKE_MODE": "webkit", "SPIKE_BOOK": book})
+    require_isolated_support(flash_env)
     proc = subprocess.Popen(
         [str(release_bin("spike-shell"))],
-        env=child_env({"SPIKE_MODE": "webkit", "SPIKE_BOOK": book}),
+        env=flash_env,
         stdout=handle,
         stderr=subprocess.STDOUT,
         cwd=SPIKES,
@@ -6467,6 +6767,23 @@ def one_minute_load():
     return os.getloadavg()[0]
 
 
+def git_head():
+    proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    text = proc.stdout.strip()
+    if proc.returncode != 0 or len(text) != 40:
+        return ""
+    try:
+        int(text, 16)
+    except ValueError:
+        return ""
+    return text
+
+
 def write_summary(out, rows, version, load_start):
     failing = [row for row in rows if row["status"] == "fail"]
     summary = {
@@ -6477,6 +6794,7 @@ def write_summary(out, rows, version, load_start):
         "loadavg": loadavg(),
         "top": RUN_TOP or top_cpu(),
         "warm_phases": WARM_PHASES,
+        "head": git_head(),
         "checks": rows,
     }
     path = out / "summary.json"
@@ -7322,9 +7640,7 @@ tell application "System Events"
         try
           set n to name of e as text
           if n is "missing value" or n is "" then
-            if (role of e as text) is "AXButton" then
-              set n to description of e as text
-            end if
+            set n to description of e as text
           end if
           if n is "{safe}" then
             click e
@@ -7730,6 +8046,16 @@ def main():
         rows.append(check("shell-form-parity", "shell", "window", "fail", str(exc)))
     rows.append(check("smoke-shell-click", "smoke", "window", "pending", SHELL_CLICK_GAP))
     rows.extend(pending_rows())
+    head = git_head()
+    rows.append(
+        check(
+            "verified-head",
+            "doctor",
+            "none",
+            "pass" if len(head) == 40 else "fail",
+            head or "git rev-parse HEAD was empty",
+        )
+    )
     summary_path = write_summary(out, rows, version, load_start)
     alpha_dir = ROOT / "docs" / "verify" / "alpha"
     alpha_dir.mkdir(parents=True, exist_ok=True)
@@ -7777,25 +8103,19 @@ def wait_for_open(path, timeout):
     return False
 
 
-def park_reader_profile(out):
-    # open -a does not pass SUPERREADER_SUPPORT_DIR. The app would write
-    # the real Application Support directory, so that directory is moved aside.
-    backup = out / "reader-profile"
-    if backup.exists():
-        shutil.rmtree(backup)
-    if not READER_PROFILE.exists():
-        return False, backup
-    READER_PROFILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(READER_PROFILE), backup)
-    return True, backup
-
-
-def restore_reader_profile(had, backup):
-    if READER_PROFILE.exists():
-        shutil.rmtree(READER_PROFILE)
-    if had and backup.exists():
-        READER_PROFILE.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(backup), READER_PROFILE)
+def package_app(dest_dir, support):
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["SR_APP_DIR"] = str(dest_dir)
+    env["SR_SUPPORT_DIR"] = str(support)
+    proc = subprocess.run(
+        ["scripts/package-macos.sh"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return proc, dest_dir / "Slowpage.app"
 
 
 def run_system_open(out):
@@ -7824,13 +8144,9 @@ def run_system_open(out):
                 )
             )
         return rows
-    packaged = subprocess.run(
-        ["scripts/package-macos.sh"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    app = ROOT / "dist" / "Slowpage.app"
+    support = Path(tempfile.mkdtemp(prefix=f"superreader-open-{out.name}-"))
+    require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(support)})
+    packaged, app = package_app(out / "package", support)
     if packaged.returncode != 0 or not app.is_dir():
         detail = (packaged.stderr or packaged.stdout or "package-macos.sh failed").strip()
         for check_id in OPEN_IDS:
@@ -7841,9 +8157,7 @@ def run_system_open(out):
     OPENS_LOG.parent.mkdir(parents=True, exist_ok=True)
     OPENS_LOG.unlink(missing_ok=True)
     started = []
-    parked = None
     try:
-        parked = park_reader_profile(out)
         subprocess.run(["open", "-a", str(app), str(PRIDE)], check=False)
         started = slowpage_pids()
         cold_ok = wait_for_open(PRIDE, 25)
@@ -7901,13 +8215,11 @@ def run_system_open(out):
         )
     finally:
         stop_pids(started or slowpage_pids())
-        if parked is not None:
-            restore_reader_profile(*parked)
     return rows
 
 
-def app_binary():
-    macos = Path("/Applications/Slowpage.app/Contents/MacOS")
+def app_binary(app):
+    macos = Path(app) / "Contents" / "MacOS"
     files = [path for path in macos.iterdir() if path.is_file() and not path.name.startswith(".")]
     if not files:
         raise RuntimeError("Slowpage.app has no executable")
@@ -7990,12 +8302,16 @@ def run_alpha(out, window_tool):
         "alpha-pdf-turn",
         "alpha-pdf-reopen",
     )
-    app = Path("/Applications/Slowpage.app")
-    if not app.exists():
+    support_root = Path(tempfile.mkdtemp(prefix=f"superreader-alpha-{out.name}-"))
+    require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(support_root)})
+    packaged, app = package_app(out / "app", support_root)
+    if packaged.returncode != 0 or not app.is_dir():
+        detail = (packaged.stderr or packaged.stdout or "package-macos.sh failed").strip()
         for check_id in ids:
-            rows.append(check(check_id, "alpha", "window", "fail", f"{app} is not installed"))
+            rows.append(check(check_id, "alpha", "window", "fail", detail[-400:]))
         rows.append(check("alpha-finder-open", "alpha", "none", "pending", FINDER_GAP))
         return rows
+    binary = app_binary(app)
 
     def drive(kind, book, ready, shot_name):
         support = out / f"alpha-support-{kind}"
@@ -8009,7 +8325,7 @@ def run_alpha(out, window_tool):
             product_env(support),
             lambda names: any(name == "Open" for name in names),
             25,
-            binary=app_binary(),
+            binary=binary,
         )
         if not state["alive"]:
             raise RuntimeError(f"{kind} app exited before the empty window")
@@ -8050,7 +8366,7 @@ def run_alpha(out, window_tool):
             product_env(support),
             lambda names: True,
             8,
-            binary=app_binary(),
+            binary=binary,
         )
         restored = None
         deadline = time.time() + 40
@@ -8078,7 +8394,7 @@ def run_alpha(out, window_tool):
         support = out / "alpha-support-pdf"
         shutil.rmtree(support, ignore_errors=True)
         support.mkdir()
-        state = launch(out, "alpha-pdf", product_env(support), lambda names: any(name == "Open" for name in names), 25, binary=app_binary())
+        state = launch(out, "alpha-pdf", product_env(support), lambda names: any(name == "Open" for name in names), 25, binary=binary)
         menu_open(state["pid"], pdf)
         def current_pdf():
             names, _dump = ax_names(state["pid"])
@@ -8105,7 +8421,7 @@ def run_alpha(out, window_tool):
             time.sleep(0.4)
         finish_launch(state)
         time.sleep(0.6)
-        again = launch(out, "alpha-pdf-again", product_env(support), lambda names: True, 8, binary=app_binary())
+        again = launch(out, "alpha-pdf-again", product_env(support), lambda names: True, 8, binary=binary)
         def current_again():
             names, _dump = ax_names(again["pid"])
             numbers = page_numbers(names)
