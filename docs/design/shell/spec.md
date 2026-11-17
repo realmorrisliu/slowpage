@@ -112,7 +112,7 @@ Choosing **全部书籍** closes the book and returns to Full. The sidebar is sh
 
 Control-Command-I, written ⌃⌘I, the View menu item, and the toolbar button toggle immersive reading while a book is open. They enter it when it is off, and they leave it when it is on. With no book open, all three do nothing.
 
-Escape leaves immersive reading and does not enter it. Leaving immersive reading returns to Page and panel. The sidebar stays hidden, the annotation margin is shown, and the inset returns to 6 points. Escape does nothing to the form when immersive reading is already off.
+Escape leaves immersive reading and does not enter it. Leaving immersive reading returns to Page and panel. The sidebar stays hidden, the annotation margin is shown, and the inset returns to 6 points. When immersive reading is off and a book is open, Escape, Command-[, and the back button leave the book and return to the shelf. That check is in `docs/design/reading-interactions.md`.
 
 The sidebar toggle in Full hides or shows the sidebar. The card keeps the library. The chat panel does not change. The inset stays 6 points. Hiding the sidebar does not open a book.
 

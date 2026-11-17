@@ -109,6 +109,10 @@ The sidebar is the version B text rows, 220 points wide. The icon rail is reject
 
 S1 removes the empty-window Open button, the `open -a` and Open With checks, and the bare shelf screen. It does not repair them. `spikes/library` stays.
 
+## Reading interactions (2026-11-17)
+
+Morris confirmed the reading-form interaction rule on 2026-11-17. S3, S4, and every slice after them get every interaction detail right. The item passes while the reader drives the interaction. The checklist, the headless `nsh test`, the Mac recording, and the performance floors are in `docs/design/reading-interactions.md`.
+
 ## Left bar measurement (2026-11-10)
 
 Until S1, the spike sizes the whole left bar from the traffic lights. `.cursor/skills/verify-superreader/features/sidebar.md` scores that bar. The measured width is the zoom button's right edge plus the close button's left edge, after those frames are converted to window coordinates. The left gap is the close button's left edge. The right gap is that width minus the zoom button's right edge. The two gaps differ by at most 0.5 points. The width is read from AppKit after layout. It is not a hardcoded estimate. A resize does not change it. Read the buttons again when the window is created, when the toolbar style changes, when immersive reading starts or ends, and when the window enters or leaves full screen.
@@ -144,6 +148,7 @@ Until S3, the spike centers the page in the area from the bar's right edge to th
 - 2026-11-10. The reading-form right panel is the annotation margin in Annotation margin (hard requirement, 2026-11-10). Pull request 14's card, type size, connector, and drawer picks are in `docs/design/shell/spec.md`.
 - 2026-11-11. The app shell lands before any other feature. The layout reference is `docs/design/shell/spec.md`. Full shows the library and the chat panel. Page and panel shows the page and the annotation margin. Immersive reading shows the card edge to edge. The exact gap, the horizontal position, the margin width, and the toggle placement wait for a mockup. Shell slices still do not embed alan.
 - 2026-11-11. The sidebar is 220 points of text rows. Morris rejected the icon rail.
+- 2026-11-17. Reading-form interactions follow `docs/design/reading-interactions.md`. Each checklist item needs headless `nsh test` and a Mac recording, for an EPUB and for a PDF.
 
 ## PDF reading
 
