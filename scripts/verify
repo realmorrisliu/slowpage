@@ -1403,14 +1403,9 @@ def ax_content_names(text):
     return names
 
 
-def ax_swift_dump(pid):
-    """System Events sometimes lists no windows for a process CG can see."""
-    binary = Path("/tmp/superreader-spike/ax-walk")
-    source = Path("/tmp/superreader-spike/ax-walk.swift")
-    if not binary.is_file():
-        source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_text(
-            r"""
+def ax_swift_source():
+    """Walk titled elements, including static text whose name is AXValue."""
+    return r"""
 import ApplicationServices
 import Foundation
 
@@ -1441,14 +1436,21 @@ func pointOrSize(_ value: CFTypeRef?) -> (CGFloat, CGFloat)? {
   return nil
 }
 
-func walk(_ element: AXUIElement, _ depth: Int) {
-  if depth > 14 { return }
-  let role = copyAttr(element, kAXRoleAttribute as String) as? String ?? ""
+func axName(_ element: AXUIElement) -> String {
   var name = copyAttr(element, kAXTitleAttribute as String) as? String ?? ""
   if name.isEmpty {
     name = copyAttr(element, kAXDescriptionAttribute as String) as? String ?? ""
   }
-  name = name.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+  if name.isEmpty {
+    name = copyAttr(element, kAXValueAttribute as String) as? String ?? ""
+  }
+  return name.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+}
+
+func walk(_ element: AXUIElement, _ depth: Int) {
+  if depth > 14 { return }
+  let role = copyAttr(element, kAXRoleAttribute as String) as? String ?? ""
+  let name = axName(element)
   let pos = pointOrSize(copyAttr(element, kAXPositionAttribute as String))
   let size = pointOrSize(copyAttr(element, kAXSizeAttribute as String))
   if !name.isEmpty, let pos, let size {
@@ -1459,26 +1461,39 @@ func walk(_ element: AXUIElement, _ depth: Int) {
   }
 }
 
-let app = AXUIElementCreateApplication(pid)
-guard let windows = copyAttr(app, kAXWindowsAttribute as String) as? [AXUIElement], !windows.isEmpty else {
-  fputs("accessibility saw no windows\n", stderr)
-  exit(3)
-}
-for window in windows {
+func walkWindow(_ window: AXUIElement) {
   let pos = pointOrSize(copyAttr(window, kAXPositionAttribute as String)) ?? (0, 0)
   let size = pointOrSize(copyAttr(window, kAXSizeAttribute as String)) ?? (0, 0)
   print("WIN \(pos.0) \(pos.1) \(size.0) \(size.1)")
   walk(window, 0)
 }
+
+let app = AXUIElementCreateApplication(pid)
+var windows = copyAttr(app, kAXWindowsAttribute as String) as? [AXUIElement] ?? []
+if windows.isEmpty, let focused = copyAttr(app, kAXFocusedWindowAttribute as String) {
+  windows = [focused as! AXUIElement]
+}
+if windows.isEmpty, let main = copyAttr(app, kAXMainWindowAttribute as String) {
+  windows = [main as! AXUIElement]
+}
+guard !windows.isEmpty else {
+  fputs("accessibility saw no windows\n", stderr)
+  exit(3)
+}
+for window in windows {
+  walkWindow(window)
+}
 """
-        )
-        proc = subprocess.run(
-            ["swiftc", "-O", "-o", str(binary), str(source)],
-            capture_output=True,
-            text=True,
-        )
-        if proc.returncode != 0:
-            return "", (proc.stderr or "ax walker failed to compile").strip()
+
+
+def ax_swift_dump(pid):
+    """System Events sometimes lists no windows for a process CG can see."""
+    binary = Path("/tmp/superreader-spike/ax-walk")
+    source = Path("/tmp/superreader-spike/ax-walk.swift")
+    try:
+        refresh_swift(binary, source, ax_swift_source(), "ax walker")
+    except RuntimeError as exc:
+        return "", str(exc)
     proc = subprocess.run([str(binary), str(pid)], capture_output=True, text=True)
     if proc.returncode != 0 and not proc.stdout.strip():
         return "", (proc.stderr or proc.stdout or "accessibility saw no windows").strip()
@@ -1525,6 +1540,11 @@ tell application "System Events"
           set n to name of e as text
           if n is "missing value" or n is "" then
             set n to description of e as text
+          end if
+          if n is "missing value" or n is "" then
+            try
+              set n to value of e as text
+            end try
           end if
           set p to position of e
           set s to size of e
@@ -2505,19 +2525,25 @@ event.post(tap: .cghidEventTap)
 """
 
 
-def compile_wheel(out):
-    binary = out / "wheel"
-    if binary.is_file():
-        return binary
-    source = out / "wheel.swift"
-    source.write_text(wheel_source())
+def refresh_swift(binary, source, text, label):
+    """Rebuild when the source changed. A leftover binary hides a new walker."""
+    current = source.read_text() if source.is_file() else ""
+    if binary.is_file() and current == text:
+        return
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(text)
     proc = subprocess.run(
         ["swiftc", "-O", "-o", str(binary), str(source)],
         capture_output=True,
         text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr or "wheel swiftc failed")
+        raise RuntimeError((proc.stderr or f"{label} swiftc failed").strip())
+
+
+def compile_wheel(out):
+    binary = out / "wheel"
+    refresh_swift(binary, out / "wheel.swift", wheel_source(), "wheel")
     return binary
 
 
@@ -3598,6 +3624,9 @@ def self_test():
     assert live == [], live
     source = wheel_source()
     assert "scrollWheelEventIsContinuous" in source, source
+    assert "kAXValueAttribute" in ax_swift_source()
+    assert "kAXFocusedWindowAttribute" in ax_swift_source()
+    assert Path(__file__).read_text().count("set n to value of e as text") >= 2
     assert "CGEventGetUnflippedLocation" not in source
     assert "cghidEventTap" in source
     card = [226.0, 6.0, 888.0, 843.0]
@@ -4124,6 +4153,11 @@ tell application "System Events"
           if n is "missing value" or n is "" then
             set n to description of e as text
           end if
+          if n is "missing value" or n is "" then
+            try
+              set n to value of e as text
+            end try
+          end if
           if n is not "missing value" and n is not "" and n is not "button" then
             set out to out & r & tab & n & linefeed
           end if
@@ -4144,6 +4178,8 @@ end tell
             text = swift_text
         elif swift_err and not text.strip():
             return [], swift_err
+        elif not text.strip():
+            return [], swift_err or "accessibility walk returned no windows"
     return ax_content_names(text), text
 
 
