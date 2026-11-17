@@ -625,7 +625,7 @@ fn fit_text(
     remember_font(&label, size, weight);
     view()
         .min_w(px(0.0))
-        .tooltip(label.clone())
+        .tooltip(text(label.clone()).text_size(px(size)).text_color(color))
         .child(
             line!(label.clone(), size, weight, color, tracking)
                 .truncate()
@@ -1988,7 +1988,11 @@ fn cover_tile(
                         .truncate()
                         .accessible(true)
                         .label(card.title.clone())
-                        .tooltip(card.title.clone()),
+                        .tooltip(
+                            text(card.title.clone())
+                                .text_size(px(crate::tokens::SHELF_TITLE_SIZE))
+                                .text_color(ink()),
+                        ),
                     ),
                 )
                 .child(author_line(card)),
