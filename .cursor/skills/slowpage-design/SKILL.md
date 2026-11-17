@@ -45,7 +45,7 @@ Do not add any of these.
 
 `docs/design/north-star.md` already forbids theme switching and night mode.
 
-The library card's one soft shadow is specified in `docs/design/shell/spec.md`. Match the approved picture. Do not add a second shadow.
+Keep a shadow that a design doc or `docs/design/shell/approved-full-form.png` already shows. Do not add a shadow those sources do not show.
 
 ## Adaptive layout
 
@@ -83,4 +83,4 @@ This file keeps two ideas from Anthropic's frontend-design skill. That skill is 
 
 That same skill tells you to be distinctive, to avoid system fonts, and to take a bold aesthetic risk. Do not follow those three instructions. Slowpage uses system fonts and a quiet Apple-native design. The design docs win.
 
-`.cursor/skills/apple-design/SKILL.md` is vendored for its principles. Use the principles. Do not copy its web or CSS snippets. Slowpage is native AppKit through NSH, in Rust. Where that skill mentions colors that adapt to light and dark, night mode stays out.
+`.cursor/skills/apple-design/SKILL.md` is vendored for its principles. Use the principles. Do not copy its web or CSS snippets. Slowpage is native AppKit through NSH, in Rust. When that skill and this file disagree, this file and the design docs win. A shadow, a gradient, or a night mode that this file and the design docs do not show stays out.
