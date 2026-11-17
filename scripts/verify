@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import argparse
+import ast
 import json
 import os
 import re
@@ -1347,6 +1348,61 @@ def frame_outside_x(x, width, origin, span, tol=1.0):
     return x < origin - tol or x + width > origin + span + tol
 
 
+def ax_window_box(line):
+    """`WIN x y w h` when the walk recorded a rectangle. A titled `WIN name` is not a box."""
+    parts = line.split()
+    if not line.startswith("WIN ") or len(parts) != 5:
+        return None
+    try:
+        return [float(part) for part in parts[1:]]
+    except ValueError:
+        return None
+
+
+def _menu_role(role):
+    return role.startswith("AXMenu") or role in ("menu", "menu item", "menu bar", "menu bar item")
+
+
+def ax_walk_has_content(text):
+    """A menu bar dumped as a zero-size window is not the shelf.
+
+    System Events still prints `WIN `, so the caller must not treat that line
+    as proof the content window was walked.
+    """
+    if not text or "NO_PROCESS" in text:
+        return False
+    sized = False
+    named = False
+    content = False
+    for line in text.splitlines():
+        if line.startswith("WIN "):
+            box = ax_window_box(line)
+            if box is not None and box[2] > 1.0 and box[3] > 1.0:
+                sized = True
+            elif box is None and line.strip() not in ("WIN", "WIN missing value"):
+                named = True
+            continue
+        fields = line.split("\t")
+        if len(fields) < 2 or _menu_role(fields[0]):
+            continue
+        name = fields[1].strip()
+        if name and name not in ("missing value", "button"):
+            content = True
+    return content and (sized or named)
+
+
+def ax_content_names(text):
+    names = []
+    for line in text.splitlines():
+        fields = line.split("\t")
+        if len(fields) < 2:
+            continue
+        name = fields[1].strip()
+        if name and name not in ("missing value", "button"):
+            names.append(name)
+    return names
+
+
 def ax_swift_dump(pid):
     """System Events sometimes lists no windows for a process CG can see."""
     binary = Path("/tmp/superreader-spike/ax-walk")
@@ -1484,9 +1540,9 @@ end tell
     if proc.returncode != 0:
         return [(proc.stderr or proc.stdout or "accessibility walk failed").strip()]
     text = proc.stdout
-    if "WIN " not in text:
+    if not ax_walk_has_content(text):
         swift_text, swift_err = ax_swift_dump(pid)
-        if "WIN " in swift_text:
+        if ax_walk_has_content(swift_text):
             text = swift_text
         elif swift_err and not text.strip():
             return [swift_err]
@@ -2239,6 +2295,74 @@ def _size_note(label, pid=None):
     return matched and not problems, note
 
 
+def png_cicp(path):
+    """The PNG cICP chunk, or None when the file does not declare one."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    index = 8
+    while index + 8 <= len(data):
+        length = int.from_bytes(data[index : index + 4], "big")
+        kind = data[index + 4 : index + 8]
+        if kind == b"cICP" and length >= 4:
+            return tuple(data[index + 8 : index + 12])
+        index += 12 + length
+        if kind == b"IEND":
+            break
+    return None
+
+
+def _srgb_channel_to_linear(channel):
+    value = channel / 255.0
+    if value <= 0.04045:
+        return value / 12.92
+    return ((value + 0.055) / 1.055) ** 2.4
+
+
+def _linear_channel_to_srgb(value):
+    value = 0.0 if value < 0.0 else 1.0 if value > 1.0 else value
+    if value <= 0.0031308:
+        encoded = 12.92 * value
+    else:
+        encoded = 1.055 * (value ** (1.0 / 2.4)) - 0.055
+    return int(round(encoded * 255.0))
+
+
+# Display P3 D65 to sRGB D65, linear. The capture's cICP primaries are 12
+# and its transfer is 13, so the bytes are P3-encoded with the sRGB curve.
+_P3_TO_SRGB = (
+    (1.2249401762808637, -0.22494017628086396, 0.0),
+    (-0.042056954709292184, 1.0420569547092922, 0.0),
+    (-0.019637554586411246, -0.07863609724428147, 1.0982735518306925),
+)
+
+
+def display_p3_rows_to_srgb(rows, channels):
+    converted = []
+    for row in rows:
+        out = bytearray(row)
+        width = len(row) // channels
+        for x in range(width):
+            offset = x * channels
+            red = _srgb_channel_to_linear(row[offset])
+            green = _srgb_channel_to_linear(row[offset + 1])
+            blue = _srgb_channel_to_linear(row[offset + 2])
+            out[offset] = _linear_channel_to_srgb(
+                _P3_TO_SRGB[0][0] * red + _P3_TO_SRGB[0][1] * green + _P3_TO_SRGB[0][2] * blue
+            )
+            out[offset + 1] = _linear_channel_to_srgb(
+                _P3_TO_SRGB[1][0] * red + _P3_TO_SRGB[1][1] * green + _P3_TO_SRGB[1][2] * blue
+            )
+            out[offset + 2] = _linear_channel_to_srgb(
+                _P3_TO_SRGB[2][0] * red + _P3_TO_SRGB[2][1] * green + _P3_TO_SRGB[2][2] * blue
+            )
+        converted.append(out)
+    return converted
+
+
 def plate_report(layout, png):
     """Coverless plates need type frames inside the cover, ink on the face, and the token color."""
     if not isinstance(layout, dict):
@@ -2258,6 +2382,11 @@ def plate_report(layout, png):
         try:
             image_w, _image_h, rows = decode_png_rows(png)
             channels = len(rows[0]) // image_w if rows else 3
+            # screencapture writes Display P3 primaries with an sRGB transfer.
+            # The raw bytes are not the sRGB token. Delta stays 2 after the
+            # declared conversion. A PNG with no cICP chunk is compared raw.
+            if png_cicp(png) == (12, 13, 0, 1):
+                rows = display_p3_rows_to_srgb(rows, channels)
             window = layout.get("window")
             if isinstance(window, list) and window and float(window[0]) > 0:
                 scale = image_w / float(window[0])
@@ -2359,13 +2488,9 @@ def pixel_changes(left, right):
     return sum(1 for a, b in zip(left, right) if a != b)
 
 
-def compile_wheel(out):
-    binary = out / "wheel"
-    if binary.is_file():
-        return binary
-    source = out / "wheel.swift"
-    source.write_text(
-        """
+def wheel_source():
+    """A pixel wheel with the continuous field set. Without it, AppKit reports delta 0."""
+    return """
 import CoreGraphics
 guard CommandLine.arguments.count > 3,
       let x = Double(CommandLine.arguments[1]),
@@ -2375,9 +2500,17 @@ let point = CGPoint(x: x, y: y)
 CGWarpMouseCursorPosition(point)
 guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: dy, wheel2: 0, wheel3: 0) else { exit(1) }
 event.location = point
+event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
 event.post(tap: .cghidEventTap)
 """
-    )
+
+
+def compile_wheel(out):
+    binary = out / "wheel"
+    if binary.is_file():
+        return binary
+    source = out / "wheel.swift"
+    source.write_text(wheel_source())
     proc = subprocess.run(
         ["swiftc", "-O", "-o", str(binary), str(source)],
         capture_output=True,
@@ -2429,53 +2562,125 @@ def shelf_wheel(out, window_tool, state):
     return True, f"wheel over the shelf grid changed {changed} pixels"
 
 
-def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
-    """Minimum, the 1440 mockup, and full screen. Each must match the grid rule and clip nothing."""
+class _LiveAdaptive:
+    """The Mac process, the chrome files, and the captures adaptive_layout drives."""
+
+    def wheel(self, out, window_tool, state):
+        return shelf_wheel(out, window_tool, state)
+
+    def size_note(self, label, pid):
+        return _size_note(label, pid)
+
+    def plates(self, layout, png):
+        return plate_report(layout, png)
+
+    def read_chrome(self):
+        return read_chrome()
+
+    def read_layout(self):
+        return read_layout_frames()
+
+    def read_shell(self):
+        return read_shell_layout()
+
+    def read_geometry(self):
+        return read_geometry()
+
+    def launch(self, out, name, env, ready, timeout, watch=None):
+        return launch(out, name, env, ready, timeout, watch=watch)
+
+    def finish(self, state):
+        finish_launch(state)
+
+    def clear(self):
+        clear_layout_files()
+
+    def capture(self, out, window_tool, state, png_name):
+        return _capture_form(out, window_tool, state, png_name)
+
+    def crops(self, out, stem, png):
+        save_alignment_crops(out, stem, png)
+
+    def archive(self, out, label):
+        archive_frame(out, label)
+
+    def chrome_full(self):
+        return _chrome_fullscreen()
+
+
+def _stage_error(notes, label, exc):
+    notes.append(f"{label} {type(exc).__name__}: {exc}")
+
+
+def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
+    """Minimum, the 1440 mockup, and full screen.
+
+    A failure is recorded and the later sizes still collect their artifacts.
+    The combined verdict stays fail. An exception is not turned into a pass.
+    """
+    io = io or _LiveAdaptive()
     notes = []
     ok = True
-    wheel_ok, wheel_detail = shelf_wheel(out, window_tool, state)
+    windowed_size = None
+    try:
+        wheel_ok, wheel_detail = io.wheel(out, window_tool, state)
+    except Exception as exc:
+        wheel_ok = False
+        wheel_detail = f"shelf wheel {type(exc).__name__}: {exc}"
     notes.append(wheel_detail)
     ok = ok and wheel_ok
     try:
-        matched, note = _size_note("1440x900", state["pid"] if state["alive"] else None)
-        plate = plate_report(read_layout_frames(), mock_shot)
+        matched, note = io.size_note("1440x900", state["pid"] if state.get("alive") else None)
+        plate = io.plates(io.read_layout(), mock_shot)
         if plate:
             matched = False
             note += "; " + "; ".join(plate[:6])
-        if not mock_shot.exists():
+        if not Path(mock_shot).exists():
             matched = False
             note += "; form-fixture.png missing"
-        save_alignment_crops(out, "form-fixture", mock_shot)
-        archive_frame(out, "1440")
-        windowed = read_chrome()
-        try:
-            windowed_size = (float(windowed.get("window_w")), float(windowed.get("window_h")))
-        except (TypeError, ValueError):
-            windowed_size = None
+        io.crops(out, "form-fixture", mock_shot)
+        io.archive(out, "1440")
         notes.append(note)
         ok = ok and matched
-        finish_launch(state)
-        clear_layout_files()
-        state = launch(
+        windowed = io.read_chrome()
+        try:
+            windowed_size = (float(windowed.get("window_w")), float(windowed.get("window_h")))
+        except (AttributeError, TypeError, ValueError):
+            windowed_size = None
+    except Exception as exc:
+        _stage_error(notes, "1440", exc)
+        ok = False
+    if not (out / "frames" / "1440-layout.json").is_file():
+        try:
+            io.archive(out, "1440")
+        except Exception as exc:
+            _stage_error(notes, "1440 archive", exc)
+            ok = False
+    try:
+        io.finish(state)
+        io.clear()
+        state = io.launch(
             out,
             "form-minimum",
             _form_env(root, libs, {"SPIKE_WINDOW": f"578x{int(library_min_height())}"}),
             lambda names: "书库" in names
-            and (geo := read_geometry())
+            and (geo := io.read_geometry())
             and abs(float(geo.get("content_w") or 0) - 266.0) <= 1.0,
             45,
         )
         try:
-            _capture_form(out, window_tool, state, "form-minimum.png")
-            save_alignment_crops(out, "form-minimum", out / "form-minimum.png")
-            archive_frame(out, "minimum")
-        except RuntimeError as exc:
-            notes.append(f"minimum capture {exc}")
+            if io.capture(out, window_tool, state, "form-minimum.png") is False:
+                notes.append("minimum capture returned false")
+                ok = False
+            io.crops(out, "form-minimum", out / "form-minimum.png")
+            io.archive(out, "minimum")
+        except (OSError, RuntimeError) as exc:
+            notes.append(f"minimum capture {type(exc).__name__}: {exc}")
             ok = False
-        matched, note = _size_note(
-            f"578x{int(library_min_height())}", state["pid"] if state["alive"] else None
+        matched, note = io.size_note(
+            f"578x{int(library_min_height())}", state["pid"] if state.get("alive") else None
         )
-        shell = read_shell_layout()
+        shell = io.read_shell()
         if float(shell.get("chat_w") or 0) > 0.5:
             matched = False
             note += "; chat still open"
@@ -2484,23 +2689,43 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
             note += "; png missing"
         notes.append(note)
         ok = ok and matched
-        finish_launch(state)
-        clear_layout_files()
-        exit_flag = Path("/tmp/superreader-spike/fullscreen-exit")
+    except Exception as exc:
+        _stage_error(notes, "minimum", exc)
+        ok = False
+    exit_flag = Path("/tmp/superreader-spike/fullscreen-exit")
+    try:
         exit_flag.unlink(missing_ok=True)
-        transition = []
+    except OSError as exc:
+        _stage_error(notes, "fullscreen", exc)
+        ok = False
+    transition = []
 
-        def watch_transition(_started, bucket=transition):
-            layout = read_layout_frames()
-            if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
-                bucket.append(json.loads(json.dumps(layout)))
-                if read_chrome().get("fullscreen") is True:
-                    archive_frame(out, "fullscreen-settled")
-                elif not (out / "frames" / "fullscreen-enter-layout.json").is_file():
-                    archive_frame(out, "fullscreen-enter")
+    def watch_transition(_started, bucket=transition):
+        try:
+            layout = io.read_layout()
+        except Exception as exc:
+            _stage_error(notes, "fullscreen watch", exc)
             return False
+        chrome = {}
+        try:
+            chrome = io.read_chrome() or {}
+        except Exception as exc:
+            _stage_error(notes, "fullscreen watch", exc)
+        if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
+            bucket.append(json.loads(json.dumps(layout)))
+            try:
+                if chrome.get("fullscreen") is True:
+                    io.archive(out, "fullscreen-settled")
+                elif not (out / "frames" / "fullscreen-enter-layout.json").is_file():
+                    io.archive(out, "fullscreen-enter")
+            except Exception as exc:
+                _stage_error(notes, "fullscreen watch", exc)
+        return False
 
-        state = launch(
+    try:
+        io.finish(state)
+        io.clear()
+        state = io.launch(
             out,
             "form-fullscreen",
             _form_env(
@@ -2508,79 +2733,108 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
                 libs,
                 {"SPIKE_WINDOW": "1440x900", "SPIKE_FULLSCREEN": "1"},
             ),
-            lambda names: "书库" in names and _chrome_fullscreen(),
+            lambda names: "书库" in names and io.chrome_full(),
             45,
             watch=watch_transition,
         )
-        settled = read_layout_frames()
+    except Exception as exc:
+        _stage_error(notes, "fullscreen", exc)
+        ok = False
+    try:
+        settled = io.read_layout()
         if isinstance(settled, dict) and "lights" in settled and settled.get("nodes"):
             transition.append(settled)
-        try:
-            _capture_form(out, window_tool, state, "form-fullscreen.png")
-            save_alignment_crops(out, "form-fullscreen", out / "form-fullscreen.png")
-            archive_frame(out, "fullscreen-settled")
-        except RuntimeError as exc:
-            notes.append(f"fullscreen capture {exc}")
+    except Exception as exc:
+        _stage_error(notes, "fullscreen", exc)
+        ok = False
+    try:
+        if io.capture(out, window_tool, state, "form-fullscreen.png") is False:
+            notes.append("fullscreen capture returned false")
             ok = False
-        matched, note = _size_note("fullscreen", state["pid"] if state["alive"] else None)
+        io.crops(out, "form-fullscreen", out / "form-fullscreen.png")
+        io.archive(out, "fullscreen-settled")
+    except (OSError, RuntimeError) as exc:
+        notes.append(f"fullscreen capture {type(exc).__name__}: {exc}")
+        ok = False
+    matched, note = True, "fullscreen"
+    try:
+        matched, note = io.size_note("fullscreen", state["pid"] if state.get("alive") else None)
+        if windowed_size is None:
+            matched = False
+            note += "; windowed size was not recorded"
         shot_problems = fullscreen_shot_problems(
-            read_chrome(), mock_shot, out / "form-fullscreen.png", windowed_size
+            io.read_chrome(), mock_shot, out / "form-fullscreen.png", windowed_size
         )
         if shot_problems:
             matched = False
             note += "; " + "; ".join(shot_problems)
-        if not (out / "form-fullscreen.png").exists():
-            matched = False
-            note += "; png missing"
-        try:
-            exit_flag.parent.mkdir(parents=True, exist_ok=True)
-            exit_flag.write_text("1")
-            was_full = read_chrome().get("fullscreen") is True
-            deadline = time.time() + 8
-            left = False
-            while time.time() < deadline:
-                layout = read_layout_frames()
-                if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
-                    transition.append(json.loads(json.dumps(layout)))
-                chrome_path = Path("/tmp/superreader-spike/chrome.json")
-                chrome = json.loads(chrome_path.read_text()) if chrome_path.is_file() else {}
-                if (
-                    was_full
-                    and chrome.get("fullscreen") is False
-                    and isinstance(layout, dict)
-                    and layout.get("lights") is True
-                ):
-                    left = True
-                    break
-                time.sleep(0.4)
-            if left:
-                archive_frame(out, "fullscreen-exit")
-                try:
-                    _capture_form(out, window_tool, state, "form-restored.png")
-                    save_alignment_crops(out, "form-restored", out / "form-restored.png")
-                except RuntimeError as exc:
-                    matched = False
-                    note += f"; restored capture {exc}"
-            else:
-                matched = False
-                note += "; fullscreen did not exit"
-            if not (out / "form-restored.png").is_file():
-                matched = False
-                note += "; restored window missing"
-        except (OSError, json.JSONDecodeError, TypeError):
-            matched = False
-            note += "; fullscreen exit was not requested"
-        if len(transition) >= 2:
-            jump = transition_report(transition)
-            if jump:
-                matched = False
-                note += "; " + "; ".join(jump[:6])
-        notes.append(note)
-        ok = ok and matched
     except Exception as exc:
-        notes.append(f"adaptive layout {exc}")
-        ok = False
+        matched = False
+        note += f"; fullscreen measure {type(exc).__name__}: {exc}"
+    if not (out / "form-fullscreen.png").exists():
+        matched = False
+        note += "; png missing"
+    exit_note = ""
+    left = False
+    try:
+        exit_flag.parent.mkdir(parents=True, exist_ok=True)
+        exit_flag.write_text("1")
+        was_full = io.read_chrome().get("fullscreen") is True
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            layout = io.read_layout()
+            if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
+                transition.append(json.loads(json.dumps(layout)))
+            chrome = io.read_chrome() or {}
+            if (
+                was_full
+                and chrome.get("fullscreen") is False
+                and isinstance(layout, dict)
+                and layout.get("lights") is True
+            ):
+                left = True
+                break
+            time.sleep(0.4)
+    except Exception as exc:
+        matched = False
+        exit_note += f"; fullscreen exit {type(exc).__name__}: {exc}"
+    try:
+        io.archive(out, "fullscreen-exit")
+    except Exception as exc:
+        matched = False
+        exit_note += f"; fullscreen-exit archive {type(exc).__name__}: {exc}"
+    if not left:
+        matched = False
+        exit_note += "; fullscreen did not exit"
+    if not (out / "form-restored.png").is_file():
+        try:
+            if io.capture(out, window_tool, state, "form-restored.png") is False:
+                matched = False
+                exit_note += "; restored capture returned false"
+            io.crops(out, "form-restored", out / "form-restored.png")
+        except (OSError, RuntimeError) as exc:
+            matched = False
+            exit_note += f"; restored capture {type(exc).__name__}: {exc}"
+    if not (out / "form-restored.png").is_file():
+        matched = False
+        exit_note += "; restored window missing"
+    note += exit_note
+    if len(transition) >= 2:
+        jump = transition_report(transition)
+        if jump:
+            matched = False
+            note += "; " + "; ".join(jump[:6])
+    for label in ("fullscreen-enter", "fullscreen-settled", "fullscreen-exit"):
+        frame_dir = out / "frames"
+        if not (frame_dir / f"{label}-layout.json").is_file() and not (
+            frame_dir / f"{label}-chrome.json"
+        ).is_file():
+            matched = False
+            note += f"; {label} frame missing"
+    notes.append(note)
+    ok = ok and matched
     return ok, "; ".join(notes), state
+
 
 
 def _chrome_fullscreen():
@@ -2803,6 +3057,220 @@ def ratio_within(width, height, want_w, want_h):
     got = width / height
     want = want_w / want_h
     return abs(got - want) / want <= 0.01
+
+
+class _ScriptedAdaptive:
+    """A desktop stand-in. It records launches and writes one frame per size."""
+
+    def __init__(self, fail_1440=False, fail_plates=False, always_raise=False, drop_nodes=False, blank_windowed=False, stale_minimum=False):
+        self.fail_1440 = fail_1440
+        self.fail_plates = fail_plates
+        self.always_raise = always_raise
+        self.drop_nodes = drop_nodes
+        self.blank_windowed = blank_windowed
+        self.stale_minimum = stale_minimum
+        self._raised = False
+        self._blanked = False
+        self.exit_reads = 0
+        self.launches = []
+        self.chrome = {
+            "fullscreen": False,
+            "window_w": 1440,
+            "window_h": 855,
+            "lights_visible": True,
+        }
+        self.layout = _sample_layout()
+
+    def wheel(self, out, window_tool, state):
+        return True, "wheel over the shelf grid changed 12 pixels"
+
+    def size_note(self, label, pid):
+        return True, f"{label}: scripted"
+
+    def plates(self, layout, png):
+        if self.fail_plates:
+            return ["cover.0 face #808B6D vs 7D8C6A"]
+        return []
+
+    def read_chrome(self):
+        if self.always_raise or (self.fail_1440 and not self._raised):
+            self._raised = True
+            raise TypeError(
+                "read_chrome() missing 2 required positional arguments: 'path' and 'started'"
+            )
+        if self.blank_windowed and not self._blanked:
+            self._blanked = True
+            return {"fullscreen": False}
+        flag = Path("/tmp/superreader-spike/fullscreen-exit")
+        launched = any(name == "form-fullscreen" for name, _window, _full in self.launches)
+        if flag.is_file() and launched:
+            self.exit_reads += 1
+            if self.exit_reads >= 2:
+                return {
+                    "fullscreen": False,
+                    "window_w": 1440,
+                    "window_h": 855,
+                    "lights_visible": True,
+                }
+        return dict(self.chrome)
+
+    def read_layout(self):
+        body = json.loads(json.dumps(self.layout))
+        if self.drop_nodes and any(name == "form-fullscreen" for name, _window, _full in self.launches):
+            body["nodes"] = []
+        return body
+
+    def read_shell(self):
+        return {"chat_w": 0, "card": [226, 6, 888, 843], "sidebar_w": 220}
+
+    def read_geometry(self):
+        if self.launches and self.launches[-1][0] == "form-minimum":
+            return {"content_w": 266.0, "scrolls": True, "last_title": "人间词话"}
+        return {"content_w": 808.0, "scrolls": True, "last_title": "人间词话"}
+
+    def launch(self, out, name, env, ready, timeout, watch=None):
+        self.launches.append((name, env.get("SPIKE_WINDOW"), env.get("SPIKE_FULLSCREEN")))
+        if name == "form-minimum":
+            self.chrome = {"fullscreen": False, "window_w": 578, "window_h": 528, "lights_visible": True}
+        if name == "form-fullscreen":
+            self.chrome = {"fullscreen": False, "window_w": 1440, "window_h": 855, "lights_visible": True}
+            if watch:
+                watch(0)
+            self.chrome = {
+                "fullscreen": True,
+                "window_w": 1800,
+                "window_h": 1125,
+                "lights_visible": False,
+            }
+            if watch:
+                watch(0)
+        names = ["书库", "Pride and Prejudice", "人间词话"]
+        if ready is not None and not ready(names):
+            raise RuntimeError(f"{name} ready predicate rejected the scripted window")
+        return {"alive": True, "pid": 7, "names": names, "proc": None, "dump": "", "started": 0}
+
+    def finish(self, state):
+        return None
+
+    def clear(self):
+        return None
+
+    def capture(self, out, window_tool, state, png_name):
+        color = {
+            "form-minimum.png": (1, 2, 3),
+            "form-fullscreen.png": (9, 8, 7),
+            "form-restored.png": (4, 5, 6),
+        }.get(png_name, (7, 7, 7))
+        if png_name == "form-minimum.png" and self.stale_minimum:
+            return False
+        dest = out / png_name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(encode_png(4, 2, bytes([*color, 255]) * 8))
+        return True
+
+    def crops(self, out, stem, png):
+        return None
+
+    def archive(self, out, label):
+        dest = out / "frames"
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / f"{label}-chrome.json").write_text(json.dumps(self.chrome))
+        (dest / f"{label}-layout.json").write_text(json.dumps(self.layout))
+
+    def chrome_full(self):
+        return self.chrome.get("fullscreen") is True and float(self.chrome.get("window_w") or 0) > 1500
+
+
+def _top_signatures(tree):
+    found = {}
+    dupes = []
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        positional = [arg.arg for arg in node.args.args]
+        required = len(positional) - len(node.args.defaults)
+        sig = {
+            "line": node.lineno,
+            "names": positional,
+            "required": required,
+            "total": len(positional),
+            "vararg": node.args.vararg is not None,
+            "kw_required": [
+                arg.arg
+                for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                if default is None
+            ],
+        }
+        if node.name in found:
+            dupes.append(
+                f"{node.name} defined at line {found[node.name]['line']} and line {node.lineno}"
+            )
+        found[node.name] = sig
+    return found, dupes
+
+
+def _call_mismatches(tree, found):
+    problems = []
+
+    class Visit(ast.NodeVisitor):
+        def __init__(self):
+            self.shadow = [set()]
+
+        def visit_FunctionDef(self, node):
+            local = {arg.arg for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs}
+            if node.args.vararg is not None:
+                local.add(node.args.vararg.arg)
+            if node.args.kwarg is not None:
+                local.add(node.args.kwarg.arg)
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.FunctionDef):
+                    local.add(child.name)
+                elif isinstance(child, ast.Assign):
+                    for target in child.targets:
+                        if isinstance(target, ast.Name):
+                            local.add(target.id)
+            self.shadow.append(self.shadow[-1] | local)
+            self.generic_visit(node)
+            self.shadow.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node):
+            self.generic_visit(node)
+            if not isinstance(node.func, ast.Name) or node.func.id not in found:
+                return
+            if node.func.id in self.shadow[-1]:
+                return
+            if any(isinstance(arg, ast.Starred) for arg in node.args):
+                return
+            if any(keyword.arg is None for keyword in node.keywords):
+                return
+            sig = found[node.func.id]
+            provided = {keyword.arg for keyword in node.keywords}
+            npos = len(node.args)
+            if npos > sig["total"] and not sig["vararg"]:
+                problems.append(
+                    f"{node.func.id} line {node.lineno} passes {npos} positional arguments, "
+                    f"definition at line {sig['line']} accepts {sig['total']}"
+                )
+                return
+            filled = set(sig["names"][:npos]) | (provided & set(sig["names"]))
+            missing = [name for name in sig["names"][: sig["required"]] if name not in filled]
+            missing += [name for name in sig["kw_required"] if name not in provided]
+            if missing:
+                problems.append(
+                    f"{node.func.id} line {node.lineno} is missing {', '.join(missing)}, "
+                    f"definition at line {sig['line']}"
+                )
+
+    Visit().visit(tree)
+    return problems
+
+
+def signature_problems(source):
+    tree = ast.parse(source)
+    found, dupes = _top_signatures(tree)
+    return dupes + _call_mismatches(tree, found)
 
 
 def self_test():
@@ -3112,6 +3580,157 @@ def self_test():
     overlap["icon_frame"] = {"x": 40, "y": 10, "w": 18, "h": 28}
     ok, detail = icon_placement(overlap)
     assert not ok and "intersects" in detail, detail
+    duplicated = signature_problems(
+        "def read_chrome():\n    return {}\n"
+        "def read_chrome(path, started):\n    return {}\n"
+        "read_chrome()\n"
+    )
+    assert any("read_chrome defined at line" in item for item in duplicated), duplicated
+    assert any("missing path, started" in item for item in duplicated), duplicated
+    async_dup = signature_problems(
+        "async def read_chrome():\n    return {}\n"
+        "async def read_chrome(path, started):\n    return {}\n"
+        "read_chrome()\n"
+    )
+    assert any("defined at line" in item for item in async_dup), async_dup
+    assert any("missing path, started" in item for item in async_dup), async_dup
+    live = signature_problems(Path(__file__).read_text())
+    assert live == [], live
+    source = wheel_source()
+    assert "scrollWheelEventIsContinuous" in source, source
+    assert "CGEventGetUnflippedLocation" not in source
+    assert "cghidEventTap" in source
+    card = [226.0, 6.0, 888.0, 843.0]
+    local_x = card[0] + card[2] * 0.55
+    local_y = card[1] + card[3] * 0.72
+    screen_x, screen_y = cg_event_point(50.0, 80.0, local_x, local_y, 900.0)
+    assert screen_x == 50.0 + local_x and screen_y == 80.0 + local_y, (screen_x, screen_y)
+    assert card[0] <= local_x < card[0] + card[2]
+    assert card[1] <= local_y < card[1] + card[3]
+    menu = (ROOT / "docs/verify/runs/shell-s2-1-8/form-fixture-ax.txt").read_text()
+    assert not ax_walk_has_content(menu), "zero-size menu window counted as content"
+    assert "Pride and Prejudice" not in ax_content_names(menu)
+    swift = "WIN 10 40 1440 855\nAXStaticText\tPride and Prejudice\t30\t80\t120\t18\n"
+    assert ax_walk_has_content(swift)
+    assert "Pride and Prejudice" in ax_content_names(swift)
+    evidence_png = ROOT / "docs/verify/runs/shell-s2-1-8/form-fixture.png"
+    evidence_layout = json.loads(
+        (ROOT / "docs/verify/runs/shell-s2-1-8/frames/1440-layout.json").read_text()
+    )
+    assert png_cicp(evidence_png) == (12, 13, 0, 1)
+    face = [item for item in plate_report(evidence_layout, evidence_png) if " face " in item]
+    assert face == [], face
+    flat = {
+        "window": [100, 100],
+        "nodes": [
+            {"id": "cover.0", "plate": True, "plate_rgb": "7D8C6A", "frame": [0, 0, 100, 100]},
+            {"id": "cover.0.type.title", "frame": [10, 40, 80, 10]},
+            {"id": "cover.0.type.author", "frame": [10, 52, 80, 10]},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = Path(tmp) / "raw.png"
+        raw.write_bytes(encode_png(4, 4, bytes([0x80, 0x8B, 0x6D, 255]) * 16))
+        assert png_cicp(raw) is None
+        raw_face = [item for item in plate_report(flat, raw) if " face " in item]
+        assert raw_face, "an sRGB miss must stay a miss when the PNG has no color profile"
+        root = Path(tmp)
+        shot = root / "form-fixture.png"
+        shot.write_bytes(encode_png(4, 2, bytes([8, 8, 8, 255]) * 8))
+        state = {"alive": True, "pid": 1, "proc": None}
+        libs = FormLibraries(root)
+        failed = _ScriptedAdaptive(fail_1440=True)
+        (root / "fail").mkdir()
+        ok, detail, _state = adaptive_layout(root / "fail", None, root, libs, state, shot, io=failed)
+        assert ok is False, detail
+        assert "TypeError" in detail and "read_chrome()" in detail, detail
+        fail_out = root / "fail"
+        for name in ("form-minimum.png", "form-fullscreen.png", "form-restored.png"):
+            assert (fail_out / name).is_file(), name
+        frames = fail_out / "frames"
+        for name in (
+            "1440-layout.json",
+            "minimum-chrome.json",
+            "fullscreen-enter-layout.json",
+            "fullscreen-settled-chrome.json",
+            "fullscreen-exit-layout.json",
+        ):
+            assert (frames / name).is_file(), name
+        assert [item[0] for item in failed.launches] == ["form-minimum", "form-fullscreen"], failed.launches
+        assert failed.launches[0][1] == f"578x{int(library_min_height())}"
+        assert library_min_height() == 528
+        assert failed.launches[1][2] == "1"
+        clean_out = root / "clean"
+        clean_shot = clean_out / "form-fixture.png"
+        clean_out.mkdir()
+        clean_shot.write_bytes(encode_png(4, 2, bytes([1, 1, 1, 255]) * 8))
+        clean = _ScriptedAdaptive(fail_1440=False)
+        ok, detail, _state = adaptive_layout(clean_out, None, root, libs, state, clean_shot, io=clean)
+        assert ok, detail
+        assert (clean_out / "form-fullscreen.png").read_bytes() != clean_shot.read_bytes()
+        plate_out = root / "plates"
+        plate_out.mkdir()
+        plate_shot = plate_out / "form-fixture.png"
+        plate_shot.write_bytes(encode_png(4, 2, bytes([2, 2, 2, 255]) * 8))
+        plates = _ScriptedAdaptive(fail_plates=True)
+        ok, detail, _state = adaptive_layout(plate_out, None, root, libs, state, plate_shot, io=plates)
+        assert ok is False and "cover.0 face" in detail, detail
+        assert (plate_out / "form-minimum.png").is_file()
+        assert (plate_out / "form-fullscreen.png").is_file()
+        assert (plate_out / "form-restored.png").is_file()
+        assert (plate_out / "frames" / "fullscreen-exit-layout.json").is_file()
+        both = _ScriptedAdaptive(fail_1440=True, fail_plates=True)
+        both_out = root / "both"
+        both_out.mkdir()
+        both_shot = both_out / "form-fixture.png"
+        both_shot.write_bytes(shot.read_bytes())
+        ok, detail, _state = adaptive_layout(both_out, None, root, libs, state, both_shot, io=both)
+        assert ok is False and "cover.0 face" in detail and "TypeError" in detail, detail
+        assert (both_out / "form-fullscreen.png").is_file()
+        raised = _ScriptedAdaptive(always_raise=True)
+        raised_out = root / "raised"
+        raised_out.mkdir()
+        raised_shot = raised_out / "form-fixture.png"
+        raised_shot.write_bytes(shot.read_bytes())
+        ok, detail, _state = adaptive_layout(raised_out, None, root, libs, state, raised_shot, io=raised)
+        assert ok is False and "TypeError" in detail, detail
+        for name in (
+            "form-minimum.png",
+            "form-fullscreen.png",
+            "form-restored.png",
+            "frames/fullscreen-enter-layout.json",
+            "frames/fullscreen-settled-chrome.json",
+            "frames/fullscreen-exit-layout.json",
+        ):
+            assert (raised_out / name).is_file(), name
+        stale_out = root / "stale"
+        stale_out.mkdir()
+        (stale_out / "form-fixture.png").write_bytes(shot.read_bytes())
+        (stale_out / "form-minimum.png").write_bytes(b"stale-minimum")
+        stale = _ScriptedAdaptive(stale_minimum=True)
+        ok, detail, _state = adaptive_layout(
+            stale_out, None, root, libs, state, stale_out / "form-fixture.png", io=stale
+        )
+        assert ok is False and "minimum capture returned false" in detail, detail
+        assert (stale_out / "form-minimum.png").read_bytes() == b"stale-minimum"
+        blank = _ScriptedAdaptive(blank_windowed=True)
+        blank_out = root / "blank"
+        blank_out.mkdir()
+        (blank_out / "form-fixture.png").write_bytes(shot.read_bytes())
+        ok, detail, _state = adaptive_layout(
+            blank_out, None, root, libs, state, blank_out / "form-fixture.png", io=blank
+        )
+        assert ok is False and "windowed size was not recorded" in detail, detail
+        dropped = _ScriptedAdaptive(drop_nodes=True)
+        drop_out = root / "drop"
+        drop_out.mkdir()
+        (drop_out / "form-fixture.png").write_bytes(shot.read_bytes())
+        ok, detail, _state = adaptive_layout(
+            drop_out, None, root, libs, state, drop_out / "form-fixture.png", io=dropped
+        )
+        assert ok is False and "fullscreen-enter frame missing" in detail, detail
+        assert (drop_out / "form-fullscreen.png").is_file()
+        assert (drop_out / "frames" / "fullscreen-exit-layout.json").is_file()
     return True
 
 
@@ -3519,18 +4138,13 @@ end tell
     if proc.returncode != 0:
         return [], (proc.stderr or proc.stdout or "osascript failed").strip()
     text = proc.stdout
-    if "WIN " not in text and "\t" not in text:
+    if not ax_walk_has_content(text):
         swift_text, swift_err = ax_swift_dump(pid)
-        if "\t" in swift_text or "WIN " in swift_text:
+        if ax_walk_has_content(swift_text):
             text = swift_text
-        elif swift_err:
+        elif swift_err and not text.strip():
             return [], swift_err
-    names = []
-    for line in text.splitlines():
-        fields = line.split("\t")
-        if len(fields) >= 2:
-            names.append(fields[1])
-    return names, text
+    return ax_content_names(text), text
 
 
 def compile_window_id(out):
@@ -5509,17 +6123,17 @@ def placed_page(stage_w, stage_h, ratio_w, ratio_h):
 
 
 def chrome_body(started):
-    return read_chrome(CHROME_JSON, started)
+    return read_window_chrome(CHROME_JSON, started)
 
 
 def chrome_pid_body(started, pid):
-    body = read_chrome(CHROME_JSON.parent / f"chrome-{pid}.json", started)
+    body = read_window_chrome(CHROME_JSON.parent / f"chrome-{pid}.json", started)
     if not isinstance(body, dict) or int(body.get("pid") or -1) != int(pid):
         return None
     return body
 
 
-def read_chrome(path, started):
+def read_window_chrome(path, started):
     if not path.exists() or path.stat().st_mtime + 0.05 < started:
         return None
     try:
@@ -7008,7 +7622,7 @@ def bold_word_starts(out, window_tool):
     try:
         grabbed = grab_page(off, window_tool, off_png)
         off_body = webkit_body(off["started"]) or {}
-        off_box = chrome_pid_body(off["started"], off["pid"]) or read_chrome(
+        off_box = chrome_pid_body(off["started"], off["pid"]) or read_window_chrome(
             CHROME_JSON, off["started"]
         ) or {}
     finally:
@@ -7027,7 +7641,7 @@ def bold_word_starts(out, window_tool):
         )
         try:
             grabbed = grab_page(baseline, window_tool, main_png) and grabbed
-            main_box = read_chrome(CHROME_JSON, baseline["started"]) or {}
+            main_box = read_window_chrome(CHROME_JSON, baseline["started"]) or {}
         finally:
             finish_launch(baseline)
     else:
@@ -7955,7 +8569,11 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--doctor", action="store_true")
-    parser.add_argument("--subset", choices=["cache", "alpha", "shelf"])
+    parser.add_argument(
+        "--subset",
+        choices=["cache", "alpha", "shelf", "preflight"],
+        help="preflight launches only the shell form: 1440, minimum, fullscreen enter/settle/exit, accessibility titles, and the shelf wheel",
+    )
     args = parser.parse_args()
     if args.doctor:
         rows = doctor()
@@ -8004,6 +8622,13 @@ def main():
         alpha_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(out / "summary.json", alpha_dir / "summary.json")
         return code
+    if args.subset == "preflight":
+        tool = compile_window_id(out)
+        try:
+            rows.extend(run_form_fixture(out, tool))
+        except Exception as exc:
+            rows.append(check("shell-form-fixture", "shell", "window", "fail", str(exc)))
+        return write_summary(out, rows, version, load_start)
     if args.subset == "shelf":
         try:
             rows.extend(row for row in run_nsh(out) if str(row["id"]).startswith("shelf-"))

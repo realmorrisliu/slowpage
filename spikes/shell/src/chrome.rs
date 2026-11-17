@@ -815,6 +815,25 @@ fn request_fullscreen(window: &NSWindow, rt: &Runtime, is_full: bool, armed: boo
     }
 }
 
+fn shelf_event_window(event: &NSEvent, mtm: MainThreadMarker) -> Option<Retained<NSWindow>> {
+    if let Some(window) = event.window(mtm) {
+        return Some(window);
+    }
+    // A scroll posted with CGEvent reaches this monitor before AppKit has
+    // attached a window. The cursor was warped onto the shelf, so the key
+    // window is the one that should move.
+    objc2_app_kit::NSApplication::sharedApplication(mtm).keyWindow()
+}
+
+fn shelf_event_point(event: &NSEvent, window: &NSWindow, mtm: MainThreadMarker) -> NSPoint {
+    if event.window(mtm).is_some() {
+        return event.locationInWindow();
+    }
+    let mouse = NSEvent::mouseLocation();
+    let frame = window.frame();
+    NSPoint::new(mouse.x - frame.origin.x, mouse.y - frame.origin.y)
+}
+
 fn install_shelf_wheel() {
     static INSTALLED: AtomicBool = AtomicBool::new(false);
     if INSTALLED.swap(true, Ordering::Relaxed) {
@@ -828,7 +847,7 @@ fn install_shelf_wheel() {
         let Some(mtm) = MainThreadMarker::new() else {
             return event.as_ptr();
         };
-        let Some(window) = e.window(mtm) else {
+        let Some(window) = shelf_event_window(e, mtm) else {
             return event.as_ptr();
         };
         let Some(content) = window.contentView() else {
@@ -838,7 +857,7 @@ fn install_shelf_wheel() {
         if !height.is_finite() || height <= 1.0 {
             return event.as_ptr();
         }
-        let point = e.locationInWindow();
+        let point = shelf_event_point(e, &window, mtm);
         let x = point.x as f32;
         let y = (height - point.y) as f32;
         if !crate::form::shelf_hit_contains(x, y) {

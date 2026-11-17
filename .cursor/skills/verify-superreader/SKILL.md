@@ -75,6 +75,16 @@ scripts/verify --doctor
 scripts/verify --out docs/verify/runs/manual
 ```
 
+## Preflight
+
+Before the full suite, prove the shell form on its own. This builds the release shell, launches the fixture library in an isolated temp support directory, and scores only that form. It walks 1440, the 578 by 528 minimum, and fullscreen enter, settled, and exit, and it requires the accessibility titles and a shelf wheel that moves pixels. It does not install to `/Applications` and it does not set `CARGO_TARGET_DIR`.
+
+```sh
+SR_VERIFY_MAX_LOAD=999 SR_VERIFY_LOAD_START=999 just verify --subset preflight --out /tmp/superreader-preflight-s2-1-9
+```
+
+`shell-form-fixture`, `shell-shelf-scroll`, and `shell-clip` have to pass. `frames/` has to contain `1440`, `minimum`, `fullscreen-enter`, `fullscreen-settled`, and `fullscreen-exit`. `form-minimum.png`, `form-fullscreen.png`, and `form-restored.png` have to exist, and the fullscreen capture has to differ from the windowed one. The wheel before and after captures have to differ. A pass here is the gate for the full suite. The full suite uses a new run directory and still scores every other row.
+
 `--self-test` checks the median, the footer patterns, and the highlight pixel rule. It does not launch the app.
 
 Keep the map honest with `/maintain-verification-skill` when the reader gains a real feature or a check starts lying.
