@@ -55,6 +55,14 @@ Do not size the window for one resolution only. Check the minimum window, a 1440
 
 A measure that a design doc fixes stays fixed. The sidebar width, the chat panel width, and the card inset are examples. Content that the docs say adapts must adapt.
 
+## Alignment
+
+Toolbar items share the traffic lights' vertical center. Sidebar, shelf, and chat edges and paddings sit on one grid. The design tokens define that grid. Icons and labels in a row share a vertical center or a text baseline. Repeated spacings are equal.
+
+The tolerance is 0.5 points. Automated bounding-box checks enforce it at the minimum window, at 1440 by 900, and at full screen. Visual review uses zoomed-in crops.
+
+Fix a miss in the tokens or the layout. Do not nudge one element into place.
+
 ## Reading interactions
 
 Follow `docs/design/reading-interactions.md`.
