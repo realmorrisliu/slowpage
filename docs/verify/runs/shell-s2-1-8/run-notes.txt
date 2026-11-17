@@ -1,0 +1,24 @@
+command: SR_VERIFY_MAX_LOAD=999 SR_VERIFY_LOAD_START=999 just verify --out docs/verify/runs/shell-s2-1-8
+self-test: 2026-11-18 01:11:42 CST, passed, SUPERREADER_SUPPORT_DIR=/tmp/superreader-support-s2-1-8.3N859K
+doctor: 2026-11-18 01:11:50 CST, passed nsh 0.5.1 (224d9a7) and cargo pins =0.5.1
+verify start: 2026-11-18 01:12:02 CST
+verify end: 2026-11-18 01:31:59 CST
+exit: 1
+head: 555eac7f0cf7425105d51a74aefbc3d6d97c23f8
+summary.json head: 555eac7f0cf7425105d51a74aefbc3d6d97c23f8
+verified-head row: pass
+lock pid: 28762, branch cursor/shell-form-tokens-d356, started 2026-11-17T17:12:02Z, released with rmdir
+cargo: /Users/morris/.local/bin/cargo 1.98.1
+isolated support used by the suite: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/superreader-verify-shell-s2-1-8-wt2ake9m
+real support: 51 files, inode 900769011, sha256 509c53b00275d1310bcb764d87e4c3aed563ae58aeea46cf46ea25921a7b0391 before and after
+/Applications/Slowpage.app: absent
+counts: 66 pass, 46 fail, 11 pending (123 checks). Run 6 was 62 pass, 49 fail, 11 pending.
+status changes from run 6: open-cold-epub, open-running-pdf, and open-dock-equivalent fail to pass. verified-head is a new pass. The other 46 of the original 49 failures stay fail.
+1440 capture: form-fixture.png is 2880x1710 pixels, chrome window 1440x855, fullscreen false, lights_visible true. The 900 point request is the menu-bar height from run 6. frames/ has only 1440-layout.json, 1440-chrome.json, 1440-geometry.json, and 1440-shell-layout.json.
+minimum 578x528: not launched. fullscreen enter, settled, exit, and form-restored.png: not written.
+shell-clip: wheel before, after, and form-fixture.png are the same bytes (sha256 8ed99605abf476a9). Then adaptive_layout calls read_chrome() with no arguments. A later def read_chrome(path, started) shadows it, so the check raises TypeError before the minimum and fullscreen launches.
+Post-run plate_report on the saved 1440 layout and PNG, not a suite row: five plates have type frames inside the cover and ink. Three faces miss the token by more than 2: cover.0 #808B6D vs 7D8C6A, cover.3 #253955 vs 1F3A57, cover.4 #A85A43 vs B4553C.
+shell-form-fixture: inset is 6 points and the PNG shows the plate titles. The accessibility walk still misses every fixture title.
+shell-shelf-scroll: scrolls true, 人间词话 is not in the tree.
+The app and package directories are the temporary Slowpage.app and are not part of this evidence commit.
+CI is still separately blocked. This is not a ready or merge result.
