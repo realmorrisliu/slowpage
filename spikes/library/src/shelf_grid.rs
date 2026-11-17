@@ -1,6 +1,6 @@
 //! Cover grid the shell paints. The mockup width keeps the measured plates.
-//! A narrower card, including the headless window whose layout signal stays
-//! 1280, uses the two-column row the second Mac verify still clipped.
+//! A narrower card uses two 112-point covers so the second one stays inside
+//! the span the headless runner showed in S2.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShelfGrid {
@@ -26,16 +26,26 @@ pub fn shelf_grid(content_w: f32) -> ShelfGrid {
             scrolls: true,
         };
     }
-    // Two 128-point covers and the packed gap from a four-column fit.
-    // At the 1280 signal the second cover ends near x 567.
+    // 112 + 16 + 112 ends at x 506 when the shelf origin is 266, inside 512.
+    if content_w + 0.5 >= 240.0 {
+        return ShelfGrid {
+            cover_w: 112.0,
+            cover_h: 168.0,
+            columns: 2,
+            column_gap: 16.0,
+            row_gap: 16.0,
+            caption_h: 36.0,
+            scrolls: true,
+        };
+    }
     ShelfGrid {
-        cover_w: 128.0,
-        cover_h: 192.0,
-        columns: 2,
-        column_gap: (648.0 - 512.0) / 3.0,
-        row_gap: 28.0,
-        caption_h: 53.0,
-        scrolls: false,
+        cover_w: 112.0,
+        cover_h: 168.0,
+        columns: 1,
+        column_gap: 0.0,
+        row_gap: 16.0,
+        caption_h: 36.0,
+        scrolls: true,
     }
 }
 
@@ -56,10 +66,7 @@ mod tests {
         let grid = shelf_grid(content);
         assert!(grid.columns >= 2, "{}", grid.columns);
         let right = second_cover_right(content);
-        assert!(
-            right <= 512.0,
-            "second cover right {right} is past 512"
-        );
+        assert!(right <= 512.0, "second cover right {right} is past 512");
     }
 
     #[test]

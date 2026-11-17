@@ -451,8 +451,8 @@ fn style_window(window: &NSWindow, rt: &Runtime) {
     rt.mark_bar_dirty();
 }
 
-/// The standard buttons sit 2pt below the center of the 48pt bar. Move them
-/// onto that center. A correction larger than a few points is left alone.
+/// NSH 0.5 centers the lights in the 48pt hidden bar. If a build leaves them
+/// within 8 points of that center, move them onto it.
 fn center_traffic_lights(window: &NSWindow) {
     let Some(content) = window.contentView() else {
         return;

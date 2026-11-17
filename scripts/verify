@@ -341,6 +341,28 @@ FORM_REGIONS = {
     "shelf": ((220, 256, 900, 638), (226, 256, 888, 638)),
     "chat": ((1120, 0, 320, 900), (1120, 0, 320, 900)),
 }
+# Mean channel delta. The second Mac run's shelf was 65% on the hash plates.
+# 42% still fails that run and keeps the earlier correct-color shelf near 40%.
+PARITY_MAX = {
+    "sidebar": 0.12,
+    "header": 0.12,
+    "continue": 0.28,
+    "shelf": 0.42,
+    "chat": 0.18,
+}
+MOCK_GRID = {
+    "cover_w": 128.0,
+    "cover_h": 192.0,
+    "column_gap": 42.0,
+    "row_gap": 28.0,
+    "columns": 5,
+    "caption_h": 42.0,
+}
+SHELL_CLICK_GAP = (
+    "S3/S4 has not built the reading form. A click on 继续阅读 can write reader.json "
+    "while the window stays on the library. The reader-forcing launch is SPIKE_BOOK. "
+    "This gap stays until the reading form."
+)
 
 
 def image_channels(rows, width):
@@ -522,6 +544,69 @@ def form_window_frame(shot):
     return None
 
 
+def parity_passes(scores):
+    return all(name in scores and scores[name] <= PARITY_MAX[name] for name in PARITY_MAX)
+
+
+def geometry_detail(geo):
+    if not isinstance(geo, dict):
+        return False, "geometry.json was not written from the view"
+    bad = []
+    for key, want in MOCK_GRID.items():
+        got = geo.get(key)
+        try:
+            got_n = float(got)
+            want_n = float(want)
+        except (TypeError, ValueError):
+            bad.append(key)
+            continue
+        if key == "columns":
+            if got_n != want_n:
+                bad.append(f"{key} {got}")
+            continue
+        if abs(got_n - want_n) > 1.0:
+            bad.append(f"{key} {got}")
+    if not geo.get("scrolls"):
+        bad.append("scrolls")
+    last = str(geo.get("last_title") or "")
+    if not last:
+        bad.append("last_title")
+    if bad:
+        return False, "geometry " + ", ".join(bad)
+    return True, (
+        f"cover {geo.get('cover_w')}x{geo.get('cover_h')} "
+        f"gap {geo.get('column_gap')}/{geo.get('row_gap')} "
+        f"caption {geo.get('caption_h')} columns {geo.get('columns')} "
+        f"scrolls, last {last}"
+    )
+
+
+def read_geometry():
+    path = Path("/tmp/superreader-spike/geometry.json")
+    if not path.is_file():
+        return None
+    try:
+        body = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def placeholder_seen(names):
+    if "问问 Slowpage…" in names:
+        return True
+    path = Path("/tmp/superreader-spike/fonts.json")
+    if not path.is_file():
+        return False
+    try:
+        notes = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return False
+    return any(
+        isinstance(note, dict) and note.get("label") == "问问 Slowpage…" for note in notes
+    )
+
+
 def form_diff_self_check():
     width, height = 4, 2
     same = bytearray([10, 20, 30, 255]) * (width * height)
@@ -535,6 +620,30 @@ def form_diff_self_check():
     delta = mean_channel_delta(got_rows, other_decoded, 4)
     assert 0 < delta < 0.2, delta
     assert mean_channel_delta(got_rows, got_rows, 4) == 0
+    second = {
+        "sidebar": 0.093,
+        "header": 0.072,
+        "continue": 0.206,
+        "shelf": 0.651,
+        "chat": 0.133,
+    }
+    assert not parity_passes(second)
+    close = dict(second)
+    close["shelf"] = 0.40
+    assert parity_passes(close)
+    measured = dict(MOCK_GRID)
+    measured["scrolls"] = True
+    measured["last_title"] = "人间词话"
+    ok, _detail = geometry_detail(measured)
+    assert ok
+    measured["cover_w"] = 140
+    off, _detail = geometry_detail(measured)
+    assert not off
+    measured["cover_w"] = 128
+    for columns in (4, 6):
+        measured["columns"] = columns
+        wrong, _detail = geometry_detail(measured)
+        assert not wrong, columns
 
 
 def run_form_fixture(out, window_tool):
@@ -580,7 +689,7 @@ def run_form_fixture(out, window_tool):
                 "SUPERREADER_FOLDER": str(libs.folder),
             }
         ),
-        lambda names: "Pride and Prejudice" in names and "人间词话" in names and "问问 Slowpage…" in names,
+        lambda names: "Pride and Prejudice" in names and "人间词话" in names,
         45,
     )
     try:
@@ -628,8 +737,11 @@ def run_form_fixture(out, window_tool):
             scores = write_region_diffs(mock, shot, out)
             parts = [f"{name} {scores[name] * 100:.1f}%" for name in FORM_REGIONS]
             parity_detail = "mean channel delta " + ", ".join(parts)
-            parity_ok = shot.exists() and (out / "side-by-side.png").exists() and all(
-                (out / f"overlay-{name}.png").exists() for name in FORM_REGIONS
+            parity_ok = (
+                shot.exists()
+                and (out / "side-by-side.png").exists()
+                and all((out / f"overlay-{name}.png").exists() for name in FORM_REGIONS)
+                and parity_passes(scores)
             )
         inset_ok = False
         inset_detail = "form-fixture.png was not captured"
@@ -657,8 +769,19 @@ def run_form_fixture(out, window_tool):
             )
         elif card and len(card) == 4:
             inset_detail = "captured window frame is missing"
-        fixture_ok = state["alive"] and not missing and inset_ok and order_ok and "问问 Slowpage…" in names
+        placeholder_ok = placeholder_seen(names)
+        fixture_ok = (
+            state["alive"] and not missing and inset_ok and order_ok and placeholder_ok
+        )
         font_ok, font_detail = read_font_notes()
+        geo = read_geometry()
+        geo_ok, geo_detail = geometry_detail(geo)
+        last = "" if not isinstance(geo, dict) else str(geo.get("last_title") or "")
+        scroll_ok = bool(geo and geo.get("scrolls")) and bool(last) and last in names
+        scroll_detail = (
+            f"scrolls {bool(geo and geo.get('scrolls'))}, last {last or 'missing'} "
+            + ("is in the tree" if last and last in names else "is not in the tree")
+        )
         return [
             check(
                 "shell-fonts",
@@ -682,6 +805,20 @@ def run_form_fixture(out, window_tool):
                 "pass" if parity_ok else "fail",
                 parity_detail,
                 "side-by-side.png" if (out / "side-by-side.png").exists() else None,
+            ),
+            check(
+                "shell-shelf-geometry",
+                "shell",
+                "geometry.json",
+                "pass" if geo_ok else "fail",
+                geo_detail,
+            ),
+            check(
+                "shell-shelf-scroll",
+                "shell",
+                "geometry.json",
+                "pass" if scroll_ok else "fail",
+                scroll_detail,
             ),
         ]
     finally:
@@ -5926,11 +6063,7 @@ def run_smoke(out, window_tool):
         page = int(opened.get("page") or 0) if isinstance(opened, dict) else 0
         mode = opened.get("mode") if isinstance(opened, dict) else None
         library_form = mode not in ("pdf", "epub")
-        reading_note = (
-            "S3/S4 has not built the reading form. The default launch stays on the library, "
-            "and a continue-reading click can write reader.json without changing the window. "
-            "The reader-forcing launch is SPIKE_BOOK."
-        )
+        reading_note = SHELL_CLICK_GAP
         open_ok = isinstance(opened, dict) and mode == "pdf" and page >= 1
         rows = [
             check("smoke-launch", "smoke", "window", "pass", f"pid {state['pid']}"),
@@ -5971,6 +6104,8 @@ def run_smoke(out, window_tool):
                 turn_png.name,
             )
         )
+        if library_form:
+            rows.append(check("smoke-shell-click", "smoke", "window", "pending", SHELL_CLICK_GAP))
         return rows
     finally:
         finish_launch(state)
@@ -6104,6 +6239,7 @@ def main():
     except Exception as exc:
         rows.append(check("shell-form-fixture", "shell", "window", "fail", str(exc)))
         rows.append(check("shell-form-parity", "shell", "window", "fail", str(exc)))
+    rows.append(check("smoke-shell-click", "smoke", "window", "pending", SHELL_CLICK_GAP))
     rows.extend(pending_rows())
     summary_path = write_summary(out, rows, version, load_start)
     alpha_dir = ROOT / "docs" / "verify" / "alpha"

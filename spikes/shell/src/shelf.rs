@@ -1,4 +1,4 @@
-use spike_library::{Book, Catalog, OpenKind};
+use spike_library::{plate_color, Book, Catalog, OpenKind};
 
 use crate::form::{CoverCard, LibraryCounts, LibraryIn, SelectId, SourceIn};
 use crate::settings::ReadingRecord;
@@ -172,24 +172,29 @@ fn book_path(book: &Book) -> Option<String> {
 
 fn card(book: &Book, history: &[ReadingRecord]) -> CoverCard {
     let record = record_for(book, history);
+    let pdf = book
+        .open_command()
+        .is_some_and(|command| command.kind() == OpenKind::Pdf);
+    let plate_rgb = book.cover().and_then(read_plate_color);
     CoverCard {
         title: book.title().to_string(),
         author: book.author().unwrap_or("").to_string(),
         cover: book.cover().map(|file| file.as_path().to_path_buf()),
         open_path: book_path(book),
-        pdf: book
-            .open_command()
-            .is_some_and(|command| command.kind() == OpenKind::Pdf),
+        pdf,
         percent: record.and_then(percent),
         page: record.map(|row| row.page),
         position: position_line(record),
         opened: opened_line(record),
-        plate: book.cover().is_none()
-            || book
-                .open_command()
-                .is_some_and(|command| command.kind() == OpenKind::Pdf),
+        plate: plate_rgb.is_some() || book.cover().is_none() || pdf,
+        plate_rgb,
         unavailable: book.unavailable_label().map(str::to_string),
     }
+}
+
+fn read_plate_color(cover: &spike_library::CoverFile) -> Option<u32> {
+    let bytes = std::fs::read(cover.as_path()).ok()?;
+    plate_color(&bytes)
 }
 
 fn position_line(record: Option<&ReadingRecord>) -> String {

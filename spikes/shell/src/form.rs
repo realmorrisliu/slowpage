@@ -127,8 +127,10 @@ pub struct CoverCard {
     pub page: Option<u32>,
     pub position: String,
     pub opened: String,
-    /// No embedded cover. The shelf draws the title and author on the plate.
+    /// No photo cover. The shelf draws the title and author on the plate.
     pub plate: bool,
+    /// Fixture plate color from the cover file, when the PNG carries one.
+    pub plate_rgb: Option<u32>,
     pub unavailable: Option<String>,
 }
 
@@ -1291,6 +1293,8 @@ fn composer(book: &str) -> AnyElement {
                 faint(),
                 crate::tokens::BODY_TRACK_EM
             )
+            .accessible(true)
+            .label("问问 Slowpage…")
         })
         .child(tools)
         .into_element()
@@ -1372,7 +1376,15 @@ fn card_face(
     }
     column = match face {
         CardFace::EmptyPeers => column.child(empty_peers(on_peer)),
-        CardFace::Grid => column.child(book_grid(library, content_w, on_open)),
+        CardFace::Grid => column.child(
+            scroll()
+                .flex_1()
+                .w_full()
+                .flex()
+                .flex_col()
+                .scrollable(true)
+                .child(book_grid(library, content_w, on_open)),
+        ),
         CardFace::Placeholder | CardFace::Page => column,
     };
     body.child(column).into_element()
@@ -1516,20 +1528,14 @@ fn book_grid(
         None
     };
     column = column.child(section_label("书架", note));
-    // The mockup width fits five covers. A narrower card, including the
-    // headless nsh window, keeps two per row so later titles stay in view.
-    // One wide row laid out from a larger window signal clipped them.
-    let fit = crate::tokens::shelf_columns(width).max(1);
-    let columns = if width < 700.0 { fit.min(2) } else { fit };
-    let gap = crate::tokens::shelf_gap(width, fit).clamp(crate::tokens::SHELF_MIN_GAP, 48.0);
-    let row_w = if columns == fit {
-        width
-    } else {
-        columns as f32 * crate::tokens::SHELF_COVER_W + columns.saturating_sub(1) as f32 * gap
-    };
+    let grid = spike_library::shelf_grid(width);
+    write_geometry(&grid, library.covers.last().map(|card| card.title.as_str()));
+    let columns = grid.columns.max(1);
+    let gap = grid.column_gap;
+    let row_w = columns as f32 * grid.cover_w + columns.saturating_sub(1) as f32 * gap;
     let mut row = view()
         .w(px(row_w))
-        .mb(px(crate::tokens::SHELF_ROW_GAP))
+        .mb(px(grid.row_gap))
         .flex()
         .flex_row()
         .gap(px(gap));
@@ -1539,13 +1545,13 @@ fn book_grid(
             column = column.child(row);
             row = view()
                 .w(px(row_w))
-                .mb(px(crate::tokens::SHELF_ROW_GAP))
+                .mb(px(grid.row_gap))
                 .flex()
                 .flex_row()
                 .gap(px(gap));
             placed = 0;
         }
-        row = row.child(cover_tile(card, on_open.clone()));
+        row = row.child(cover_tile(card, on_open.clone(), grid));
         placed += 1;
     }
     if placed > 0 {
@@ -1694,10 +1700,14 @@ fn progress_line(card: &CoverCard) -> AnyElement {
         .into_element()
 }
 
-fn cover_tile(card: &CoverCard, on_open: impl Fn(String) + 'static) -> AnyElement {
+fn cover_tile(
+    card: &CoverCard,
+    on_open: impl Fn(String) + 'static,
+    grid: spike_library::ShelfGrid,
+) -> AnyElement {
     let path = card.open_path.clone();
     let mut tile = view()
-        .w(px(crate::tokens::SHELF_COVER_W))
+        .w(px(grid.cover_w))
         .flex_shrink(0.0)
         .flex()
         .flex_col()
@@ -1710,30 +1720,35 @@ fn cover_tile(card: &CoverCard, on_open: impl Fn(String) + 'static) -> AnyElemen
         .child(
             view()
                 .absolute()
-                .left(px(crate::tokens::SHELF_COVER_W))
+                .left(px(grid.cover_w))
                 .top(px(8.0))
                 .w(px(6.0))
-                .h(px(crate::tokens::SHELF_COVER_H - 16.0))
+                .h(px((grid.cover_h - 16.0).max(8.0)))
                 .bg(hsla(0.0, 0.0, 0.0, 0.28)),
         )
-        .child(cover_art(
-            card,
-            crate::tokens::SHELF_COVER_W,
-            crate::tokens::SHELF_COVER_H,
-        ))
+        .child(cover_art(card, grid.cover_w, grid.cover_h))
         .child(
-            view().mt(px(crate::tokens::SHELF_TITLE_MT)).child(
-                line!(
-                    card.title.clone(),
-                    crate::tokens::SHELF_TITLE_SIZE,
-                    crate::tokens::SHELF_TITLE_WEIGHT,
-                    ink(),
-                    crate::tokens::BODY_TRACK_EM
+            view()
+                .h(px(grid.caption_h))
+                .w(px(grid.cover_w))
+                .overflow_hidden()
+                .flex()
+                .flex_col()
+                .child(
+                    view().mt(px(crate::tokens::SHELF_TITLE_MT)).child(
+                        line!(
+                            card.title.clone(),
+                            crate::tokens::SHELF_TITLE_SIZE,
+                            crate::tokens::SHELF_TITLE_WEIGHT,
+                            ink(),
+                            crate::tokens::BODY_TRACK_EM
+                        )
+                        .line_height(px(crate::tokens::SHELF_TITLE_SIZE))
+                        .truncate(),
+                    ),
                 )
-                .truncate(),
-            ),
-        )
-        .child(author_line(card));
+                .child(author_line(card)),
+        );
     if let Some(label) = &card.unavailable {
         tile = tile.child(line!(
             label.clone(),
@@ -1821,33 +1836,36 @@ fn pdf_tag(small: bool) -> AnyElement {
 }
 
 fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
-    let plate = rgb(fallback_color(&card.title)).to_hsla();
+    let sampled = card.plate_rgb.or_else(|| sample_cover(card));
+    let color = sampled.unwrap_or_else(|| fallback_color(&card.title));
+    let photo = card.cover.is_some() && card.plate_rgb.is_none() && !card.pdf;
+    let (title_ink, author_ink) = plate_inks(color);
     let mut art = view()
         .w(px(width))
         .h(px(height))
         .rounded(px(crate::tokens::SHELF_RADIUS))
         .overflow_hidden()
         .shadow(crate::tokens::cover_shadows())
-        .bg(plate);
-    art = art.child(
-        view()
-            .absolute()
-            .left(px(0.0))
-            .top(px(0.0))
-            .w(px((width * 0.08).max(3.0)))
-            .h(px(height))
-            .bg(hsla(0.0, 0.0, 0.0, 0.18)),
-    );
-    if let Some(path) = &card.cover {
-        if !card.plate {
-            art = art.child(
-                image(format!("file://{}", path.display()))
-                    .w(px(width))
-                    .h(px(height)),
-            );
-        }
+        .bg(rgb(color).to_hsla());
+    if card.cover.is_none() {
+        art = art.child(
+            view()
+                .absolute()
+                .left(px(0.0))
+                .top(px(0.0))
+                .w(px((width * 0.08).max(3.0)))
+                .h(px(height))
+                .bg(hsla(0.0, 0.0, 0.0, 0.18)),
+        );
     }
-    if card.plate || card.cover.is_none() {
+    if let Some(path) = &card.cover {
+        art = art.child(
+            image(format!("file://{}", path.display()))
+                .w(px(width))
+                .h(px(height)),
+        );
+    }
+    if !photo {
         let title_size = if height < 100.0 {
             crate::tokens::TAG_SM_SIZE
         } else {
@@ -1871,19 +1889,59 @@ fn cover_art(card: &CoverCard, width: f32, height: f32) -> AnyElement {
                     card.title.clone(),
                     title_size,
                     crate::tokens::H1_WEIGHT,
-                    rgb(crate::tokens::CARD).to_hsla(),
+                    title_ink,
                     0.0
                 ))
                 .child(line!(
                     card.author.clone(),
                     author_size,
                     crate::tokens::BODY_WEIGHT,
-                    hsla(0.0, 0.0, 1.0, 0.82),
+                    author_ink,
                     crate::tokens::LABEL_TRACK_EM
                 )),
         );
     }
     art.into_element()
+}
+
+fn sample_cover(card: &CoverCard) -> Option<u32> {
+    if !card.pdf {
+        return None;
+    }
+    let path = card.cover.as_ref()?;
+    let bytes = std::fs::read(path).ok()?;
+    spike_library::png_center_rgb(&bytes)
+}
+
+fn plate_inks(color: u32) -> (Hsla, Hsla) {
+    let red = ((color >> 16) & 0xff) as f32;
+    let green = ((color >> 8) & 0xff) as f32;
+    let blue = (color & 0xff) as f32;
+    let luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    if luma > 170.0 {
+        (ink(), quiet())
+    } else {
+        (
+            rgb(crate::tokens::CARD).to_hsla(),
+            hsla(0.0, 0.0, 1.0, 0.82),
+        )
+    }
+}
+
+fn write_geometry(grid: &spike_library::ShelfGrid, last_title: Option<&str>) {
+    let body = serde_json::json!({
+        "cover_w": grid.cover_w,
+        "cover_h": grid.cover_h,
+        "column_gap": grid.column_gap,
+        "row_gap": grid.row_gap,
+        "columns": grid.columns,
+        "caption_h": grid.caption_h,
+        "scrolls": grid.scrolls,
+        "last_title": last_title.unwrap_or(""),
+    });
+    let dir = "/tmp/superreader-spike";
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(format!("{dir}/geometry.json"), body.to_string());
 }
 
 fn fallback_color(title: &str) -> u32 {

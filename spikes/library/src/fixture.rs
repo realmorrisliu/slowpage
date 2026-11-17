@@ -329,9 +329,9 @@ pub fn write_form(root: &Path) -> FormLibraries {
     let apple = root.join("apple");
     let calibre = root.join("calibre");
     let folder = root.join("folder");
-    write_plate_apple(&apple, FORM_APPLE, "apple", false);
+    write_plate_apple(&apple, FORM_APPLE, "apple", true);
     write_plate_calibre(&calibre, FORM_CALIBRE);
-    write_plate_apple(&folder, FORM_FOLDER, "folder", false);
+    write_plate_apple(&folder, FORM_FOLDER, "folder", true);
     FormLibraries {
         apple,
         calibre,
@@ -414,9 +414,10 @@ fn write_plate_calibre(dir: &Path, books: &[Plate]) {
             )
             .unwrap();
         } else {
+            let cover = plate_png(128, 192, book.red, book.green, book.blue);
             fs::write(
                 book_dir.join(format!("{folder}.epub")),
-                epub_without_cover(&format!("calibre-{id}"), book.title),
+                epub_with_cover(&format!("calibre-{id}"), book.title, &cover),
             )
             .unwrap();
             conn.execute(
@@ -464,6 +465,10 @@ fn plate_png(width: u32, height: u32, red: u8, green: u8, blue: u8) -> Vec<u8> {
     let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     png.extend(png_chunk(b"IHDR", &ihdr));
     png.extend(png_chunk(b"IDAT", &zlib_store(&raw)));
+    let color = format!("{red:02X}{green:02X}{blue:02X}");
+    let mut text = b"slowpage-plate\0".to_vec();
+    text.extend(color.as_bytes());
+    png.extend(png_chunk(b"tEXt", &text));
     png.extend(png_chunk(b"IEND", &[]));
     png
 }

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -537,10 +538,14 @@ fn form_fixture_loads_twelve_original_plates() {
         })
         .count();
     assert_eq!(pdf, 1);
-    assert!(apple
+    let pride = apple
         .books()
         .iter()
-        .any(|book| book.title() == "Pride and Prejudice" && book.cover().is_none()));
+        .find(|book| book.title() == "Pride and Prejudice")
+        .expect("Pride");
+    let pride_bytes = fs::read(pride.cover().expect("plate").as_path()).unwrap();
+    assert_eq!(crate::plate_color(&pride_bytes), Some(0x7D8C6A));
+    assert_eq!(crate::png_center_rgb(&pride_bytes), Some(0x7D8C6A));
     assert!(calibre.books().iter().any(|book| book.title() == "三体"));
     assert!(folder.books().iter().any(|book| book.title() == "人间词话"));
     let combined = apple
@@ -555,6 +560,43 @@ fn form_fixture_loads_twelve_original_plates() {
     assert!(labels.contains(&"Apple Books"));
     assert!(labels.contains(&"calibre"));
     assert!(labels.contains(&"~/Books"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn apple_and_calibre_keep_distinct_ids_and_every_title() {
+    let root = std::env::temp_dir().join(format!(
+        "spike-source-ids-{}-{}",
+        std::process::id(),
+        unique_tag()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let apple_dir = root.join("apple");
+    let calibre_dir = root.join("calibre");
+    fixture::write_apple(&apple_dir);
+    fixture::write_calibre(&calibre_dir);
+    let support = temp_support();
+    let apple = open(scope_dir(apple_dir, support.clone()));
+    let calibre = open(scope_dir(calibre_dir, support));
+    let combined = apple.admit(SourceName::Calibre, calibre);
+    let mut ids = HashSet::new();
+    let mut covers = HashSet::new();
+    let mut titles = HashSet::new();
+    for book in combined.books() {
+        assert!(
+            ids.insert(format!("{:?}", book.id())),
+            "duplicate id {}",
+            book.title()
+        );
+        titles.insert(book.title().to_string());
+        if let Some(cover) = book.cover() {
+            let name = cover.as_path().file_name().unwrap().to_owned();
+            assert!(covers.insert(name), "duplicate cover for {}", book.title());
+        }
+    }
+    for title in ["Plain Essay", "Field Guide", "Folder Book", "Harbor Notes"] {
+        assert!(titles.contains(title), "{title}");
+    }
     let _ = fs::remove_dir_all(&root);
 }
 
