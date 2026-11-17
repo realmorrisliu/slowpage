@@ -3760,6 +3760,123 @@ def self_test():
         assert ok is False and "fullscreen-enter frame missing" in detail, detail
         assert (drop_out / "form-fullscreen.png").is_file()
         assert (drop_out / "frames" / "fullscreen-exit-layout.json").is_file()
+    locked = parse_gui_session(
+        {
+            "locked": True,
+            "secure_input_pid": 777,
+            "secure_input_name": "loginwindow",
+            "frontmost_name": "loginwindow",
+            "on_console": True,
+            "login_done": True,
+        }
+    )
+    open_session = parse_gui_session(
+        {
+            "locked": False,
+            "frontmost_name": "Finder",
+            "on_console": True,
+            "login_done": True,
+        }
+    )
+    assert gui_session_block(open_session) is None
+    assert gui_session_block(GuiSession("linux")) is None
+    secure_only = parse_gui_session(
+        {
+            "locked": False,
+            "secure_input_pid": 777,
+            "secure_input_name": "loginwindow.app",
+            "frontmost_name": "Finder",
+            "on_console": True,
+            "login_done": True,
+        }
+    )
+    assert "secure input is held by loginwindow pid 777" in gui_session_block(secure_only)
+    front_only = parse_gui_session(
+        {
+            "locked": False,
+            "frontmost_name": "LoginWindow",
+            "on_console": True,
+            "login_done": True,
+        }
+    )
+    assert "frontmost app is loginwindow" in gui_session_block(front_only)
+    away = parse_gui_session(
+        {
+            "locked": False,
+            "frontmost_name": "Finder",
+            "on_console": False,
+            "login_done": False,
+        }
+    )
+    assert "not the console session" in gui_session_block(away)
+    assert "GUI login is not finished" in gui_session_block(away)
+    unread = GuiSession("darwin", read_error="swift failed")
+    assert gui_session_block(unread).startswith("could not read the GUI session")
+    missing = parse_gui_session(
+        {"frontmost_name": "Finder", "on_console": True, "login_done": True}
+    )
+    assert missing.locked is None and gui_session_block(missing) is None
+    assert "lock flag not reported" in gui_session_detail(missing)
+    locked_rows = doctor(session=locked)
+    gui = next(row for row in locked_rows if row["id"] == "gui-session")
+    assert gui["status"] == "fail", gui
+    assert doctor_failed(locked_rows)
+    for banned in ("shell-clip", "shell-shelf-scroll", "0 px"):
+        assert banned not in gui["detail"], gui["detail"]
+    assert "session check" in gui["detail"]
+    assert "locked" in gui["detail"]
+    open_rows = doctor(session=open_session)
+    gui_open = next(row for row in open_rows if row["id"] == "gui-session")
+    assert gui_open["status"] == "pass", gui_open
+    assert not doctor_failed([gui_open])
+    gui_linux = next(row for row in doctor(session=GuiSession("linux")) if row["id"] == "gui-session")
+    assert gui_linux["status"] == "pass", gui_linux
+    source = gui_session_swift()
+    folded = source.lower()
+    for needle in (
+        "CGSessionCopyCurrentDictionary",
+        "ScreenIsLocked",
+        "SecureInputPID",
+        "OnConsole",
+        "LoginDone",
+        "frontmostApplication",
+        "returned nothing",
+    ):
+        assert needle in source, needle
+    for banned in ("cgevent", "saclock", "unlock"):
+        assert banned not in folded, banned
+    assert (
+        session_process_error(1, "swift: error: session read failed\n", "\n")
+        == "swift: error: session read failed"
+    )
+    assert session_process_error(1, "\n", "\n") == "swift failed"
+    assert session_process_error(0, "{}\n", "\n") is None
+    bindir = Path(tempfile.mkdtemp(prefix="sr-fake-swift-"))
+    swift = bindir / "swift"
+    swift.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "sys.stderr.write('\\n')\n"
+        "sys.stdout.write('swift: error: session read failed\\n')\n"
+        "sys.exit(1)\n"
+    )
+    swift.chmod(0o755)
+    old_platform = sys.platform
+    old_path = os.environ.get("PATH", "")
+    try:
+        sys.platform = "darwin"
+        os.environ["PATH"] = str(bindir) + os.pathsep + old_path
+        failed_read = read_gui_session()
+    finally:
+        sys.platform = old_platform
+        os.environ["PATH"] = old_path
+        shutil.rmtree(bindir, ignore_errors=True)
+    assert failed_read.read_error == "swift: error: session read failed", failed_read.read_error
+    assert gui_session_block(failed_read).startswith(
+        "could not read the GUI session. swift: error: session read failed"
+    )
+    failed_row = next(row for row in doctor(session=failed_read) if row["id"] == "gui-session")
+    assert failed_row["status"] == "fail", failed_row
     return True
 
 
@@ -3822,7 +3939,245 @@ def pdfium_dylib():
     return PDFIUM / "libpdfium.dylib"
 
 
-def doctor():
+class GuiSession:
+    """Read-only picture of the Mac GUI session. None means that fact was not reported."""
+
+    def __init__(
+        self,
+        platform,
+        locked=None,
+        secure_input_pid=None,
+        secure_input_name=None,
+        frontmost_name=None,
+        on_console=None,
+        login_done=None,
+        read_error=None,
+    ):
+        self.platform = platform
+        self.locked = locked
+        self.secure_input_pid = secure_input_pid
+        self.secure_input_name = secure_input_name
+        self.frontmost_name = frontmost_name
+        self.on_console = on_console
+        self.login_done = login_done
+        self.read_error = read_error
+
+
+def _is_loginwindow(name):
+    if not name:
+        return False
+    leaf = str(name).strip().lower()
+    if leaf.endswith(".app"):
+        leaf = leaf[: -len(".app")]
+    return leaf == "loginwindow"
+
+
+def _optional_bool(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    return None
+
+
+def parse_gui_session(payload, platform="darwin"):
+    pid = payload.get("secure_input_pid")
+    if pid is not None and pid != "":
+        pid = int(pid)
+        if pid <= 0:
+            pid = None
+    else:
+        pid = None
+    return GuiSession(
+        platform,
+        locked=_optional_bool(payload.get("locked")) if "locked" in payload else None,
+        secure_input_pid=pid,
+        secure_input_name=payload.get("secure_input_name") or None,
+        frontmost_name=payload.get("frontmost_name") or None,
+        on_console=_optional_bool(payload.get("on_console")) if "on_console" in payload else None,
+        login_done=_optional_bool(payload.get("login_done")) if "login_done" in payload else None,
+        read_error=payload.get("read_error") or None,
+    )
+
+
+def gui_session_swift():
+    """Read CGSessionCopyCurrentDictionary and the frontmost app. No events and no session changes.
+
+    CGSSessionScreenIsLocked is the key the live diagnosis recorded. It is not a public
+    constant, so the reader matches it by name inside the dictionary CGSessionCopyCurrentDictionary
+    already returns. kCGSessionOnConsoleKey and kCGSessionLoginDoneKey are the public keys.
+    """
+    return r"""
+import AppKit
+import CoreGraphics
+import Darwin
+import Foundation
+
+let session = CGSessionCopyCurrentDictionary() as NSDictionary?
+
+func match(_ needle: String) -> Any? {
+    guard let session else { return nil }
+    for key in session.allKeys {
+        guard let name = key as? String else { continue }
+        if name.range(of: needle, options: .caseInsensitive) != nil {
+            return session[name]
+        }
+    }
+    return nil
+}
+
+func flag(_ value: Any?) -> Bool? {
+    guard let value else { return nil }
+    if value is NSNull { return nil }
+    if let number = value as? NSNumber {
+        return number.intValue != 0
+    }
+    return nil
+}
+
+func pidValue(_ value: Any?) -> Int? {
+    guard let number = value as? NSNumber else { return nil }
+    let pid = number.intValue
+    if pid <= 0 { return nil }
+    return pid
+}
+
+func processName(_ pid: Int) -> String? {
+    guard let app = NSRunningApplication(processIdentifier: pid_t(pid)) else { return nil }
+    if let url = app.executableURL {
+        return url.lastPathComponent
+    }
+    return app.localizedName
+}
+
+if session == nil {
+    let data = try! JSONSerialization.data(
+        withJSONObject: ["read_error": "CGSessionCopyCurrentDictionary returned nothing"],
+        options: []
+    )
+    FileHandle.standardOutput.write(data)
+    exit(0)
+}
+
+let securePid = pidValue(match("SecureInputPID"))
+let front = NSWorkspace.shared.frontmostApplication
+let frontName = front?.executableURL?.lastPathComponent ?? front?.localizedName
+var payload: [String: Any] = [:]
+if let locked = flag(match("ScreenIsLocked")) {
+    payload["locked"] = locked
+}
+if let securePid {
+    payload["secure_input_pid"] = securePid
+    if let name = processName(securePid) {
+        payload["secure_input_name"] = name
+    }
+}
+if let frontName {
+    payload["frontmost_name"] = frontName
+}
+if let onConsole = flag(match("OnConsole")) {
+    payload["on_console"] = onConsole
+}
+if let loginDone = flag(match("LoginDone")) {
+    payload["login_done"] = loginDone
+}
+let data = try! JSONSerialization.data(withJSONObject: payload, options: [])
+FileHandle.standardOutput.write(data)
+"""
+
+
+def gui_session_block(session):
+    """Why this session cannot host a key window. None means the shelf and fullscreen checks may run."""
+    if session.platform != "darwin":
+        return None
+    if session.read_error:
+        return "could not read the GUI session. " + session.read_error
+    parts = []
+    if session.locked is True:
+        parts.append("the console session is locked")
+    if _is_loginwindow(session.secure_input_name):
+        pid = f" pid {session.secure_input_pid}" if session.secure_input_pid else ""
+        parts.append(f"secure input is held by loginwindow{pid}")
+    if _is_loginwindow(session.frontmost_name):
+        parts.append("the frontmost app is loginwindow, so no app can become key")
+    if session.on_console is False:
+        parts.append("this session is not the console session")
+    if session.login_done is False:
+        parts.append("GUI login is not finished")
+    if not parts:
+        return None
+    return (
+        "; ".join(parts)
+        + ". Unlock the morris console before preflight or the full suite. "
+        "A posted wheel and fullscreen need a key window. "
+        "This is the session check, not a shelf scroll or fullscreen result."
+    )
+
+
+def gui_session_detail(session):
+    block = gui_session_block(session)
+    if block:
+        return block
+    if session.platform != "darwin":
+        return f"GUI session is read on darwin. This host is {session.platform}."
+    if session.locked is False:
+        lock = "unlocked"
+    else:
+        lock = "lock flag not reported"
+    front = session.frontmost_name or "unknown"
+    return f"console is {lock}. frontmost app is {front}."
+
+
+def session_process_error(returncode, stdout, stderr):
+    """Text from a failed session read. Empty stderr must not hide the stdout error."""
+    if returncode == 0:
+        return None
+    err = (stderr or "").strip()
+    out = (stdout or "").strip()
+    return err or out or "swift failed"
+
+
+def read_gui_session():
+    if sys.platform != "darwin":
+        return GuiSession(sys.platform)
+    directory = Path(tempfile.mkdtemp(prefix="sr-session-"))
+    script = directory / "session.swift"
+    script.write_text(gui_session_swift())
+    try:
+        proc = subprocess.run(
+            ["swift", str(script)],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return GuiSession("darwin", read_error=str(exc))
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+    failed = session_process_error(proc.returncode, proc.stdout, proc.stderr)
+    if failed:
+        return GuiSession("darwin", read_error=failed)
+    raw = (proc.stdout or "").strip()
+    if not raw:
+        err = (proc.stderr or "").strip() or "session json was empty"
+        return GuiSession("darwin", read_error=err)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return GuiSession("darwin", read_error=f"session json: {exc}")
+    if not isinstance(payload, dict):
+        return GuiSession("darwin", read_error="session json was not an object")
+    return parse_gui_session(payload)
+
+
+def doctor_failed(rows):
+    return any(row["status"] == "fail" for row in rows)
+
+
+def doctor(session=None):
     rows = []
     version = nsh_version()
     if nsh_is_pinned(version):
@@ -3919,6 +4274,17 @@ def doctor():
         rows.append(check("macos", "reading-bars", "doctor", "fail", sys.platform))
     else:
         rows.append(check("macos", "reading-bars", "doctor", "pass", "darwin"))
+    seen = session if session is not None else read_gui_session()
+    block = gui_session_block(seen)
+    rows.append(
+        check(
+            "gui-session",
+            "doctor",
+            "doctor",
+            "fail" if block else "pass",
+            gui_session_detail(seen),
+        )
+    )
     return rows
 
 
@@ -8615,7 +8981,7 @@ def main():
         rows = doctor()
         for row in rows:
             print(f"{row['status']} {row['id']} {row['detail']}")
-        return 1 if any(row["status"] == "fail" for row in rows) else 0
+        return 1 if doctor_failed(rows) else 0
     if args.self_test:
         self_test()
         print("self-test passed")
@@ -8637,7 +9003,7 @@ def main():
     private_support(out)
     version = nsh_version()
     rows = doctor()
-    if any(row["status"] == "fail" for row in rows):
+    if doctor_failed(rows):
         rows.extend(skipped("not run because doctor failed"))
         rows.extend(pending_rows())
         return write_summary(out, rows, version, load_start)
