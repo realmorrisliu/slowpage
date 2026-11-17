@@ -536,7 +536,7 @@ fn place_fullscreen_lights(window: &NSWindow, show: bool) {
                 .iter()
                 .any(|(saved, _, _)| std::ptr::eq(saved.as_ref(), &*button));
             if !known {
-                if let Some(parent) = view.superview() {
+                if let Some(parent) = unsafe { view.superview() } {
                     if !std::ptr::eq::<NSView>(&*parent, &*content) {
                         // The frame is in the title-bar view. Reparenting
                         // keeps it, so the exit path has to put this back.
