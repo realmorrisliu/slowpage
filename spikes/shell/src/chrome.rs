@@ -19,7 +19,7 @@ use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
 use crate::icons;
 
 pub const SIDE: f64 = 52.0;
-pub const TOP: f64 = 48.0;
+pub const TOP: f64 = crate::tokens::CHROME_H as f64;
 pub const FIT: f64 = 0.88;
 
 #[derive(Clone, Copy, Debug)]
@@ -547,7 +547,8 @@ fn place_fullscreen_lights(window: &NSWindow, show: bool) {
         });
         content.addSubview(view);
         let x = 9.0 + index as f64 * 22.0;
-        let y = height - 31.0;
+        let button_h = 14.0;
+        let y = height - (f64::from(crate::tokens::chrome_center()) + button_h / 2.0);
         view.setFrame(NSRect::new(NSPoint::new(x, y), NSSize::new(14.0, 14.0)));
         unsafe {
             let _: () = msg_send![&*button, setHidden: false];

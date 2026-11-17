@@ -663,6 +663,316 @@ def geometry_matches(geo, content_w=None):
     )
 
 
+ALIGN_TOL = 0.5
+
+
+def _mid(frame):
+    return frame[1] + frame[3] / 2.0
+
+
+def _bottom(frame):
+    return frame[1] + frame[3]
+
+
+def alignment_report(layout):
+    """Centers, edges, and repeated gaps against the layout.json grid. Tolerance is 0.5pt."""
+    if not isinstance(layout, dict):
+        return []
+    nodes = layout.get("nodes")
+    if not isinstance(nodes, list):
+        return ["no frames"]
+    by_id = {
+        node.get("id"): node
+        for node in nodes
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+    try:
+        center = float(layout["chrome_center"])
+        inset = float(layout["inset"])
+        side_pad = float(layout["sidebar_pad_x"])
+        card_pad = float(layout["card_pad_x"])
+        chat_pad = float(layout["chat_pad_x"])
+        window_w = float(layout["window"][0])
+        window_h = float(layout["window"][1])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return ["alignment grid missing"]
+    problems = []
+
+    def frame(node_id):
+        node = by_id.get(node_id)
+        if node is None:
+            return None
+        return _box(node.get("frame"))
+
+    def want_center(node_id):
+        box = frame(node_id)
+        if box is None:
+            problems.append(f"{node_id} missing")
+            return
+        delta = _mid(box) - center
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"{node_id} Y {delta:+.2f}")
+
+    chat = frame("chat")
+    for node_id in (
+        "sidebar.toggle",
+        "toolbar",
+        "toolbar.sort",
+        "toolbar.view",
+        "chat.head",
+        "chat.avatar",
+        "chat.name",
+        "chat.new",
+        "chat.panel",
+    ):
+        if node_id.startswith("chat") and chat is None:
+            continue
+        want_center(node_id)
+    for node_id in ("traffic.close", "traffic.miniaturize", "traffic.zoom"):
+        box = frame(node_id)
+        if box is None or box[3] <= 8:
+            continue
+        if (
+            box[1] < -1
+            or box[1] + box[3] > window_h + 1
+            or box[0] < -1
+            or box[0] + box[2] > window_w + 1
+        ):
+            continue
+        delta = _mid(box) - center
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"{node_id} Y {delta:+.2f}")
+    card = frame("card")
+    if card is None:
+        problems.append("card missing")
+        return problems
+    if abs(card[1] - inset) > ALIGN_TOL:
+        problems.append(f"card Y {card[1] - inset:+.2f}")
+    sidebar = frame("sidebar")
+    if sidebar is None:
+        delta = card[0] - inset
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"card inset X {delta:+.2f}")
+    else:
+        delta = card[0] - (sidebar[0] + sidebar[2] + inset)
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"card inset X {delta:+.2f}")
+    right = window_w - (card[0] + card[2])
+    if chat is None:
+        if abs(right - inset) > ALIGN_TOL:
+            problems.append(f"card inset right {right - inset:+.2f}")
+    else:
+        delta = chat[0] - (card[0] + card[2] + inset)
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"chat inset X {delta:+.2f}")
+        avatar = frame("chat.avatar")
+        if avatar is not None:
+            delta = avatar[0] - (chat[0] + chat_pad)
+            if abs(delta) > ALIGN_TOL:
+                problems.append(f"chat.avatar X {delta:+.2f}")
+        name = frame("chat.name")
+        sub = frame("chat.sub")
+        if name is not None and sub is not None:
+            delta = _bottom(name) - _bottom(sub)
+            if abs(delta) > ALIGN_TOL:
+                problems.append(f"chat.sub baseline {delta:+.2f}")
+    content_x = card[0] + card_pad
+    for node_id in ("shelf.header", "shelf.section", "continue.section"):
+        box = frame(node_id)
+        if box is None:
+            continue
+        delta = box[0] - content_x
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"{node_id} X {delta:+.2f}")
+    title = frame("shelf.header.title")
+    count = frame("shelf.header.count")
+    if title is not None and count is not None:
+        delta = _bottom(title) - _bottom(count)
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"shelf.header.count baseline {delta:+.2f}")
+    for node_id in by_id:
+        row = node_id == "sidebar.settings" or (
+            node_id.startswith("sidebar.row.") and node_id.count(".") == 2
+        )
+        if not row:
+            continue
+        box = frame(node_id)
+        if box is None:
+            continue
+        delta = box[0] - side_pad
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"{node_id} X {delta:+.2f}")
+        if abs(box[3] - 28.0) > ALIGN_TOL:
+            continue
+        row_mid = _mid(box)
+        for suffix in (".icon", ".label"):
+            child = frame(node_id + suffix)
+            if child is None:
+                problems.append(f"{node_id}{suffix} missing")
+                continue
+            delta = _mid(child) - row_mid
+            if abs(delta) > ALIGN_TOL:
+                problems.append(f"{node_id}{suffix} Y {delta:+.2f}")
+    for node_id in by_id:
+        if not node_id.startswith("sidebar.group."):
+            continue
+        box = frame(node_id)
+        if box is None:
+            continue
+        delta = box[0] - side_pad
+        if abs(delta) > ALIGN_TOL:
+            problems.append(f"{node_id} X {delta:+.2f}")
+    covers = []
+    for node_id, node in by_id.items():
+        if node_id.startswith("cover.") and node_id.count(".") == 1 and node.get("kind") == "cover":
+            box = frame(node_id)
+            if box is not None:
+                covers.append(box)
+    covers.sort(key=lambda box: (box[1], box[0]))
+    if len(covers) >= 2:
+        row = [box for box in covers if abs(box[1] - covers[0][1]) <= ALIGN_TOL]
+        gaps = [right[0] - (left[0] + left[2]) for left, right in zip(row, row[1:])]
+        if gaps and any(abs(gap - gaps[0]) > ALIGN_TOL for gap in gaps[1:]):
+            problems.append(f"shelf column gap {gaps[-1] - gaps[0]:+.2f}")
+    continues = []
+    for node_id in by_id:
+        if node_id.startswith("continue.") and node_id.count(".") == 1:
+            box = frame(node_id)
+            if box is not None:
+                continues.append(box)
+    continues.sort(key=lambda box: box[0])
+    if len(continues) >= 2:
+        gaps = [right[0] - (left[0] + left[2]) for left, right in zip(continues, continues[1:])]
+        if any(abs(gap - gaps[0]) > ALIGN_TOL for gap in gaps[1:]):
+            problems.append(f"continue gap {gaps[-1] - gaps[0]:+.2f}")
+    return problems
+
+
+def _sample_layout(shift=0.0):
+    def node(node_id, kind, frame):
+        return {
+            "id": node_id,
+            "kind": kind,
+            "frame": frame,
+            "container": [0, 0, 800, 600],
+            "ellipsis": False,
+            "scroll_child": False,
+        }
+
+    return {
+        "window": [800, 600],
+        "chrome_center": 24.0,
+        "inset": 6.0,
+        "sidebar_pad_x": 10.0,
+        "card_pad_x": 40.0,
+        "chat_pad_x": 16.0,
+        "nodes": [
+            node("sidebar", "container", [0, 0, 220, 600]),
+            node("card", "container", [226, 6, 248, 588]),
+            node("toolbar", "container", [226, 6 + shift, 248, 36]),
+            node("toolbar.sort", "chrome", [360, 12 + shift, 60, 24]),
+            node("toolbar.view", "chrome", [430, 14 + shift, 60, 20]),
+            node("sidebar.toggle", "chrome", [92, 10 + shift, 28, 28]),
+            node("sidebar.row.0", "sidebar-row", [10, 100, 200, 28]),
+            node("sidebar.row.0.icon", "icon", [18, 107, 14, 14]),
+            node("sidebar.row.0.label", "text", [44, 106.4, 120, 15.2]),
+            node("shelf.header", "container", [266, 54, 162, 36]),
+            node("shelf.header.title", "text", [266, 59, 80, 26]),
+            node("shelf.header.count", "text", [390, 72, 38, 13]),
+            node("shelf.section", "text", [266, 120, 162, 18]),
+            node("cover.0", "cover", [266, 200, 70, 105]),
+            node("cover.1", "cover", [378, 200, 70, 105]),
+            node("chat", "container", [480, 0, 320, 600]),
+            node("chat.head", "container", [480, 0, 320, 48]),
+            node("chat.avatar", "chrome", [496, 12, 24, 24]),
+            node("chat.name", "text", [528, 14, 70, 20]),
+            node("chat.sub", "text", [604, 20, 50, 14]),
+            node("chat.new", "chrome", [720, 10, 28, 28]),
+            node("chat.panel", "chrome", [750, 10, 28, 28]),
+        ],
+    }
+
+
+def _rgba_rows(rows, width, channels):
+    if channels == 4:
+        return rows
+    out = []
+    for row in rows:
+        rgba = bytearray(width * 4)
+        for x in range(width):
+            src = x * channels
+            dst = x * 4
+            rgba[dst : dst + channels] = row[src : src + channels]
+            rgba[dst + 3] = 255
+        out.append(rgba)
+    return out
+
+
+def save_zoom_crop(png, layout, dest, box):
+    image_w, _image_h, rows = decode_png_rows(png)
+    channels = image_channels(rows, image_w)
+    window = layout.get("window") or [image_w, 1]
+    scale = image_w / float(window[0])
+    pixel = [
+        int(round(box[0] * scale)),
+        int(round(box[1] * scale)),
+        max(1, int(round(box[2] * scale))),
+        max(1, int(round(box[3] * scale))),
+    ]
+    cropped, width, height = crop_box(rows, image_w, channels, pixel)
+    rgba = _rgba_rows(cropped, width, channels)
+    zoomed = scale_rows(rgba, width, 4, width * 4, height * 4)
+    flat = bytearray()
+    for row in zoomed:
+        flat.extend(row)
+    Path(dest).write_bytes(encode_png(width * 4, height * 4, flat))
+
+
+def save_alignment_crops(out, stem, png):
+    layout = read_layout_frames()
+    if not isinstance(layout, dict) or not Path(png).is_file():
+        return
+    nodes = {
+        node.get("id"): node
+        for node in layout.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    window = layout.get("window") or [0, 0]
+    try:
+        width = float(window[0])
+    except (TypeError, ValueError, IndexError):
+        return
+    toolbar = _box((nodes.get("toolbar") or {}).get("frame"))
+    band = 48.0
+    if toolbar is not None:
+        band = max(band, toolbar[1] + toolbar[3])
+    boxes = {"toolbar": [0.0, 0.0, width, band + 8.0]}
+    for key in sorted(nodes):
+        if key.startswith("sidebar.row.") and key.count(".") == 2:
+            row = _box(nodes[key].get("frame"))
+            if row is not None:
+                boxes["sidebar"] = [
+                    max(0.0, row[0] - 8.0),
+                    max(0.0, row[1] - 6.0),
+                    row[2] + 16.0,
+                    row[3] + 12.0,
+                ]
+                break
+    header = _box((nodes.get("shelf.header") or {}).get("frame"))
+    if header is not None:
+        boxes["header"] = [
+            max(0.0, header[0] - 8.0),
+            max(0.0, header[1] - 6.0),
+            header[2] + 16.0,
+            header[3] + 12.0,
+        ]
+    for name, box in boxes.items():
+        try:
+            save_zoom_crop(Path(png), layout, out / f"{stem}-{name}-4x.png", box)
+        except (OSError, ValueError, ZeroDivisionError):
+            continue
+
+
 def _box(value):
     if not isinstance(value, list) or len(value) != 4:
         return None
@@ -1069,7 +1379,17 @@ def form_diff_self_check():
     assert not _plate_has_ink(flat, 3, 1.0, [0, 0, 20, 10], "#C8A24C")
     assert pixel_changes(band, flat) > 0
     assert pixel_changes(flat, flat) == 0
-    assert library_min_height() == 520
+    assert library_min_height() == 516
+    assert alignment_report(_sample_layout()) == []
+    shifted = alignment_report(_sample_layout(2.0))
+    assert any(item.startswith("toolbar Y +2.00") for item in shifted), shifted
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "tiny.png"
+        dest = Path(tmp) / "tiny-4x.png"
+        src.write_bytes(encode_png(4, 2, bytes([255, 0, 0, 255]) * 8))
+        save_zoom_crop(src, {"window": [4, 2]}, dest, [0, 0, 4, 2])
+        zoom_w, zoom_h, _rows = decode_png_rows(dest)
+        assert (zoom_w, zoom_h) == (16, 8)
     assert not frame_outside_x(10, 20, 0, 100)
     assert frame_outside_x(90, 20, 0, 100)
 
@@ -1293,6 +1613,7 @@ def _size_note(label, pid=None):
     shell = read_shell_layout()
     matched, match_detail = geometry_matches(geo)
     problems = clipping_report(frames)
+    problems.extend(alignment_report(frames))
     if pid is not None:
         problems.extend(ax_overflow(pid))
     chat = shell.get("chat_w")
@@ -1494,6 +1815,7 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         if not mock_shot.exists():
             matched = False
             note += "; form-fixture.png missing"
+        save_alignment_crops(out, "form-fixture", mock_shot)
         notes.append(note)
         ok = ok and matched
         finish_launch(state)
@@ -1509,6 +1831,7 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         )
         try:
             _capture_form(out, window_tool, state, "form-minimum.png")
+            save_alignment_crops(out, "form-minimum", out / "form-minimum.png")
         except RuntimeError as exc:
             notes.append(f"minimum capture {exc}")
             ok = False
@@ -1539,6 +1862,7 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         )
         try:
             _capture_form(out, window_tool, state, "form-fullscreen.png")
+            save_alignment_crops(out, "form-fullscreen", out / "form-fullscreen.png")
         except RuntimeError as exc:
             notes.append(f"fullscreen capture {exc}")
             ok = False
@@ -3756,7 +4080,7 @@ def library_min_height():
     section = 28 + 15 * 1.2 + 12
     continue_h = 12 * 2 + 78
     shelf = 112 * 1.5 + 42
-    stack = 40 + 4 + 36 + section + continue_h + section + shelf
+    stack = 36 + 4 + 36 + section + continue_h + section + shelf
     return stack + 6 * 2
 
 

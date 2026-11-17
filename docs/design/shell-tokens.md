@@ -23,8 +23,8 @@ The card in the stylesheet starts at the sidebar's right edge. The shell keeps a
 
 | CSS | Value | Rust |
 | --- | --- | --- |
-| `.side` padding | 52px 10px 12px | `SIDE_PAD_TOP`, `SIDE_PAD_X`, `SIDE_PAD_BOTTOM` |
-| `.side-top` height | 52px | `TOP_ROW_H` |
+| `.side` padding | 52px 10px 12px | `SIDE_PAD_TOP` (stylesheet only), `SIDE_PAD_X`, `SIDE_PAD_BOTTOM` |
+| `.side-top` height | 52px in the stylesheet | `TOP_ROW_H` is `CHROME_H`, 48 |
 | `.tb` | 28px, radius 7px | `TOGGLE_SIZE`, `TOGGLE_RADIUS` |
 | sidebar glyph | 18px, IconMCP `sidebar-left` | `SIDEBAR_ICON` |
 | `.sfield` | height 28, radius 8, pad 8, gap 6, 12.5px, `#8E8E93` | `SEARCH_H`, `SEARCH_RADIUS`, `SEARCH_PAD_X`, `SEARCH_GAP`, `SEARCH_SIZE`, `QUIET` |
@@ -47,7 +47,7 @@ An empty **书单** group still shows its label. The headless check `shell-sideb
 
 | CSS | Value | Rust |
 | --- | --- | --- |
-| `.card-tb` | height 40, pad 12, gap 6 | `TOOLBAR_H`, `TOOLBAR_PX`, `TOOLBAR_GAP` |
+| `.card-tb` | height 40 in the stylesheet, pad 12, gap 6 | `TOOLBAR_H` is `CHROME_H - 2 * INSET` (36), `TOOLBAR_PX`, `TOOLBAR_GAP` |
 | `.ctl` | height 28, pad 8, gap 5, 12.5px `#6E6E73` | `TOOL_H`, `TOOL_PX`, `TOOL_GAP`, `TOOL_SIZE`, `ICON` |
 | sort / chevron | 15px, 11px | `SORT_ICON`, `CHEVRON_ICON` |
 | `.vseg` | pad 2, radius 8, button 28 by 22, radius 6 | `SEG_PAD`, `SEG_RADIUS`, `SEG_BTN_W`, `SEG_BTN_H`, `SEG_BTN_RADIUS` |
@@ -81,13 +81,32 @@ The shelf is one continuous rule, not a second breakpoint. `columns = floor((con
 
 The continue-reading row keeps the 52 by 78 cover. A card needs 103 points before it can sit in the row. The row takes the largest count from 1 to 3 that fits, then stretches those cards across the content width. At 808 that is three cards. At 266 it is two.
 
-The window minimum is 578 by 520. The width is the 220-point sidebar, the 6-point inset, the 40-point card padding, a 266-point two-column shelf, the padding again, and the inset. The height is the card stack: the toolbar, the title, the continue row, one full shelf row, both section labels, and the 6-point inset above and below. The sidebar list scrolls in the space above the pinned settings row. The chat panel is 320 points and does not shrink. It is shown only when the content width beside it is still at least 266, which is a 898-point window with the sidebar open. Below that the library form hides the panel. The preference is kept, and the toolbar toggle shows it again once the window is wide enough. This is not the reading-form annotation-margin drawer.
+The window minimum is 578 by 516. The width is the 220-point sidebar, the 6-point inset, the 40-point card padding, a 266-point two-column shelf, the padding again, and the inset. The height is the card stack: the 36-point toolbar, the title, the continue row, one full shelf row, both section labels, and the 6-point inset above and below. The sidebar list scrolls in the space above the pinned settings row. The chat panel is 320 points and does not shrink. It is shown only when the content width beside it is still at least 266, which is a 898-point window with the sidebar open. Below that the library form hides the panel. The preference is kept, and the toolbar toggle shows it again once the window is wide enough. This is not the reading-form annotation-margin drawer.
+
+## Alignment grid
+
+NSH centers the traffic lights in the hidden title bar. That bar is `CHROME_H` (48), so the chrome center is `CHROME_H / 2` (24) at every window size. `chrome_center` and `chrome_top` are the only vertical origins for that row.
+
+The same center is the vertical middle of the sidebar top row (`TOP_ROW_H = CHROME_H`), the sidebar toggle (`TOGGLE_TOP = chrome_top(TOGGLE_SIZE)`), the chat header (`CHAT_HEAD_H = CHROME_H`), and the card toolbar. The card starts at `INSET` (6), so the toolbar height is `CHROME_H - 2 * INSET` (36) and its middle is `INSET + TOOLBAR_H / 2`, which is the light center. The stylesheet's 52-point rows and 40-point toolbar are the mockup; the shell does not use them, because they sit 2 points below the lights at every size.
+
+Horizontal edges share one pad:
+
+| Edge | Token |
+| --- | --- |
+| Sidebar rows, group labels, and the settings row | `SIDE_PAD_X` (10). A group label does not add `LABEL_PX` on top of that pad. |
+| Card content: shelf header, section labels, continue cards, shelf grid | `CARD_PAD_X` (40), measured from the card's left |
+| Chat header contents | `CHAT_PAD_X` (16), measured from the chat panel's left |
+| Card to the sidebar, the chat panel, and the window | `INSET` (6) |
+
+An icon and a label in one row share that row's vertical center. A pair on one baseline (the shelf title and its count, the chat name and its subtitle) shares the bottom of the line box. Repeated gaps stay on their tokens: the shelf column gap is 42, the shelf row gap is `SHELF_ROW_GAP` (28), and the continue gap is `CONTINUE_GAP` (16). The source menu clears the settings stack `SIDE_PAD_BOTTOM + ROW_H`, not a copy of the old 52-point row.
+
+`layout.json` records `chrome_center`, `inset`, `sidebar_pad_x`, `card_pad_x`, and `chat_pad_x` with the frames. `shell-clip` checks those centers, edges, and gaps within 0.5 points at the minimum window, at 1440 by 900, and at full screen. Measured traffic-light frames from `chrome.json` are included when that file is the same window.
 
 ## Chat
 
 | CSS | Value | Rust |
 | --- | --- | --- |
-| `.ag-head` | height 52, gap 10, pad from `.agent` 16 | `CHAT_HEAD_H`, `CHAT_HEAD_GAP`, `CHAT_PAD_X` |
+| `.ag-head` | height 52 in the stylesheet, gap 10, pad from `.agent` 16 | `CHAT_HEAD_H` is `CHROME_H` (48), `CHAT_HEAD_GAP`, `CHAT_PAD_X` |
 | `.avatar` | 26px, `#F0B267` to `#D2693C`, mark 13px / 700 | `AVATAR`, `AVATAR_FROM`, `AVATAR_TO`, `AVATAR_MARK_SIZE`, `AVATAR_MARK_WEIGHT` |
 | `.ag-name` / `.ag-sub` | 13px / 600 and 11.5px / 400, gap 6 | `NAME_SIZE`, `NAME_WEIGHT`, `SUB_SIZE`, `NAME_GAP` |
 | header icons | compose `edit`, panel `sidebar-right`, 18px | `PANEL_ICON` |

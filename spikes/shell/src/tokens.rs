@@ -74,6 +74,8 @@ pub const TIME_RULE_SIZE: f32 = 11.0;
 pub const SIDEBAR_W: f64 = 220.0;
 pub const CHAT_W: f64 = 320.0;
 pub const INSET: f64 = 6.0;
+/// Hidden title bar. NSH centers the traffic lights in this height.
+pub const CHROME_H: f32 = 48.0;
 pub const CARD_RADIUS: f64 = 12.0;
 pub const WINDOW_W: f64 = 1440.0;
 pub const WINDOW_H: f64 = 900.0;
@@ -81,10 +83,10 @@ pub const WINDOW_H: f64 = 900.0;
 pub const SIDE_PAD_X: f32 = 10.0;
 pub const SIDE_PAD_TOP: f32 = 52.0;
 pub const SIDE_PAD_BOTTOM: f32 = 12.0;
-pub const TOP_ROW_H: f32 = 52.0;
+pub const TOP_ROW_H: f32 = CHROME_H;
 pub const TOGGLE_SIZE: f32 = 28.0;
 pub const TOGGLE_RADIUS: f32 = 7.0;
-pub const TOGGLE_TOP: f32 = 12.0;
+pub const TOGGLE_TOP: f32 = (CHROME_H - TOGGLE_SIZE) / 2.0;
 pub const SEARCH_H: f32 = 28.0;
 pub const SEARCH_RADIUS: f32 = 8.0;
 pub const SEARCH_PAD_X: f32 = 8.0;
@@ -111,7 +113,8 @@ pub const FOOT_GAP: f32 = 8.0;
 pub const FOOT_PX: f32 = 8.0;
 pub const SETTINGS_ICON: f32 = 16.0;
 
-pub const TOOLBAR_H: f32 = 40.0;
+/// Card inset on both sides of the title bar, so the toolbar center is the light center.
+pub const TOOLBAR_H: f32 = CHROME_H - (INSET as f32) * 2.0;
 pub const TOOLBAR_PX: f32 = 12.0;
 pub const TOOLBAR_GAP: f32 = 6.0;
 pub const TOOL_H: f32 = 28.0;
@@ -141,7 +144,7 @@ pub const CONTINUE_GAP: f32 = 16.0;
 pub const CONTINUE_MAX: usize = 3;
 pub const CONTINUE_PAD: f32 = 12.0;
 pub const CONTINUE_RADIUS: f32 = 12.0;
-pub const CONTINUE_TEXT_PT: f32 = 2.0;
+pub const CONTINUE_TEXT_PT: f32 = 0.0;
 pub const CONTINUE_META_MT: f32 = 2.0;
 pub const CONTINUE_INNER_GAP: f32 = 14.0;
 pub const CONTINUE_COVER_W: f32 = 52.0;
@@ -170,7 +173,7 @@ pub const TAG_PX: f32 = 3.0;
 pub const TAG_BORDER: f32 = 0.5;
 
 pub const CHAT_PAD_X: f32 = 16.0;
-pub const CHAT_HEAD_H: f32 = 52.0;
+pub const CHAT_HEAD_H: f32 = CHROME_H;
 pub const CHAT_HEAD_GAP: f32 = 10.0;
 pub const AVATAR: f32 = 26.0;
 pub const NAME_GAP: f32 = 6.0;
@@ -212,6 +215,16 @@ pub const TAG_BORDER_ALPHA: f32 = 0.25;
 
 pub fn track(size: f32, em: f32) -> f32 {
     size * em
+}
+
+/// Vertical center of the traffic lights, measured from the top of the window.
+pub fn chrome_center() -> f32 {
+    CHROME_H / 2.0
+}
+
+/// Top of a control whose center is the traffic-light center.
+pub fn chrome_top(size: f32) -> f32 {
+    (CHROME_H - size) / 2.0
 }
 
 /// Card content width after the live sidebar, the live chat panel, the insets, and the pads.
@@ -396,5 +409,16 @@ mod tests {
         assert!(stack > continue_and_shelf);
         assert!((library_min_height() - (f64::from(stack) + INSET * 2.0)).abs() < 0.1);
         assert!(library_min_height() > 400.0);
+    }
+
+    #[test]
+    fn the_chrome_row_shares_the_traffic_light_center() {
+        let center = chrome_center();
+        assert!((center - 24.0).abs() < 0.01, "{center}");
+        assert!((TOP_ROW_H / 2.0 - center).abs() < 0.01);
+        assert!((CHAT_HEAD_H / 2.0 - center).abs() < 0.01);
+        assert!((TOGGLE_TOP + TOGGLE_SIZE / 2.0 - center).abs() < 0.01);
+        assert!((INSET as f32 + TOOLBAR_H / 2.0 - center).abs() < 0.01);
+        assert!((library_min_height() - 516.0).abs() < 0.1);
     }
 }

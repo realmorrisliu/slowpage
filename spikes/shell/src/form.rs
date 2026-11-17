@@ -805,30 +805,9 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
                         &row.label,
                         true,
                     ));
-                    let slot = (row_w
-                        - crate::tokens::ROW_ICON_SLOT
-                        - crate::tokens::ROW_GAP * 2.0
-                        - 24.0)
-                        .max(0.0);
-                    let label_frame = [
-                        frame[0] + crate::tokens::ROW_ICON_SLOT + crate::tokens::ROW_GAP,
-                        frame[1],
-                        slot.min(frame[2]),
-                        frame[3],
-                    ];
-                    nodes.push(layout_node(
-                        &format!("sidebar.row.{index}.label"),
-                        "text",
-                        label_frame,
-                        [
-                            text_width(&row.label, crate::tokens::BODY_SIZE),
-                            crate::tokens::BODY_SIZE,
-                        ],
-                        frame,
-                        true,
-                        &row.label,
-                        true,
-                    ));
+                    if (frame[3] - crate::tokens::ROW_H).abs() < 0.5 {
+                        push_row_pair(&mut nodes, &format!("sidebar.row.{index}"), frame, row);
+                    }
                 }
                 y += crate::tokens::ROW_H;
                 index += 1;
@@ -851,6 +830,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
                 &settings.label,
                 false,
             ));
+            push_row_pair(&mut nodes, "sidebar.settings", frame, settings);
         }
     }
     if let Some(chat) = placed.chat {
@@ -864,28 +844,15 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             "",
             false,
         ));
-        nodes.push(layout_node(
-            "chat.name",
-            "text",
-            [chat.x as f32 + 16.0, chat.y as f32 + 12.0, 120.0, 20.0],
-            [
-                text_width("Slowpage", crate::tokens::NAME_SIZE),
-                crate::tokens::NAME_SIZE,
-            ],
-            [chat.x as f32, chat.y as f32, chat.w as f32, chat.h as f32],
-            true,
-            "Slowpage",
-            false,
-        ));
+        push_chat_boxes(&mut nodes, chat);
     }
     let grid = spike_library::shelf_grid(content_w);
     let row_w = spike_library::row_width(grid);
-    let mut y = rect.y as f32
-        + crate::tokens::TOOLBAR_H
-        + crate::tokens::CARD_PAD_TOP
-        + crate::tokens::TITLE_ROW_H;
+    let header_y = rect.y as f32 + crate::tokens::TOOLBAR_H;
+    let mut y = header_y + crate::tokens::CARD_PAD_TOP + crate::tokens::TITLE_ROW_H;
     let continued =
         crate::tokens::continue_layout(content_w, library.continue_reading.len() as u32);
+    let continue_section_y = y;
     if continued.cards > 0 {
         y += crate::tokens::section_block();
         let card_h = crate::tokens::continue_card_h();
@@ -907,9 +874,49 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
                 title,
                 false,
             ));
+            nodes.push(layout_node(
+                &format!("continue.{index}.cover"),
+                "cover",
+                [
+                    x + crate::tokens::CONTINUE_PAD,
+                    y + crate::tokens::CONTINUE_PAD,
+                    continued.cover_w,
+                    continued.cover_h,
+                ],
+                [continued.cover_w, continued.cover_h],
+                frame,
+                false,
+                title,
+                false,
+            ));
+            nodes.push(layout_node(
+                &format!("continue.{index}.title"),
+                "text",
+                [
+                    x + crate::tokens::CONTINUE_PAD
+                        + continued.cover_w
+                        + crate::tokens::CONTINUE_INNER_GAP,
+                    y + crate::tokens::CONTINUE_PAD + crate::tokens::CONTINUE_TEXT_PT,
+                    (continued.card_w
+                        - crate::tokens::CONTINUE_PAD * 2.0
+                        - continued.cover_w
+                        - crate::tokens::CONTINUE_INNER_GAP)
+                        .max(0.0),
+                    crate::tokens::CONTINUE_TITLE_SIZE * 1.2,
+                ],
+                [
+                    text_width(title, crate::tokens::CONTINUE_TITLE_SIZE),
+                    crate::tokens::CONTINUE_TITLE_SIZE,
+                ],
+                frame,
+                true,
+                title,
+                false,
+            ));
         }
         y += card_h;
     }
+    let shelf_section_y = y;
     y += crate::tokens::section_block();
     let row_h = grid.cover_h + grid.caption_h;
     nodes.push(layout_node(
@@ -992,7 +999,446 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             true,
         ));
     }
+    push_chrome_boxes(
+        &mut nodes,
+        placed,
+        rect,
+        content,
+        origin_x,
+        content_w,
+        header_y,
+        if continued.cards > 0 {
+            Some(continue_section_y)
+        } else {
+            None
+        },
+        shelf_section_y,
+        library.book_count,
+    );
     nodes
+}
+
+fn row_icon_size(row: &SideRow) -> f32 {
+    if row.dot.is_some() {
+        crate::tokens::DOT
+    } else if row.badge.is_some() {
+        crate::tokens::SOURCE_BADGE
+    } else if row.icon == "plus" {
+        crate::tokens::ADD_ICON
+    } else if row.id == SelectId::Settings {
+        crate::tokens::SETTINGS_ICON
+    } else {
+        crate::tokens::ROW_ICON
+    }
+}
+
+fn push_row_pair(nodes: &mut Vec<serde_json::Value>, id: &str, frame: [f32; 4], row: &SideRow) {
+    let icon = row_icon_size(row);
+    let icon_frame = [
+        frame[0] + crate::tokens::ROW_PAD_L + (crate::tokens::ROW_ICON_SLOT - icon) / 2.0,
+        frame[1] + (crate::tokens::ROW_H - icon) / 2.0,
+        icon,
+        icon,
+    ];
+    nodes.push(layout_node(
+        &format!("{id}.icon"),
+        "icon",
+        icon_frame,
+        [icon, icon],
+        frame,
+        false,
+        row.icon,
+        true,
+    ));
+    let line = crate::tokens::BODY_SIZE * 1.2;
+    let label_x =
+        frame[0] + crate::tokens::ROW_PAD_L + crate::tokens::ROW_ICON_SLOT + crate::tokens::ROW_GAP;
+    let label_w = (frame[2]
+        - crate::tokens::ROW_PAD_L
+        - crate::tokens::ROW_ICON_SLOT
+        - crate::tokens::ROW_GAP
+        - crate::tokens::ROW_PAD_R
+        - 24.0)
+        .max(0.0);
+    let label_frame = [
+        label_x,
+        frame[1] + (crate::tokens::ROW_H - line) / 2.0,
+        label_w,
+        line,
+    ];
+    nodes.push(layout_node(
+        &format!("{id}.label"),
+        "text",
+        label_frame,
+        [text_width(&row.label, crate::tokens::BODY_SIZE), line],
+        frame,
+        true,
+        &row.label,
+        true,
+    ));
+}
+
+fn push_chat_boxes(nodes: &mut Vec<serde_json::Value>, chat: Rect) {
+    let chat_box = [chat.x as f32, chat.y as f32, chat.w as f32, chat.h as f32];
+    let head_h = crate::tokens::CHAT_HEAD_H;
+    let head = [chat.x as f32, chat.y as f32, chat.w as f32, head_h];
+    nodes.push(layout_node(
+        "chat.head",
+        "container",
+        head,
+        [chat.w as f32, head_h],
+        chat_box,
+        false,
+        "",
+        false,
+    ));
+    let avatar = crate::tokens::AVATAR;
+    nodes.push(layout_node(
+        "chat.avatar",
+        "chrome",
+        [
+            chat.x as f32 + crate::tokens::CHAT_PAD_X,
+            crate::tokens::chrome_top(avatar),
+            avatar,
+            avatar,
+        ],
+        [avatar, avatar],
+        head,
+        false,
+        "慢",
+        false,
+    ));
+    let name_line = crate::tokens::NAME_SIZE * 1.2;
+    let name_y = crate::tokens::chrome_top(name_line);
+    let name_x = chat.x as f32 + crate::tokens::CHAT_PAD_X + avatar + crate::tokens::CHAT_HEAD_GAP;
+    nodes.push(layout_node(
+        "chat.name",
+        "text",
+        [
+            name_x,
+            name_y,
+            text_width("Slowpage", crate::tokens::NAME_SIZE),
+            name_line,
+        ],
+        [text_width("Slowpage", crate::tokens::NAME_SIZE), name_line],
+        head,
+        true,
+        "Slowpage",
+        false,
+    ));
+    let sub_line = crate::tokens::SUB_SIZE * 1.2;
+    nodes.push(layout_node(
+        "chat.sub",
+        "text",
+        [
+            name_x + text_width("Slowpage", crate::tokens::NAME_SIZE) + crate::tokens::NAME_GAP,
+            name_y + name_line - sub_line,
+            text_width("你的阅读助手", crate::tokens::SUB_SIZE),
+            sub_line,
+        ],
+        [
+            text_width("你的阅读助手", crate::tokens::SUB_SIZE),
+            sub_line,
+        ],
+        head,
+        true,
+        "你的阅读助手",
+        false,
+    ));
+    let button = crate::tokens::TOGGLE_SIZE;
+    let cluster = button * 2.0 + crate::tokens::TOOL_CLUSTER_GAP;
+    let cluster_x = chat.x as f32 + chat.w as f32 - crate::tokens::CHAT_PAD_X - cluster;
+    let button_y = crate::tokens::chrome_top(button);
+    nodes.push(layout_node(
+        "chat.new",
+        "chrome",
+        [cluster_x, button_y, button, button],
+        [button, button],
+        head,
+        false,
+        "新对话",
+        false,
+    ));
+    nodes.push(layout_node(
+        "chat.panel",
+        "chrome",
+        [
+            cluster_x + button + crate::tokens::TOOL_CLUSTER_GAP,
+            button_y,
+            button,
+            button,
+        ],
+        [button, button],
+        head,
+        false,
+        "对话",
+        false,
+    ));
+}
+
+fn push_chrome_boxes(
+    nodes: &mut Vec<serde_json::Value>,
+    placed: &Placement,
+    rect: Rect,
+    content: [f32; 4],
+    origin_x: f32,
+    content_w: f32,
+    header_y: f32,
+    continue_section_y: Option<f32>,
+    shelf_section_y: f32,
+    book_count: u32,
+) {
+    let card = [rect.x as f32, rect.y as f32, rect.w as f32, rect.h as f32];
+    if let Some(side) = placed.sidebar {
+        let leading = if placed.traffic > 8.0 {
+            placed.traffic as f32
+        } else {
+            78.0
+        };
+        let button = crate::tokens::TOGGLE_SIZE;
+        nodes.push(layout_node(
+            "sidebar.toggle",
+            "chrome",
+            [
+                side.x as f32 + leading,
+                crate::tokens::chrome_top(button),
+                button,
+                button,
+            ],
+            [button, button],
+            [side.x as f32, side.y as f32, side.w as f32, side.h as f32],
+            false,
+            "侧边栏",
+            false,
+        ));
+    } else if placed.traffic > 0.0 {
+        let button = crate::tokens::TOGGLE_SIZE;
+        nodes.push(layout_node(
+            "sidebar.toggle",
+            "chrome",
+            [
+                placed.traffic as f32,
+                crate::tokens::TOGGLE_TOP,
+                button,
+                button,
+            ],
+            [button, button],
+            card,
+            false,
+            "侧边栏",
+            false,
+        ));
+    }
+    let toolbar_h = crate::tokens::TOOLBAR_H;
+    let toolbar = [rect.x as f32, rect.y as f32, rect.w as f32, toolbar_h];
+    nodes.push(layout_node(
+        "toolbar",
+        "container",
+        toolbar,
+        [rect.w as f32, toolbar_h],
+        card,
+        false,
+        "",
+        false,
+    ));
+    let sort_w = crate::tokens::TOOL_PX * 2.0
+        + crate::tokens::SORT_ICON
+        + crate::tokens::TOOL_GAP
+        + text_width("最近阅读", crate::tokens::TOOL_SIZE)
+        + crate::tokens::TOOL_GAP
+        + crate::tokens::CHEVRON_ICON;
+    let view_w = crate::tokens::SEG_PAD * 2.0 + crate::tokens::SEG_BTN_W * 2.0;
+    let view_h = crate::tokens::SEG_BTN_H + crate::tokens::SEG_PAD * 2.0;
+    let view_x = rect.x as f32 + rect.w as f32 - crate::tokens::TOOLBAR_PX - view_w;
+    let sort_x = view_x - crate::tokens::TOOLBAR_GAP - sort_w;
+    nodes.push(layout_node(
+        "toolbar.sort",
+        "chrome",
+        [
+            sort_x,
+            rect.y as f32 + (toolbar_h - crate::tokens::TOOL_H) / 2.0,
+            sort_w,
+            crate::tokens::TOOL_H,
+        ],
+        [sort_w, crate::tokens::TOOL_H],
+        toolbar,
+        false,
+        "最近阅读",
+        false,
+    ));
+    nodes.push(layout_node(
+        "toolbar.view",
+        "chrome",
+        [
+            view_x,
+            rect.y as f32 + (toolbar_h - view_h) / 2.0,
+            view_w,
+            view_h,
+        ],
+        [view_w, view_h],
+        toolbar,
+        false,
+        "网格",
+        false,
+    ));
+    let header = [
+        origin_x,
+        header_y + crate::tokens::CARD_PAD_TOP,
+        content_w,
+        crate::tokens::TITLE_ROW_H,
+    ];
+    nodes.push(layout_node(
+        "shelf.header",
+        "container",
+        header,
+        [content_w, crate::tokens::TITLE_ROW_H],
+        content,
+        false,
+        "",
+        false,
+    ));
+    let selected = placed
+        .rows
+        .iter()
+        .find(|row| row.selected)
+        .map(|row| row.id.clone())
+        .unwrap_or(SelectId::AllBooks);
+    let title = selected_title(&selected);
+    let title_h = crate::tokens::H1_SIZE;
+    let title_y = header[1] + (crate::tokens::TITLE_ROW_H - title_h) / 2.0;
+    nodes.push(layout_node(
+        "shelf.header.title",
+        "text",
+        [origin_x, title_y, content_w * 0.7, title_h],
+        [text_width(&title, title_h), title_h],
+        header,
+        true,
+        &title,
+        false,
+    ));
+    let count = format!("{book_count} 本");
+    let count_h = crate::tokens::COUNT_SIZE;
+    let count_w = text_width(&count, count_h);
+    nodes.push(layout_node(
+        "shelf.header.count",
+        "text",
+        [
+            origin_x + content_w - count_w,
+            title_y + title_h - count_h,
+            count_w,
+            count_h,
+        ],
+        [count_w, count_h],
+        header,
+        false,
+        &count,
+        false,
+    ));
+    if let Some(section_y) = continue_section_y {
+        push_section(
+            nodes,
+            "continue.section",
+            "继续阅读",
+            origin_x,
+            content_w,
+            section_y,
+            content,
+        );
+    }
+    push_section(
+        nodes,
+        "shelf.section",
+        "书架",
+        origin_x,
+        content_w,
+        shelf_section_y,
+        content,
+    );
+}
+
+fn push_section(
+    nodes: &mut Vec<serde_json::Value>,
+    id: &str,
+    label: &str,
+    x: f32,
+    width: f32,
+    y: f32,
+    content: [f32; 4],
+) {
+    let line = crate::tokens::SECTION_SIZE * 1.2;
+    nodes.push(layout_node(
+        id,
+        "text",
+        [x, y + crate::tokens::SECTION_MT, width, line],
+        [text_width(label, crate::tokens::SECTION_SIZE), line],
+        content,
+        true,
+        label,
+        false,
+    ));
+}
+
+fn traffic_nodes(window_w: f32, window_h: f32) -> Vec<serde_json::Value> {
+    let Ok(text) = std::fs::read_to_string("/tmp/superreader-spike/chrome.json") else {
+        return Vec::new();
+    };
+    let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let height = body
+        .get("window_h")
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(window_h);
+    let chrome_w = body
+        .get("window_w")
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(window_w);
+    if (chrome_w - window_w).abs() > 1.0 || (height - window_h).abs() > 1.0 {
+        return Vec::new();
+    }
+    let mut nodes = Vec::new();
+    for (id, key) in [
+        ("traffic.close", "close"),
+        ("traffic.miniaturize", "miniaturize"),
+        ("traffic.zoom", "zoom"),
+    ] {
+        let Some(frame) = body.get(key) else {
+            continue;
+        };
+        let Some(node) = light_node(id, frame, window_w, height) else {
+            continue;
+        };
+        nodes.push(node);
+    }
+    nodes
+}
+
+fn light_node(
+    id: &str,
+    frame: &serde_json::Value,
+    window_w: f32,
+    window_h: f32,
+) -> Option<serde_json::Value> {
+    let x = frame.get("x")?.as_f64()? as f32;
+    let y_up = frame.get("y")?.as_f64()? as f32;
+    let w = frame.get("w")?.as_f64()? as f32;
+    let h = frame.get("h")?.as_f64()? as f32;
+    if w < 1.0 || h < 1.0 {
+        return None;
+    }
+    let y = window_h - (y_up + h);
+    Some(layout_node(
+        id,
+        "traffic",
+        [x, y, w, h],
+        [w, h],
+        [0.0, 0.0, window_w, window_h],
+        false,
+        "",
+        false,
+    ))
 }
 
 fn clip_frame(frame: [f32; 4], view: [f32; 4]) -> Option<[f32; 4]> {
@@ -1028,9 +1474,16 @@ fn write_frames(placed: &Placement, library: &LibraryIn) {
         rect.x + rect.w + INSET
     };
     let window_h = rect.y + rect.h + INSET;
+    let mut nodes = layout_nodes(placed, library);
+    nodes.extend(traffic_nodes(window_w as f32, window_h as f32));
     let body = serde_json::json!({
         "window": [window_w, window_h],
-        "nodes": layout_nodes(placed, library),
+        "chrome_center": crate::tokens::chrome_center(),
+        "inset": INSET,
+        "sidebar_pad_x": crate::tokens::SIDE_PAD_X,
+        "card_pad_x": crate::tokens::CARD_PAD_X,
+        "chat_pad_x": crate::tokens::CHAT_PAD_X,
+        "nodes": nodes,
     });
     let path = std::path::Path::new("/tmp/superreader-spike/layout.json");
     if let Some(parent) = path.parent() {
@@ -1176,8 +1629,8 @@ fn source_menu(menu: Signal<bool>, on_peer: impl Fn(Peer) + Clone + 'static) -> 
     ];
     let mut list = view()
         .absolute()
-        .left(px(16.0))
-        .bottom(px(52.0))
+        .left(px(crate::tokens::SIDE_PAD_X))
+        .bottom(px(crate::tokens::SIDE_PAD_BOTTOM + crate::tokens::ROW_H))
         .w(px(188.0))
         .rounded(px(12.0))
         .bg(rgb(0x00FF_FFFF).to_hsla())
@@ -1321,7 +1774,6 @@ fn group_label(label: &str) -> AnyElement {
         .min_w(px(0.0))
         .pt(px(crate::tokens::LABEL_MT))
         .pb(px(crate::tokens::LABEL_MB))
-        .px(px(crate::tokens::LABEL_PX))
         .child(fit_text(
             label.to_string(),
             crate::tokens::LABEL_SIZE,
@@ -2392,6 +2844,9 @@ fn write_geometry(grid: &spike_library::ShelfGrid, last_title: Option<&str>, con
         "scrolls": grid.scrolls,
         "last_title": last_title.unwrap_or(""),
         "content_w": content_w,
+        "chrome_center": crate::tokens::chrome_center(),
+        "inset": INSET,
+        "card_pad_x": crate::tokens::CARD_PAD_X,
     });
     let dir = "/tmp/superreader-spike";
     let _ = std::fs::create_dir_all(dir);
@@ -2734,5 +3189,81 @@ mod tests {
             &library,
         );
         assert_eq!(placed.face, CardFace::Grid);
+    }
+
+    fn frame_of(nodes: &[serde_json::Value], id: &str) -> [f32; 4] {
+        let node = nodes
+            .iter()
+            .find(|node| node["id"] == id)
+            .unwrap_or_else(|| panic!("missing {id}"));
+        let frame = node["frame"].as_array().expect("frame");
+        [
+            frame[0].as_f64().unwrap() as f32,
+            frame[1].as_f64().unwrap() as f32,
+            frame[2].as_f64().unwrap() as f32,
+            frame[3].as_f64().unwrap() as f32,
+        ]
+    }
+
+    fn assert_shared_centers(width: f64, height: f64) {
+        let library = empty_library();
+        let placed = place(
+            &PlaceIn {
+                form: launch(),
+                window: Window { width, height },
+                traffic: 92.0,
+            },
+            &library,
+        );
+        let nodes = layout_nodes(&placed, &library);
+        let center = crate::tokens::chrome_center();
+        let mut ids = vec!["sidebar.toggle", "toolbar", "toolbar.sort", "toolbar.view"];
+        if placed.chat.is_some() {
+            ids.extend([
+                "chat.head",
+                "chat.avatar",
+                "chat.name",
+                "chat.new",
+                "chat.panel",
+            ]);
+        }
+        for id in ids {
+            let frame = frame_of(&nodes, id);
+            let mid = frame[1] + frame[3] / 2.0;
+            assert!((mid - center).abs() < 0.5, "{id} at {width} is {mid}");
+        }
+        if placed.chat.is_some() {
+            let name = frame_of(&nodes, "chat.name");
+            let sub = frame_of(&nodes, "chat.sub");
+            assert!((name[1] + name[3] - (sub[1] + sub[3])).abs() < 0.01);
+            let avatar = frame_of(&nodes, "chat.avatar");
+            let chat = frame_of(&nodes, "chat");
+            assert!((avatar[0] - (chat[0] + crate::tokens::CHAT_PAD_X)).abs() < 0.01);
+        }
+        let row = frame_of(&nodes, "sidebar.row.0");
+        let icon = frame_of(&nodes, "sidebar.row.0.icon");
+        let label = frame_of(&nodes, "sidebar.row.0.label");
+        assert!((row[0] - crate::tokens::SIDE_PAD_X).abs() < 0.01);
+        let row_mid = row[1] + row[3] / 2.0;
+        assert!((icon[1] + icon[3] / 2.0 - row_mid).abs() < 0.5);
+        assert!((label[1] + label[3] / 2.0 - row_mid).abs() < 0.5);
+        let title = frame_of(&nodes, "shelf.header.title");
+        let count = frame_of(&nodes, "shelf.header.count");
+        assert!((title[1] + title[3] - (count[1] + count[3])).abs() < 0.01);
+        let header = frame_of(&nodes, "shelf.header");
+        let section = frame_of(&nodes, "shelf.section");
+        assert!((header[0] - section[0]).abs() < 0.01);
+        let card = frame_of(&nodes, "card");
+        assert!((header[0] - (card[0] + crate::tokens::CARD_PAD_X)).abs() < 0.01);
+    }
+
+    #[test]
+    fn chrome_boxes_share_one_center_at_every_window() {
+        assert_shared_centers(1440.0, 900.0);
+        assert_shared_centers(
+            crate::tokens::MIN_WINDOW_W,
+            crate::tokens::library_min_height(),
+        );
+        assert_shared_centers(1920.0, 1080.0);
     }
 }
