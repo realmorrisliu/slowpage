@@ -537,7 +537,7 @@ fn place_fullscreen_lights(window: &NSWindow, show: bool) {
                 .any(|(saved, _, _)| std::ptr::eq(saved.as_ref(), &*button));
             if !known {
                 if let Some(parent) = view.superview() {
-                    if !std::ptr::eq(parent.as_ref(), content.as_ref()) {
+                    if !std::ptr::eq::<NSView>(&*parent, &*content) {
                         // The frame is in the title-bar view. Reparenting
                         // keeps it, so the exit path has to put this back.
                         slot.push((button.clone(), parent, view.frame()));
