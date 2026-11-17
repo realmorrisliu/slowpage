@@ -7,7 +7,7 @@ description: Records the approved Slowpage interface direction and requires agen
 
 Follow the design docs. This skill records the direction that is already approved. It does not invent a new look.
 
-The interface authority is the [Apple Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/). The product look is Apple Books, flat and minimal. The window base stays the light gray macOS vibrancy field in `docs/design/shell/spec.md`.
+The interface authority is the [Apple Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/). The product look is Apple Books, flat and minimal. The window base stays the light gray macOS vibrancy field in `docs/design/shell/spec.md`. Sidebar group labels stay small and gray, as that spec says. The card stays opaque white.
 
 ## Read these first
 
@@ -27,7 +27,7 @@ There is no `DESIGN.md` in this repo. Do not add one to satisfy this skill.
 
 ## Fonts
 
-Chrome uses the system font. On macOS that stack is SF Pro and PingFang SC, as `docs/design/shell-tokens.md` records. Do not add a distinctive display face.
+Chrome uses the system font. On macOS that stack is SF Pro and PingFang SC, as `docs/design/shell-tokens.md` records. Do not add a distinctive display face. The window title is `title_face` in `spikes/shell/src/chrome.rs`. A title with a CJK character uses Songti SC. Any other title uses Iowan Old Style.
 
 Book text uses the publication's own face. The reader fallbacks already in `docs/design/north-star.md` are Iowan Old Style for Latin and Songti SC for Chinese and Japanese. The typesetter's existing faces are EB Garamond and Noto Serif CJK SC. Do not add another face.
 
@@ -58,6 +58,8 @@ A measure that a design doc fixes stays fixed. The sidebar width, the chat panel
 ## Alignment
 
 Toolbar items share the traffic lights' vertical center. Sidebar, shelf, and chat edges and paddings sit on one grid. The design tokens define that grid. Icons and labels in a row share a vertical center or a text baseline. Repeated spacings are equal.
+
+The sidebar top-row inset is the traffic-light measurement in `docs/design/shell/spec.md`. Read it again when that spec says to. It is not a token. The other edges and paddings sit on the token grid.
 
 The tolerance is 0.5 points. Automated bounding-box checks enforce it at the minimum window, at 1440 by 900, and at full screen. Visual review uses zoomed-in crops.
 
