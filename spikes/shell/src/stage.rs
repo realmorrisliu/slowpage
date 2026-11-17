@@ -142,6 +142,7 @@ define_class!(
                 state.chrome.full.set(fullscreen);
                 state.stage_w = bounds.size.width;
                 state.stage_h = bounds.size.height;
+                state.chrome.stage_h.set(bounds.size.height);
                 state.chrome.laying_out.set(true);
                 state.place_page();
                 (state.chrome.clone(), state.page_box())
@@ -1316,6 +1317,8 @@ impl State {
                 "stage_w": self.stage_w,
                 "stage_h": self.stage_h,
                 "bar_w": self.chrome.bar_w.get(),
+                "lights_visible": self.chrome.lights_visible.get(),
+                "content_top": self.chrome.content_top.get(),
             }),
         );
     }

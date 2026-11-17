@@ -374,7 +374,7 @@ pub fn SpikeApp() -> impl IntoElement {
         width: 1280.0,
         height: 800.0,
     });
-    let shell_traffic = signal(0.0_f64);
+    let shell_chrome = signal(form::chrome_off());
     let bars_row = signal(shell_on);
     let dropped = stage.clone();
     on_key("1", {
@@ -611,7 +611,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             let trim_id = trim_id.clone();
                             let empty = empty.clone();
                             let shell_window = shell_window.clone();
-                            let shell_traffic = shell_traffic.clone();
+                            let shell_chrome = shell_chrome.clone();
                             let history = history.clone();
                             move |event: &NativeEvent| {
                                 if event.name.as_ref() != "status" {
@@ -643,11 +643,19 @@ pub fn SpikeApp() -> impl IntoElement {
                                         shell_window.set(form::Window { width, height });
                                     }
                                 }
+                                let mut chrome = shell_chrome.get();
                                 if let Some(span) = event.data["bar_w"].as_f64() {
                                     if span > 1.0 {
-                                        shell_traffic.set(span);
+                                        chrome.bar = span as f32;
                                     }
                                 }
+                                if let Some(shown) = event.data["lights_visible"].as_bool() {
+                                    chrome.lights = shown;
+                                }
+                                if let Some(top) = event.data["content_top"].as_f64() {
+                                    chrome.top = top as f32;
+                                }
+                                shell_chrome.set(chrome);
                                 if let Some(id) = event.data["trim"].as_str() {
                                     if id != trim_id.get() {
                                         trim_id.set(id.to_string());
@@ -663,7 +671,7 @@ pub fn SpikeApp() -> impl IntoElement {
                     let shell_form = shell_form.clone();
                     let shell_selected = shell_selected.clone();
                     let shell_window = shell_window.clone();
-                    let shell_traffic = shell_traffic.clone();
+                    let shell_chrome = shell_chrome.clone();
                     let shell_library = shell_library.clone();
                     let import_apple = import_apple.clone();
                     let import_calibre = import_calibre.clone();
@@ -678,7 +686,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             shell_form,
                             shell_selected,
                             shell_window,
-                            shell_traffic,
+                            shell_chrome,
                             shell_library,
                             source_menu,
                             move |peer| match peer {

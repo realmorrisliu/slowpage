@@ -185,7 +185,7 @@ impl Default for SelectId {
 pub struct PlaceIn {
     pub form: Form,
     pub window: Window,
-    pub traffic: f64,
+    pub chrome: crate::tokens::ChromeIn,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -194,7 +194,7 @@ pub struct Placement {
     pub sidebar: Option<Rect>,
     pub card: CardBox,
     pub chat: Option<Rect>,
-    pub traffic: f64,
+    pub chrome: crate::tokens::ChromeIn,
     pub face: CardFace,
     pub rows: Vec<SideRow>,
     pub groups: Vec<&'static str>,
@@ -236,6 +236,7 @@ pub struct SideRow {
 
 pub fn place(input: &PlaceIn, library: &LibraryIn) -> Placement {
     let window = input.window;
+    let row = crate::tokens::chrome_row(input.chrome);
     let (sidebar_w, chat_w, inset, radius, shadow, gray) = match input.form {
         Form::Full { sidebar, chat } => {
             let sidebar_w = if sidebar.shown() { SIDEBAR_W } else { 0.0 };
@@ -256,11 +257,11 @@ pub fn place(input: &PlaceIn, library: &LibraryIn) -> Placement {
                     sidebar: sidebar_rect(sidebar.shown(), window),
                     card: CardBox::AwaitingMargin {
                         left: left + INSET,
-                        top: INSET,
+                        top: f64::from(row.card_y),
                         bottom: INSET,
                     },
                     chat: None,
-                    traffic: input.traffic,
+                    chrome: input.chrome,
                     face: CardFace::Page,
                     rows: rows(library),
                     groups: groups(),
@@ -277,11 +278,12 @@ pub fn place(input: &PlaceIn, library: &LibraryIn) -> Placement {
         }
         Form::Immersive => (0.0, 0.0, 0.0, 0.0, false, false),
     };
+    let top = f64::from(input.chrome.top.max(0.0));
     let rect = Rect {
         x: sidebar_w + inset,
-        y: inset,
+        y: top + inset,
         w: (window.width - sidebar_w - chat_w - inset * 2.0).max(1.0),
-        h: (window.height - inset * 2.0).max(1.0),
+        h: (window.height - top - inset * 2.0).max(1.0),
     };
     let face = match input.form {
         Form::Full { .. } => {
@@ -306,14 +308,14 @@ pub fn place(input: &PlaceIn, library: &LibraryIn) -> Placement {
         chat: if chat_w > 0.0 {
             Some(Rect {
                 x: window.width - chat_w,
-                y: 0.0,
+                y: f64::from(row.card_y - INSET as f32),
                 w: chat_w,
-                h: window.height,
+                h: (window.height - f64::from(row.card_y - INSET as f32)).max(1.0),
             })
         } else {
             None
         },
-        traffic: input.traffic,
+        chrome: input.chrome,
         face,
         rows: rows(library),
         groups: groups(),
@@ -527,11 +529,19 @@ macro_rules! line {
     };
 }
 
+pub fn chrome_off() -> crate::tokens::ChromeIn {
+    crate::tokens::ChromeIn {
+        lights: false,
+        bar: 0.0,
+        top: 0.0,
+    }
+}
+
 pub fn mount(
     form: Signal<Form>,
     selected: Signal<SelectId>,
     window: Signal<Window>,
-    traffic: Signal<f64>,
+    chrome: Signal<crate::tokens::ChromeIn>,
     library: Signal<LibraryIn>,
     menu: Signal<bool>,
     on_peer: impl Fn(Peer) + Clone + 'static,
@@ -540,7 +550,7 @@ pub fn mount(
     let form_b = form;
     let selected_b = selected;
     let window_b = window;
-    let traffic_b = traffic;
+    let chrome_b = chrome;
     let library_b = library;
     let menu_b = menu;
     let on_peer_b = on_peer;
@@ -552,7 +562,7 @@ pub fn mount(
             &PlaceIn {
                 form: current,
                 window: window_b.get(),
-                traffic: traffic_b.get(),
+                chrome: chrome_b.get(),
             },
             &library,
         );
@@ -746,6 +756,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
         "",
         false,
     )];
+    let chrome = crate::tokens::chrome_row(placed.chrome);
     if let Some(side) = placed.sidebar {
         let side_frame = [side.x as f32, side.y as f32, side.w as f32, side.h as f32];
         nodes.push(layout_node(
@@ -764,7 +775,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             "container",
             [
                 side.x as f32 + crate::tokens::SIDE_PAD_X,
-                side.y as f32 + crate::tokens::TOP_ROW_H,
+                side.y as f32 + chrome.height,
                 search_w,
                 crate::tokens::SEARCH_H,
             ],
@@ -775,8 +786,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
             false,
         ));
         let row_w = (side.w as f32 - crate::tokens::SIDE_PAD_X * 2.0).max(0.0);
-        let scroll_top =
-            crate::tokens::TOP_ROW_H + crate::tokens::SEARCH_MB + crate::tokens::SEARCH_H;
+        let scroll_top = chrome.height + crate::tokens::SEARCH_MB + crate::tokens::SEARCH_H;
         let settings_h = crate::tokens::ROW_H + crate::tokens::SIDE_PAD_BOTTOM;
         let settings_y = (side.h as f32 - settings_h).max(scroll_top);
         let viewport = [
@@ -864,7 +874,7 @@ fn layout_nodes(placed: &Placement, library: &LibraryIn) -> Vec<serde_json::Valu
     }
     let grid = spike_library::shelf_grid(content_w);
     let row_w = spike_library::row_width(grid);
-    let header_y = rect.y as f32 + crate::tokens::TOOLBAR_H;
+    let header_y = rect.y as f32 + chrome.toolbar_h;
     let mut y = header_y + crate::tokens::CARD_PAD_TOP + crate::tokens::TITLE_ROW_H;
     let continued =
         crate::tokens::continue_layout(content_w, library.continue_reading.len() as u32);
@@ -1109,12 +1119,13 @@ fn push_chat_boxes(nodes: &mut Vec<serde_json::Value>, chat: Rect, library: &Lib
         false,
     ));
     let avatar = crate::tokens::AVATAR;
+    let row_top = chat.y as f32;
     nodes.push(layout_node(
         "chat.avatar",
         "chrome",
         [
             chat.x as f32 + crate::tokens::CHAT_PAD_X,
-            crate::tokens::chrome_top(avatar),
+            row_top + crate::tokens::chrome_top(avatar),
             avatar,
             avatar,
         ],
@@ -1125,7 +1136,7 @@ fn push_chat_boxes(nodes: &mut Vec<serde_json::Value>, chat: Rect, library: &Lib
         false,
     ));
     let name_line = crate::tokens::NAME_SIZE * 1.2;
-    let name_y = crate::tokens::chrome_top(name_line);
+    let name_y = row_top + crate::tokens::chrome_top(name_line);
     let name_x = chat.x as f32 + crate::tokens::CHAT_PAD_X + avatar + crate::tokens::CHAT_HEAD_GAP;
     nodes.push(layout_node(
         "chat.name",
@@ -1164,7 +1175,7 @@ fn push_chat_boxes(nodes: &mut Vec<serde_json::Value>, chat: Rect, library: &Lib
     let button = crate::tokens::TOGGLE_SIZE;
     let cluster = button * 2.0 + crate::tokens::TOOL_CLUSTER_GAP;
     let cluster_x = chat.x as f32 + chat.w as f32 - crate::tokens::CHAT_PAD_X - cluster;
-    let button_y = crate::tokens::chrome_top(button);
+    let button_y = row_top + crate::tokens::chrome_top(button);
     nodes.push(layout_node(
         "chat.new",
         "chrome",
@@ -1308,19 +1319,15 @@ fn push_chrome_boxes(
     book_count: u32,
 ) {
     let card = [rect.x as f32, rect.y as f32, rect.w as f32, rect.h as f32];
+    let chrome = crate::tokens::chrome_row(placed.chrome);
+    let button = crate::tokens::TOGGLE_SIZE;
     if let Some(side) = placed.sidebar {
-        let leading = if placed.traffic > 8.0 {
-            placed.traffic as f32
-        } else {
-            78.0
-        };
-        let button = crate::tokens::TOGGLE_SIZE;
         nodes.push(layout_node(
             "sidebar.toggle",
             "chrome",
             [
-                side.x as f32 + leading,
-                crate::tokens::chrome_top(button),
+                side.x as f32 + chrome.toggle_x,
+                side.y as f32 + chrome.toggle_y,
                 button,
                 button,
             ],
@@ -1330,17 +1337,11 @@ fn push_chrome_boxes(
             "侧边栏",
             false,
         ));
-    } else if placed.traffic > 0.0 {
-        let button = crate::tokens::TOGGLE_SIZE;
+    } else if !matches!(placed.face, CardFace::Page) {
         nodes.push(layout_node(
             "sidebar.toggle",
             "chrome",
-            [
-                placed.traffic as f32,
-                crate::tokens::TOGGLE_TOP,
-                button,
-                button,
-            ],
+            [chrome.toggle_x, chrome.toggle_y, button, button],
             [button, button],
             card,
             false,
@@ -1348,7 +1349,7 @@ fn push_chrome_boxes(
             false,
         ));
     }
-    let toolbar_h = crate::tokens::TOOLBAR_H;
+    let toolbar_h = chrome.toolbar_h;
     let toolbar = [rect.x as f32, rect.y as f32, rect.w as f32, toolbar_h];
     nodes.push(layout_node(
         "toolbar",
@@ -1517,6 +1518,15 @@ fn traffic_nodes(window_w: f32, window_h: f32) -> Vec<serde_json::Value> {
     if (chrome_w - window_w).abs() > 1.0 || (height - window_h).abs() > 1.0 {
         return Vec::new();
     }
+    // Hidden buttons are not on screen. Their frames may still sit in the
+    // title-bar band after a hover, and exporting them would overlap the toggle.
+    if body
+        .get("lights_visible")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Vec::new();
+    }
     let mut nodes = Vec::new();
     for (id, key) in [
         ("traffic.close", "close"),
@@ -1605,6 +1615,9 @@ fn write_frames(placed: &Placement, library: &LibraryIn) {
         "window_corner": crate::tokens::WINDOW_CORNER,
         "composer_inset": crate::tokens::COMPOSER_INSET,
         "composer_pad": crate::tokens::COMPOSER_PAD,
+        "lights": placed.chrome.lights && placed.chrome.bar > 8.0,
+        "traffic_bar": placed.chrome.bar,
+        "content_top": placed.chrome.top,
         "nodes": nodes,
     });
     let path = std::path::Path::new("/tmp/superreader-spike/layout.json");
@@ -1680,10 +1693,17 @@ fn paint(
         fonts_write();
     }
     if placed.sidebar.is_none() && !matches!(form.get(), Form::Immersive) {
-        root = root.child(sidebar_toggle_button(placed.traffic, form));
+        root = root.child(sidebar_toggle_button(
+            crate::tokens::chrome_row(placed.chrome),
+            form,
+        ));
     }
     if placed.chat.is_none() && matches!(form.get(), Form::Full { .. }) {
-        root = root.child(panel_toggle_button(form, true));
+        root = root.child(panel_toggle_button(
+            form,
+            true,
+            crate::tokens::chrome_row(placed.chrome),
+        ));
     }
     root.into_element()
 }
@@ -1705,7 +1725,7 @@ fn sidebar_pane(
             .w(px(rect.w as f32))
             .h(px(rect.h as f32));
     }
-    column = column.child(sidebar_top(placed.traffic, form));
+    column = column.child(sidebar_top(crate::tokens::chrome_row(placed.chrome), form));
     column = column.child(
         view()
             .px(px(crate::tokens::SIDE_PAD_X))
@@ -1786,20 +1806,19 @@ fn source_menu(menu: Signal<bool>, on_peer: impl Fn(Peer) + Clone + 'static) -> 
     list.into_element()
 }
 
-fn sidebar_top(traffic: f64, form: Signal<Form>) -> AnyElement {
-    let leading = if traffic > 8.0 { traffic } else { 78.0 };
+fn sidebar_top(row: crate::tokens::ChromeRow, form: Signal<Form>) -> AnyElement {
     view()
-        .h(px(crate::tokens::TOP_ROW_H))
-        .flex()
-        .flex_row()
-        .items_center()
-        .child(view().w(px(leading as f32)).h(px(crate::tokens::TOP_ROW_H)))
-        .child(sidebar_toggle_button(0.0, form))
+        .h(px(row.height))
+        .w_full()
+        .child(sidebar_toggle_button(row, form))
         .into_element()
 }
 
-fn sidebar_toggle_button(traffic: f64, form: Signal<Form>) -> AnyElement {
+fn sidebar_toggle_button(row: crate::tokens::ChromeRow, form: Signal<Form>) -> AnyElement {
     let mut button = view()
+        .absolute()
+        .left(px(row.toggle_x))
+        .top(px(row.toggle_y))
         .w(px(crate::tokens::TOGGLE_SIZE))
         .h(px(crate::tokens::TOGGLE_SIZE))
         .rounded(px(crate::tokens::TOGGLE_RADIUS))
@@ -1812,12 +1831,6 @@ fn sidebar_toggle_button(traffic: f64, form: Signal<Form>) -> AnyElement {
             let next = step(form.get(), Command::ToggleSidebar);
             form.set(next);
         });
-    if traffic > 0.0 {
-        button = button
-            .absolute()
-            .left(px(traffic as f32))
-            .top(px(crate::tokens::TOGGLE_TOP));
-    }
     if let Some(path) = crate::icons::glyph_ink("sidebar-left", "6E6E73") {
         button = button.child(
             image(format!("file://{}", path.display())).size(px(crate::tokens::SIDEBAR_ICON)),
@@ -1842,7 +1855,11 @@ fn panel_command(current: Form, floating: bool) -> Form {
     }
 }
 
-fn panel_toggle_button(form: Signal<Form>, floating: bool) -> AnyElement {
+fn panel_toggle_button(
+    form: Signal<Form>,
+    floating: bool,
+    row: crate::tokens::ChromeRow,
+) -> AnyElement {
     let mut button = view()
         .w(px(crate::tokens::TOGGLE_SIZE))
         .h(px(crate::tokens::TOGGLE_SIZE))
@@ -1859,7 +1876,7 @@ fn panel_toggle_button(form: Signal<Form>, floating: bool) -> AnyElement {
         button = button
             .absolute()
             .right(px(crate::tokens::CHAT_PAD_X))
-            .top(px(crate::tokens::TOGGLE_TOP));
+            .top(px(row.toggle_y));
     }
     if let Some(path) = crate::icons::glyph_ink("sidebar-right", "6E6E73") {
         button = button
@@ -2103,7 +2120,11 @@ fn chat_head(form: Signal<Form>) -> AnyElement {
                 .items_center()
                 .gap(px(crate::tokens::TOOL_CLUSTER_GAP))
                 .child(icon_button("edit", "新对话", crate::tokens::PANEL_ICON))
-                .child(panel_toggle_button(form, false)),
+                .child(panel_toggle_button(
+                    form,
+                    false,
+                    crate::tokens::chrome_row(chrome_off()),
+                )),
         )
         .into_element()
 }
@@ -3118,7 +3139,11 @@ mod tests {
             &PlaceIn {
                 form,
                 window: window(),
-                traffic: 92.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: true,
+                    bar: 92.0,
+                    top: 0.0,
+                },
             },
             &empty_library(),
         );
@@ -3169,7 +3194,11 @@ mod tests {
                     width: crate::tokens::MIN_WINDOW_W,
                     height: crate::tokens::library_min_height(),
                 },
-                traffic: 78.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: true,
+                    bar: 78.0,
+                    top: 0.0,
+                },
             },
             &library,
         );
@@ -3235,7 +3264,11 @@ mod tests {
             &PlaceIn {
                 form: hidden_side,
                 window: window(),
-                traffic: 92.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: true,
+                    bar: 92.0,
+                    top: 0.0,
+                },
             },
             &empty_library(),
         );
@@ -3250,7 +3283,11 @@ mod tests {
             &PlaceIn {
                 form: hidden_chat,
                 window: window(),
-                traffic: 92.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: true,
+                    bar: 92.0,
+                    top: 0.0,
+                },
             },
             &empty_library(),
         );
@@ -3291,7 +3328,11 @@ mod tests {
             &PlaceIn {
                 form,
                 window: window(),
-                traffic: 0.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: false,
+                    bar: 0.0,
+                    top: 0.0,
+                },
             },
             &empty_library(),
         );
@@ -3324,7 +3365,11 @@ mod tests {
             &PlaceIn {
                 form: launch(),
                 window: window(),
-                traffic: 0.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: false,
+                    bar: 0.0,
+                    top: 0.0,
+                },
             },
             &library,
         );
@@ -3351,7 +3396,11 @@ mod tests {
             &PlaceIn {
                 form: launch(),
                 window: Window { width, height },
-                traffic: 92.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: true,
+                    bar: 92.0,
+                    top: 0.0,
+                },
             },
             &library,
         );
@@ -3372,6 +3421,8 @@ mod tests {
             let mid = frame[1] + frame[3] / 2.0;
             assert!((mid - center).abs() < 0.5, "{id} at {width} is {mid}");
         }
+        let toggle = frame_of(&nodes, "sidebar.toggle");
+        assert!((toggle[0] - 92.0).abs() < 0.01);
         if placed.chat.is_some() {
             let name = frame_of(&nodes, "chat.name");
             let sub = frame_of(&nodes, "chat.sub");
@@ -3451,7 +3502,11 @@ mod tests {
             &PlaceIn {
                 form: launch(),
                 window: window(),
-                traffic: 92.0,
+                chrome: crate::tokens::ChromeIn {
+                    lights: true,
+                    bar: 92.0,
+                    top: 0.0,
+                },
             },
             &library,
         );
@@ -3467,6 +3522,55 @@ mod tests {
         assert!((attach[1] + attach[3] / 2.0 - (chip[1] + chip[3] / 2.0)).abs() < 0.01);
         assert!(chip[0] > attach[0] + attach[2]);
         assert!(chip[0] + chip[2] < send[0]);
+    }
+
+    #[test]
+    fn hidden_lights_use_the_sidebar_pad() {
+        let placed = place(
+            &PlaceIn {
+                form: launch(),
+                window: Window {
+                    width: 1512.0,
+                    height: 949.0,
+                },
+                chrome: crate::tokens::ChromeIn {
+                    lights: false,
+                    bar: 78.0,
+                    top: 0.0,
+                },
+            },
+            &empty_library(),
+        );
+        let nodes = layout_nodes(&placed, &empty_library());
+        let toggle = frame_of(&nodes, "sidebar.toggle");
+        let search = frame_of(&nodes, "sidebar.search");
+        let title = frame_of(&nodes, "shelf.header.title");
+        let card = frame_of(&nodes, "card");
+        assert!((toggle[0] - crate::tokens::SIDE_PAD_X).abs() < 0.01);
+        assert!((toggle[0] - 78.0).abs() > 1.0);
+        assert!(search[1] >= toggle[1] + toggle[3] - 0.5);
+        assert!(search[1] + search[3] <= 949.0);
+        assert!(title[1] >= card[1]);
+        assert!(title[1] + title[3] <= card[1] + card[3]);
+        let dropped = place(
+            &PlaceIn {
+                form: launch(),
+                window: Window {
+                    width: 1512.0,
+                    height: 949.0,
+                },
+                chrome: crate::tokens::ChromeIn {
+                    lights: false,
+                    bar: 78.0,
+                    top: 20.0,
+                },
+            },
+            &empty_library(),
+        );
+        let lowered = layout_nodes(&dropped, &empty_library());
+        let lowered_title = frame_of(&lowered, "shelf.header.title");
+        assert!((lowered_title[1] - title[1] - 20.0).abs() < 0.5);
+        assert!(lowered_title[1] >= 20.0);
     }
 
     #[test]

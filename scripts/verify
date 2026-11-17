@@ -695,11 +695,15 @@ def alignment_report(layout):
         corner = float(layout["window_corner"])
         composer_inset = float(layout["composer_inset"])
         composer_pad = float(layout["composer_pad"])
+        traffic_bar = float(layout["traffic_bar"])
+        content_top = float(layout["content_top"])
         window_w = float(layout["window"][0])
         window_h = float(layout["window"][1])
+        lights = bool(layout["lights"])
     except (KeyError, TypeError, ValueError, IndexError):
         return ["alignment grid missing"]
     problems = []
+    row_center = center + content_top
 
     def frame(node_id):
         node = by_id.get(node_id)
@@ -707,12 +711,12 @@ def alignment_report(layout):
             return None
         return _box(node.get("frame"))
 
-    def want_center(node_id):
+    def want_center(node_id, at):
         box = frame(node_id)
         if box is None:
             problems.append(f"{node_id} missing")
             return
-        delta = _mid(box) - center
+        delta = _mid(box) - at
         if abs(delta) > ALIGN_TOL:
             problems.append(f"{node_id} Y {delta:+.2f}")
 
@@ -730,7 +734,7 @@ def alignment_report(layout):
     ):
         if node_id.startswith("chat") and chat is None:
             continue
-        want_center(node_id)
+        want_center(node_id, row_center)
     for node_id in ("traffic.close", "traffic.miniaturize", "traffic.zoom"):
         box = frame(node_id)
         if box is None or box[3] <= 8:
@@ -742,6 +746,9 @@ def alignment_report(layout):
             or box[0] + box[2] > window_w + 1
         ):
             continue
+        # A fullscreen window parks the buttons below the title-bar band.
+        if box[1] > 48.5:
+            continue
         delta = _mid(box) - center
         if abs(delta) > ALIGN_TOL:
             problems.append(f"{node_id} Y {delta:+.2f}")
@@ -749,8 +756,8 @@ def alignment_report(layout):
     if card is None:
         problems.append("card missing")
         return problems
-    if abs(card[1] - inset) > ALIGN_TOL:
-        problems.append(f"card Y {card[1] - inset:+.2f}")
+    if abs(card[1] - (inset + content_top)) > ALIGN_TOL:
+        problems.append(f"card Y {card[1] - (inset + content_top):+.2f}")
     card_bottom = window_h - (card[1] + card[3])
     if abs(card_bottom - inset) > ALIGN_TOL:
         problems.append(f"card bottom {card_bottom - inset:+.2f}")
@@ -925,6 +932,119 @@ def alignment_report(layout):
                     natural = None
                 if natural is not None and chip[2] > natural + ALIGN_TOL:
                     problems.append(f"composer.chip stretches {chip[2] - natural:+.2f}")
+    toggle = frame("sidebar.toggle")
+    if toggle is not None:
+        if lights:
+            if traffic_bar > 8.0 and abs(toggle[0] - traffic_bar) > ALIGN_TOL:
+                problems.append(f"sidebar.toggle X {toggle[0] - traffic_bar:+.2f}")
+        else:
+            delta = toggle[0] - side_pad
+            if abs(delta) > ALIGN_TOL:
+                problems.append(f"sidebar.toggle X {delta:+.2f}")
+            if traffic_bar > side_pad + 1.0 and abs(toggle[0] - traffic_bar) <= ALIGN_TOL:
+                problems.append(f"sidebar.toggle traffic {toggle[0] - traffic_bar:+.2f}")
+    if not lights and traffic_bar > side_pad + 1.0:
+        for node_id, node in by_id.items():
+            if node_id == "sidebar.toggle" or node_id.startswith("traffic."):
+                continue
+            box = _box(node.get("frame"))
+            if box is not None and abs(box[0] - traffic_bar) <= ALIGN_TOL:
+                problems.append(f"{node_id} traffic {box[0] - traffic_bar:+.2f}")
+    window_box = [0.0, 0.0, window_w, window_h]
+    search = frame("sidebar.search")
+    title = frame("shelf.header.title")
+    cover = frame("cover.0")
+    for node_id, box, host in (
+        ("sidebar.search", search, sidebar if sidebar is not None else window_box),
+        ("shelf.header.title", title, card),
+        ("cover.0", cover, card),
+    ):
+        if box is None or host is None:
+            continue
+        if (
+            box[0] < host[0] - ALIGN_TOL
+            or box[1] < host[1] - ALIGN_TOL
+            or box[0] + box[2] > host[0] + host[2] + ALIGN_TOL
+            or box[1] + box[3] > host[1] + host[3] + ALIGN_TOL
+        ):
+            problems.append(f"{node_id} outside")
+        if (
+            box[1] < content_top - ALIGN_TOL
+            or box[1] + box[3] > window_h + ALIGN_TOL
+        ):
+            problems.append(f"{node_id} clipped")
+    if toggle is not None and search is not None and _overlaps(toggle, search):
+        problems.append("sidebar.search overlaps sidebar.toggle")
+    return problems
+
+
+def _window_key(layout):
+    window = layout.get("window") or [0, 0]
+    try:
+        return (round(float(window[0]), 1), round(float(window[1]), 1))
+    except (TypeError, ValueError, IndexError):
+        return (0.0, 0.0)
+
+
+def _frame_map(layout):
+    found = {}
+    for node in layout.get("nodes") or []:
+        if isinstance(node, dict) and isinstance(node.get("id"), str):
+            box = _box(node.get("frame"))
+            if box is not None:
+                found[node["id"]] = box
+    return found
+
+
+def _same_box(left, right):
+    return (
+        left is not None
+        and right is not None
+        and all(abs(left[index] - right[index]) <= ALIGN_TOL for index in range(4))
+    )
+
+
+def transition_report(frames):
+    """Settled fullscreen frames do not jump, and leaving fullscreen restores the windowed row."""
+    if not isinstance(frames, list) or len(frames) < 2:
+        return ["transition needs two frames"]
+    ids = ("sidebar.toggle", "sidebar.search", "shelf.header.title", "cover.0")
+    problems = []
+    for index, layout in enumerate(frames):
+        if not isinstance(layout, dict):
+            problems.append(f"frame {index} missing")
+            continue
+        for item in alignment_report(layout):
+            if (
+                item.startswith("sidebar.toggle")
+                or item.startswith("sidebar.search")
+                or item.startswith("shelf.header.title")
+                or item.startswith("cover.")
+                or "overlap" in item
+                or item.endswith("outside")
+                or item.endswith("clipped")
+            ):
+                problems.append(f"frame {index} {item}")
+    hidden = [layout for layout in frames if isinstance(layout, dict) and layout.get("lights") is False]
+    if len(hidden) >= 2:
+        size = _window_key(hidden[-1])
+        pair = [layout for layout in hidden if _window_key(layout) == size]
+        if len(pair) >= 2:
+            before = _frame_map(pair[-2])
+            after = _frame_map(pair[-1])
+            for node_id in ids:
+                if node_id in before and node_id in after and not _same_box(before[node_id], after[node_id]):
+                    problems.append(f"{node_id} jumps")
+    shown = [layout for layout in frames if isinstance(layout, dict) and layout.get("lights") is True]
+    if len(shown) >= 2:
+        size = _window_key(shown[0])
+        pair = [layout for layout in shown if _window_key(layout) == size]
+        if len(pair) >= 2:
+            before = _frame_map(pair[0])
+            after = _frame_map(pair[-1])
+            for node_id in ids:
+                if node_id in before and node_id in after and not _same_box(before[node_id], after[node_id]):
+                    problems.append(f"{node_id} restore")
     return problems
 
 
@@ -950,8 +1070,12 @@ def _sample_layout(shift=0.0):
         "window_corner": 18.0,
         "composer_inset": 18.0,
         "composer_pad": 12.0,
+        "lights": True,
+        "traffic_bar": 92.0,
+        "content_top": 0.0,
         "nodes": [
             node("sidebar", "container", [0, 0, 220, 600]),
+            node("sidebar.search", "field", [10, 48, 200, 28]),
             node("card", "container", [226, 6, 248, 588]),
             node("toolbar", "container", [226, 6 + shift, 248, 36]),
             node("toolbar.sort", "chrome", [360, 12 + shift, 60, 24]),
@@ -1058,12 +1182,36 @@ def save_alignment_crops(out, stem, png):
             header[2] + 16.0,
             header[3] + 12.0,
         ]
+    search = _box((nodes.get("sidebar.search") or {}).get("frame"))
+    if search is not None:
+        boxes["search"] = [
+            max(0.0, search[0] - 8.0),
+            max(0.0, search[1] - 16.0),
+            search[2] + 16.0,
+            search[3] + 28.0,
+        ]
+    title = _box((nodes.get("shelf.header.title") or {}).get("frame"))
+    if title is not None:
+        boxes["shelf-title"] = [
+            max(0.0, title[0] - 12.0),
+            max(0.0, title[1] - 20.0),
+            max(title[2] + 24.0, 160.0),
+            title[3] + 36.0,
+        ]
     try:
         window_h = float(window[1])
     except (TypeError, ValueError, IndexError):
         window_h = None
     settings = _box((nodes.get("sidebar.settings") or {}).get("frame"))
     sidebar = _box((nodes.get("sidebar") or {}).get("frame"))
+    toggle = _box((nodes.get("sidebar.toggle") or {}).get("frame"))
+    if sidebar is not None and toggle is not None:
+        boxes["sidebar-header"] = [
+            sidebar[0],
+            0.0,
+            sidebar[2],
+            max(band, toggle[1] + toggle[3] + 12.0),
+        ]
     if settings is not None and sidebar is not None and window_h is not None:
         top = max(0.0, settings[1] - 8.0)
         boxes["sidebar-bottom"] = [sidebar[0], top, sidebar[2], max(1.0, window_h - top)]
@@ -1494,6 +1642,62 @@ def form_diff_self_check():
     assert pixel_changes(flat, flat) == 0
     assert library_min_height() == 516
     assert alignment_report(_sample_layout()) == []
+    parked = _sample_layout()
+    parked["lights"] = False
+    assert any(item.startswith("sidebar.toggle") for item in alignment_report(parked))
+    hidden = _sample_layout()
+    hidden["lights"] = False
+    hidden["traffic_bar"] = 78.0
+    for item in hidden["nodes"]:
+        if item["id"] == "sidebar.toggle":
+            item["frame"] = [10, 10, 28, 28]
+    assert alignment_report(hidden) == []
+    lowered = _sample_layout()
+    lowered["content_top"] = 20.0
+    lowered["lights"] = False
+    lowered["traffic_bar"] = 78.0
+    for item in lowered["nodes"]:
+        if item["id"] == "sidebar.toggle":
+            item["frame"] = [10, 30, 28, 28]
+        elif item["id"] == "card":
+            item["frame"][1] += 20
+            item["frame"][3] -= 20
+        elif item["id"] == "toolbar":
+            item["frame"][1] += 20
+        elif item["id"].startswith("toolbar."):
+            item["frame"][1] += 20
+        elif item["id"].startswith("shelf.") or item["id"].startswith("cover."):
+            item["frame"][1] += 20
+        elif item["id"] == "sidebar.search":
+            item["frame"][1] += 20
+        elif item["id"] == "chat":
+            item["frame"][1] += 20
+            item["frame"][3] -= 20
+        elif item["id"].startswith("chat."):
+            item["frame"][1] += 20
+    assert alignment_report(lowered) == [], alignment_report(lowered)
+    settled = json.loads(json.dumps(hidden))
+    jumped = json.loads(json.dumps(hidden))
+    for item in jumped["nodes"]:
+        if item["id"] == "sidebar.toggle":
+            item["frame"][1] += 4
+    assert transition_report([_sample_layout(), hidden, settled, _sample_layout()]) == []
+    assert any("jumps" in item for item in transition_report([hidden, jumped]))
+    overlapped = json.loads(json.dumps(hidden))
+    for item in overlapped["nodes"]:
+        if item["id"] == "sidebar.search":
+            item["frame"] = [10, 12, 40, 24]
+    assert any("overlap" in item for item in transition_report([overlapped, hidden]))
+    moved_cover = json.loads(json.dumps(hidden))
+    for item in moved_cover["nodes"]:
+        if item["id"] == "cover.0":
+            item["frame"][1] += 20
+    assert any("cover.0 jumps" in item for item in transition_report([hidden, moved_cover]))
+    restored = json.loads(json.dumps(_sample_layout()))
+    for item in restored["nodes"]:
+        if item["id"] == "sidebar.toggle":
+            item["frame"][0] += 2
+    assert any("restore" in item for item in transition_report([_sample_layout(), restored]))
     shifted = alignment_report(_sample_layout(2.0))
     assert any(item.startswith("toolbar Y +2.00") for item in shifted), shifted
     stretched = _sample_layout()
@@ -1974,6 +2178,16 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         ok = ok and matched
         finish_launch(state)
         clear_layout_files()
+        exit_flag = Path("/tmp/superreader-spike/fullscreen-exit")
+        exit_flag.unlink(missing_ok=True)
+        transition = []
+
+        def watch_transition(_started, bucket=transition):
+            layout = read_layout_frames()
+            if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
+                bucket.append(json.loads(json.dumps(layout)))
+            return False
+
         state = launch(
             out,
             "form-fullscreen",
@@ -1984,7 +2198,11 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
             ),
             lambda names: "书库" in names and _chrome_fullscreen(),
             45,
+            watch=watch_transition,
         )
+        settled = read_layout_frames()
+        if isinstance(settled, dict) and "lights" in settled and settled.get("nodes"):
+            transition.append(settled)
         try:
             _capture_form(out, window_tool, state, "form-fullscreen.png")
             save_alignment_crops(out, "form-fullscreen", out / "form-fullscreen.png")
@@ -1998,6 +2216,32 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot):
         if not (out / "form-fullscreen.png").exists():
             matched = False
             note += "; png missing"
+        try:
+            exit_flag.parent.mkdir(parents=True, exist_ok=True)
+            exit_flag.write_text("1")
+            deadline = time.time() + 8
+            left = False
+            while time.time() < deadline:
+                layout = read_layout_frames()
+                if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
+                    transition.append(json.loads(json.dumps(layout)))
+                chrome_path = Path("/tmp/superreader-spike/chrome.json")
+                chrome = json.loads(chrome_path.read_text()) if chrome_path.is_file() else {}
+                if chrome.get("fullscreen") is False and isinstance(layout, dict) and layout.get("lights") is True:
+                    left = True
+                    break
+                time.sleep(0.4)
+            if not left:
+                matched = False
+                note += "; fullscreen did not exit"
+        except (OSError, json.JSONDecodeError, TypeError):
+            matched = False
+            note += "; fullscreen exit was not requested"
+        if len(transition) >= 2:
+            jump = transition_report(transition)
+            if jump:
+                matched = False
+                note += "; " + "; ".join(jump[:6])
         notes.append(note)
         ok = ok and matched
     except Exception as exc:

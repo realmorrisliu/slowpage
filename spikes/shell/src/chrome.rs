@@ -67,6 +67,7 @@ pub struct Runtime {
     pub full: Cell<bool>,
     pub product: Cell<bool>,
     fullscreen_sent: Cell<bool>,
+    fullscreen_exit_sent: Cell<bool>,
     pub lights: Cell<f64>,
     ratio_key: Cell<(i32, i32)>,
     page: Cell<PageBox>,
@@ -79,6 +80,9 @@ pub struct Runtime {
     icon_dy: Cell<f64>,
     pub design_visible: Cell<(f64, f64)>,
     pub bar_w: Cell<f64>,
+    pub lights_visible: Cell<bool>,
+    pub content_top: Cell<f64>,
+    pub stage_h: Cell<f64>,
     pub bar_dirty: Cell<bool>,
     bar_seen: Cell<f64>,
     bar_stable: Cell<u8>,
@@ -102,6 +106,7 @@ impl Default for Runtime {
             full: Cell::new(false),
             product: Cell::new(false),
             fullscreen_sent: Cell::new(false),
+            fullscreen_exit_sent: Cell::new(false),
             lights: Cell::new(0.0),
             ratio_key: Cell::new((0, 0)),
             page: Cell::new(PageBox {
@@ -123,6 +128,9 @@ impl Default for Runtime {
             icon_dy: Cell::new(f64::NAN),
             design_visible: Cell::new((0.0, 0.0)),
             bar_w: Cell::new(0.0),
+            lights_visible: Cell::new(false),
+            content_top: Cell::new(0.0),
+            stage_h: Cell::new(0.0),
             bar_dirty: Cell::new(true),
             bar_seen: Cell::new(0.0),
             bar_stable: Cell::new(0),
@@ -347,8 +355,11 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
         write_json(window, rt, true);
         return;
     }
+    // layout() publishes the new style mask before sync, so full is already
+    // false on the exit frame. Put any reparented buttons back whenever this
+    // window is not fullscreen. An empty home list is a no-op.
+    restore_fullscreen_lights();
     if rt.full.replace(false) {
-        restore_fullscreen_lights();
         rt.settled.set(false);
         rt.stable.set(0);
         rt.attempts.set(0);
@@ -433,6 +444,14 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     if rt.settled.get() && !rt.fullscreen_sent.get() && flag("SPIKE_FULLSCREEN") {
         window.toggleFullScreen(None);
         rt.fullscreen_sent.set(true);
+    }
+    if rt.fullscreen_sent.get()
+        && !rt.fullscreen_exit_sent.get()
+        && flag("SPIKE_FULLSCREEN")
+        && std::path::Path::new("/tmp/superreader-spike/fullscreen-exit").is_file()
+    {
+        window.toggleFullScreen(None);
+        rt.fullscreen_exit_sent.set(true);
     }
     write_json(window, rt, false);
 }
@@ -566,6 +585,14 @@ fn restore_fullscreen_lights() {
             view.setFrame(frame);
         }
     });
+}
+
+fn content_window_frame(view: &NSView) -> NSRect {
+    let frame = view.frame();
+    match unsafe { view.superview() } {
+        Some(parent) => parent.convertRect_toView(frame, None),
+        None => frame,
+    }
 }
 
 fn button_window_frame(button: &NSButton) -> NSRect {
@@ -1148,7 +1175,52 @@ fn icon_item(
     item
 }
 
+fn observe_lights(window: &NSWindow, stage_h: f64) -> (bool, f64) {
+    let frame = window.frame().size;
+    let top = window
+        .contentView()
+        .map(|view| {
+            let content = content_window_frame(&view);
+            crate::tokens::content_top(frame.height, content.size.height, content.origin.y, stage_h)
+        })
+        .unwrap_or(0.0);
+    let buttons = [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ]
+    .map(|kind| light_box(window, kind, frame.height));
+    let shown = crate::tokens::lights_shown(&buttons, frame.width as f32, frame.height as f32);
+    (shown, top)
+}
+
+fn light_box(window: &NSWindow, kind: NSWindowButton, window_h: f64) -> crate::tokens::LightBox {
+    let Some(button) = window.standardWindowButton(kind) else {
+        return crate::tokens::LightBox {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            shown: false,
+        };
+    };
+    let hidden: bool = unsafe { msg_send![&*button, isHidden] };
+    let alpha: f64 = unsafe { msg_send![&*button, alphaValue] };
+    let rect = button_window_frame(&button);
+    let y = window_h - (rect.origin.y + rect.size.height);
+    crate::tokens::LightBox {
+        x: rect.origin.x as f32,
+        y: y as f32,
+        w: rect.size.width as f32,
+        h: rect.size.height as f32,
+        shown: !hidden && alpha > 0.5,
+    }
+}
+
 fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
+    let (visible, top) = observe_lights(window, rt.stage_h.get());
+    rt.lights_visible.set(visible);
+    rt.content_top.set(top);
     let page = rt.page.get();
     let frame = window.frame();
     let lights = rt.traffic.borrow().unwrap_or(TrafficLights {
@@ -1179,6 +1251,8 @@ fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
         "side": SIDE,
         "fullscreen": fullscreen,
         "lights": rt.lights.get(),
+        "lights_visible": rt.lights_visible.get(),
+        "content_top": rt.content_top.get(),
         "ratio_w": page.ratio_w,
         "ratio_h": page.ratio_h,
         "title": rt.title.borrow().clone(),

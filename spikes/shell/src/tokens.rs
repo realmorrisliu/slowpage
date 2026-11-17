@@ -236,6 +236,81 @@ pub fn chrome_top(size: f32) -> f32 {
     (CHROME_H - size) / 2.0
 }
 
+/// One standard window button, in top-left window coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightBox {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub shown: bool,
+}
+
+/// The buttons are on screen only when each one is shown and sits in the title-bar band.
+/// A frame parked at the bottom of a fullscreen window is not that band.
+pub fn lights_shown(buttons: &[LightBox], window_w: f32, window_h: f32) -> bool {
+    if buttons.len() < 3 || window_w < 1.0 || window_h < 1.0 {
+        return false;
+    }
+    buttons.iter().all(|button| {
+        button.shown
+            && button.w >= 1.0
+            && button.h >= 1.0
+            && button.x >= -0.5
+            && button.x + button.w <= window_w + 0.5
+            && button.y >= -0.5
+            && button.y + button.h <= CHROME_H + 0.5
+    })
+}
+
+/// What the shell row needs from the live window. `bar` is the measured light span.
+/// `top` is the content view's distance below the window top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChromeIn {
+    pub lights: bool,
+    pub bar: f32,
+    pub top: f32,
+}
+
+/// The header row. One value for the toggle, the search, and the card toolbar.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChromeRow {
+    pub height: f32,
+    pub toggle_x: f32,
+    pub toggle_y: f32,
+    pub card_y: f32,
+    pub toolbar_h: f32,
+}
+
+pub fn chrome_row(input: ChromeIn) -> ChromeRow {
+    let top = input.top.max(0.0);
+    let lights = input.lights && input.bar > 8.0;
+    let pad = if lights { TOGGLE_TOP } else { SIDE_PAD_X };
+    ChromeRow {
+        height: top + pad + TOGGLE_SIZE + pad,
+        toggle_x: if lights { input.bar } else { SIDE_PAD_X },
+        toggle_y: top + pad,
+        card_y: top + INSET as f32,
+        toolbar_h: TOOLBAR_H,
+    }
+}
+
+/// How far the content view sits below the top of the window.
+///
+/// The inset counts only when the layout is as tall as the window, so a gap
+/// above a shorter content view is a real band in layout coordinates. A layout
+/// that is already the content view's height is not shifted again. A gap
+/// outside the title-bar band is ignored.
+pub fn content_top(window_h: f64, content_h: f64, content_y: f64, stage_h: f64) -> f64 {
+    let top = window_h - (content_y + content_h);
+    let layout_includes_the_gap = (stage_h - window_h).abs() <= 1.0;
+    if layout_includes_the_gap && top.is_finite() && (0.5..=f64::from(CHROME_H)).contains(&top) {
+        top
+    } else {
+        0.0
+    }
+}
+
 /// Card content width after the live sidebar, the live chat panel, the insets, and the pads.
 pub fn content_width(window_w: f32, sidebar_w: f32, chat_w: f32) -> f32 {
     let card = window_w - sidebar_w - chat_w - INSET as f32 * 2.0;
@@ -437,5 +512,97 @@ mod tests {
         assert!((COMPOSER_PB - COMPOSER_PAD).abs() < 0.01);
         assert!((COMPOSER_PL - COMPOSER_PAD).abs() < 0.01);
         assert!((SCOPE_H - SEND).abs() < 0.01);
+        let shown = chrome_row(ChromeIn {
+            lights: true,
+            bar: 78.0,
+            top: 0.0,
+        });
+        assert!((shown.toggle_x - 78.0).abs() < 0.01);
+        assert!((shown.toggle_y + TOGGLE_SIZE / 2.0 - center).abs() < 0.01);
+        assert!((shown.card_y + shown.toolbar_h / 2.0 - center).abs() < 0.01);
+        let hidden = chrome_row(ChromeIn {
+            lights: false,
+            bar: 78.0,
+            top: 0.0,
+        });
+        assert!((hidden.toggle_x - SIDE_PAD_X).abs() < 0.01);
+        assert!((hidden.toggle_y + TOGGLE_SIZE / 2.0 - center).abs() < 0.01);
+        assert!((hidden.height - shown.height).abs() < 0.01);
+        let dropped = chrome_row(ChromeIn {
+            lights: false,
+            bar: 78.0,
+            top: 20.0,
+        });
+        assert!((dropped.card_y - (20.0 + INSET as f32)).abs() < 0.01);
+        assert!((dropped.toggle_y - 30.0).abs() < 0.01);
+        assert!(
+            (dropped.toggle_y + TOGGLE_SIZE / 2.0 - (dropped.card_y + dropped.toolbar_h / 2.0))
+                .abs()
+                < 0.01
+        );
+        let windowed = [
+            LightBox {
+                x: 9.0,
+                y: 17.0,
+                w: 14.0,
+                h: 14.0,
+                shown: true,
+            },
+            LightBox {
+                x: 32.0,
+                y: 17.0,
+                w: 14.0,
+                h: 14.0,
+                shown: true,
+            },
+            LightBox {
+                x: 55.0,
+                y: 17.0,
+                w: 14.0,
+                h: 14.0,
+                shown: true,
+            },
+        ];
+        assert!(lights_shown(&windowed, 1440.0, 855.0));
+        let parked = [
+            LightBox {
+                x: 9.0,
+                y: 894.0,
+                w: 14.0,
+                h: 14.0,
+                shown: true,
+            },
+            LightBox {
+                x: 32.0,
+                y: 894.0,
+                w: 14.0,
+                h: 14.0,
+                shown: true,
+            },
+            LightBox {
+                x: 55.0,
+                y: 894.0,
+                w: 14.0,
+                h: 14.0,
+                shown: true,
+            },
+        ];
+        assert!(!lights_shown(&parked, 1512.0, 949.0));
+        let faded = [
+            LightBox {
+                x: 9.0,
+                y: 17.0,
+                w: 14.0,
+                h: 14.0,
+                shown: false,
+            },
+            windowed[1],
+            windowed[2],
+        ];
+        assert!(!lights_shown(&faded, 1440.0, 855.0));
+        assert!((content_top(949.0, 949.0, 0.0, 949.0)).abs() < 0.01);
+        assert!((content_top(949.0, 925.0, 0.0, 949.0) - 24.0).abs() < 0.01);
+        assert!((content_top(949.0, 925.0, 0.0, 925.0)).abs() < 0.01);
+        assert!((content_top(949.0, 100.0, 0.0, 949.0)).abs() < 0.01);
     }
 }
