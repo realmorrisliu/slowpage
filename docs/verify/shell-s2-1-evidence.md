@@ -72,7 +72,16 @@ The admitted file is the original Project Gutenberg mirror of ebook 25271, not a
 
 ## CI at 110e74d
 
-Run [44282176347](https://github.com/realmorrisliu/slowpage/actions/runs/44282176347) is success on `110e74de44d2e2072fc2dd22a1e8e544c86ec88b`, seven jobs. Release run 44282177266 is the eighth, job `macos`, also success. The test job never runs `cargo test -p spike-shell`. The names `a_stored_page_does_not_open_the_shelf_launch`, `an_explicit_file_resumes_its_stored_page`, `a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place`, and `a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported` do not appear in the log. `fixtures_open_on_chapter_text` is `ok` at 10:07:42, and the book fetch starts at 10:08:06, so that ok is the early return when the file is absent. It is not an open of 范愛農.
+Run [44282176347](https://github.com/realmorrisliu/slowpage/actions/runs/44282176347) on `110e74d` did not run `cargo test -p spike-shell`, and its `fixtures_open_on_chapter_text ... ok` was the early return before the book existed. [44286351544](https://github.com/realmorrisliu/slowpage/actions/runs/44286351544) on `9048bb9` is the run that executes them. The test job is GitHub `macos-26-arm64`, not morris-mac. `spike-shell` is one package. After the admitted sha `91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293` and the chapter check, the log shows:
+
+- `launch_tests::a_stored_page_does_not_open_the_shelf_launch ... ok`
+- `launch_tests::an_explicit_file_resumes_its_stored_page ... ok`
+- `launch_tests::a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place ... ok`
+- `breaks::tests::a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported ... ok`
+- `chrome::tests::fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice ... ok`
+- `tests::fixtures_open_on_chapter_text ... ok` (1 passed; the earlier epub step filtered it out)
+
+The chapter check printed `opened OEBPS/3309323728932395831_25271-0-1.txt.html` and the body head `十月十二日。 范愛農`. A download failure stops in "Fetch admitted books" and does not reach this test.
 
 ## Bold off baseline
 
@@ -80,4 +89,4 @@ Run [44282176347](https://github.com/realmorrisliu/slowpage/actions/runs/4428217
 
 ## Next run, when load is under 8
 
-One `just verify`, after coordination, and only when the 1-minute load is under 8. No `SR_VERIFY_MAX_LOAD` above 8. The Chinese rows use the admitted file at `/tmp/superreader-fixtures/zhaohua.epub`. A whole-book match is not the opened page. The spike-shell tests named above were not compiled locally: the one load sample was 8.96. Do not start the run while another project's process would have to be killed. Do not install to `/Applications`. Do not write the real profile.
+One `just verify`, after coordination, and only when the 1-minute load is under 8. No `SR_VERIFY_MAX_LOAD` above 8. The Chinese rows use the admitted file at `/tmp/superreader-fixtures/zhaohua.epub`. A whole-book match is not the opened page. The shell decisions above were compiled on CI, not on this Mac. Do not start the run while another project's process would have to be killed. Do not install to `/Applications`. Do not write the real profile.
