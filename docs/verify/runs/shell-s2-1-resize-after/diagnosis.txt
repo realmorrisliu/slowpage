@@ -11,14 +11,16 @@ Paint of that shrink: frame 1 bottom gap 6.0pt; frames 2-7 gap 0.0pt while the P
 Cause: AppKit calls the stage's layout() during the drag, and that path wrote chrome.json, but the shell size was published only from pumpLights. That timer was scheduled with performSelector:afterDelay:, which runs in NSDefaultRunLoopMode. A drag tracks in NSEventTrackingRunLoopMode, so the publish waited until the gesture ended and the shelf jumped once.
 This is not an animation gap. No animation was added.
 
-What the after drag shows (pid 96110, window 141552, SPIKE_WINDOW 980x640)
-Enlarge 980x640 -> 1140x750 (+160,+110). Shrink back to 980x640. Both axes moved; the first attempt had been stopped by the screen edge.
-layout.json (pid 96110) changed about every 50ms during both gestures, for example 987x645, 1000x654, 1063x697, 1140x750 on the way up and the reverse on the way down. It did not sit on the start size.
-Paint: every enlarge frame and every shrink frame has a 6.0pt light-card bottom gap while the PNG size changes (enlarge 1960x1280 through 2140x1404; shrink 2280x1500 through 2060x1348).
-Restored window after shrink and after fullscreen exit: 980x640 at (266, 119), the same origin, within 0.5pt.
+These two captures are not an identical-operation comparison. Before origin was 1440x855 at (36, 65). Its enlarge was stopped by the screen edge and only reached 1476x855, height unchanged. After origin was 980x640 at (266, 119), and both axes moved (+160, +110) to 1140x750. Do not treat the pair as acceptance of the same gesture.
 
-Fullscreen is a different link
-The pump ran the whole transition and kept reading the content view. From 2804.317 to 2805.020 the content size stayed 980x640. The next layout() callback, at 2805.210, was already 1512x949. There is no intermediate content size in resize-trace.jsonl. The same single step returns to 980x640 at 2808.007.
-CG agrees: window 141552 is 980x640, then later 1512x949 at (0, 33). The in-between image is a different window id (141569 enter, 141578 exit) at 1512x982, the fullscreen shield, not this window's content view.
-Publishing faster cannot track sizes AppKit does not report. Interpolating them would be the cosmetic animation this change does not add.
+What the after files do show, separately (pid 96110, window 141552)
+layout.json writes, not presented frames: 17 layout-json lines in the 1.6s enlarge and 24 in the shrink. That is the publish cadence, about one layout notification per 50-70ms. It is not a 50ms paint rate.
+Paint stills are slower and fewer: 7 enlarge PNGs and 8 shrink PNGs. On those stills the light-card bottom gap stayed 6.0pt while the PNG size changed (enlarge 1960x1280 through 2140x1404; shrink 2280x1500 through 2060x1348). That shows the card edge had been laid out in the captured pictures. It does not show every displayed frame between them.
+On the sampled rows, chrome content size and layout.json stayed within a few points of each other. That is content -> state -> layout on this smaller window, not a replay of the 1440x855 drag.
+Restored window after this shrink and after this fullscreen exit: 980x640 at (266, 119). That matches this run's own origin, not the before run's 1440x855.
+
+Fullscreen was not waived
+The pump kept reading the content view. Across the enter snap its sizes were 983x642, then 980x640 eight times, then 1512x949. The layout() callback at 2805.210 was already 1512x949. Return to 980x640 is one step at 2808.007. No intermediate content-view size was reported.
+CG window 141552 does the same snap, 980x640 then 1512x949 at (0, 33). Window ids 141569 (enter) and 141578 (exit) are a different layer at 1512x982, the system shield. The captured content-window PNGs jump from 1960x1280 to 3024x1898. One exit still is 3024x1964, the shield, and its pixels were not compared frame to frame.
+What that demonstrates: our layout published the content-view sizes it was given, and those sizes jumped. It does not demonstrate that the shield's on-screen animation is a continuous picture of our layout, and it does not demonstrate that the app dropped intermediate sizes AppKit had already put on the content view. The continuous-transition requirement is still open. No sizes were interpolated.
 Source of the drag fix: spikes/shell/src/stage.rs publish_shell_if_resized from layout(), and schedule_shell_pump in NSRunLoopCommonModes. chrome.rs skips fit_full_content while inLiveResize so the tracking loop is not asked to setFrame.
