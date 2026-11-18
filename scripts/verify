@@ -3939,6 +3939,18 @@ def self_test():
     _w, _h, rows = decode_png_bytes(encode_png(40, 70, cream))
     ok, _detail = top_is_paper(_w, rows)
     assert not ok
+    corners = bytearray([255, 255, 255, 255]) * (80 * 70)
+    for y in range(12):
+        for x in list(range(20)) + list(range(60, 80)):
+            offset = (y * 80 + x) * 4
+            corners[offset : offset + 3] = bytes((0, 0, 0))
+    _w, _h, rows = decode_png_bytes(encode_png(80, 70, corners))
+    ok, detail = top_is_paper(_w, rows)
+    assert ok, detail
+    corners[30 * 80 * 4 + 40 * 4 : 30 * 80 * 4 + 40 * 4 + 3] = bytes((0xF3, 0xEE, 0xE4))
+    _w, _h, rows = decode_png_bytes(encode_png(80, 70, corners))
+    ok, _detail = top_is_paper(_w, rows)
+    assert not ok
     sheet = bytearray([255, 255, 255, 255]) * (80 * 60)
     _w, _h, rows = decode_png_bytes(encode_png(80, 60, sheet))
     assert white_rects(_w, rows) == []
@@ -5367,6 +5379,13 @@ def run_windows(out, window_tool, ocr_tool):
             if wid:
                 time.sleep(0.8)
                 capture(wid, png)
+                if name == "epub-turned":
+                    # The page number can land in webkit json before the view has ink.
+                    # A blank capture is not a measured turn.
+                    deadline = time.time() + 8
+                    while png.exists() and png_dark_pixels(png) < 200 and time.time() < deadline:
+                        time.sleep(0.4)
+                        capture(wid, png)
             state["png"] = png.name if png.exists() else None
             state["window"] = wid
             if name.startswith("epub") and state["png"]:
@@ -5634,10 +5653,93 @@ def page_shot(state, window_tool, ocr_tool, png):
     return lines
 
 
+CHINESE_SOURCE = {"ok": False, "detail": "not checked"}
+CHINESE_ROWS = {
+    "reading-default-trim",
+    "book-body-background",
+    "page-bands-white",
+    "trim-32kai-zhaohua",
+    "justify-zhaohua-32kai",
+    "trim-paperback-zhaohua",
+    "justify-zhaohua-paperback",
+    "trim-trade-zhaohua",
+    "justify-zhaohua-trade",
+    "reading-plain-zh",
+    "justify-plain-zh-paperback",
+    "justify-plain-zh-32kai",
+    "justify-plain-zh-trade",
+    "reading-page-box",
+    "reading-text-complete",
+    "reading-text-clean",
+}
+
+
+def epub_plain(path):
+    import zipfile
+    if not path.exists():
+        return ""
+    try:
+        with zipfile.ZipFile(path) as book:
+            parts = []
+            for name in book.namelist():
+                if name.lower().endswith((".xhtml", ".html", ".htm")):
+                    raw = book.read(name).decode("utf-8", "replace")
+                    parts.append(re.sub(r"(?is)<[^>]+>", "", raw))
+    except zipfile.BadZipFile:
+        return ""
+    return re.sub(r"\s+", "", "".join(parts))
+
+
+def prepare_chinese_source():
+    dest = Path(os.environ.get("SPIKE_FIXTURES", "/tmp/superreader-fixtures"))
+    dest.mkdir(parents=True, exist_ok=True)
+    book = dest / "zhaohua.epub"
+    plain = epub_plain(book)
+    if "范愛農" not in plain or len(plain) < 1500:
+        # spikes/fetch-fixtures.sh names the ebook URL. The cache URL is the
+        # same Gutenberg file when that redirect is down.
+        proc = None
+        for url in (
+            "https://www.gutenberg.org/ebooks/25271.epub.noimages",
+            "https://www.gutenberg.org/cache/epub/25271/pg25271.epub",
+        ):
+            proc = subprocess.run(
+                ["curl", "-fsSL", "--max-time", "40", "-o", str(book), url],
+                capture_output=True,
+                text=True,
+            )
+            plain = epub_plain(book) if proc.returncode == 0 else ""
+            if proc.returncode == 0 and "范愛農" in plain and len(plain) >= 1500:
+                break
+        if proc is None or proc.returncode != 0 or "范愛農" not in plain or len(plain) < 1500:
+            CHINESE_SOURCE["ok"] = False
+            CHINESE_SOURCE["detail"] = (
+                "not executed: Gutenberg 25271 is missing or has no 范愛農 chapter of 1500 characters. "
+                "朝花夕拾 is not fabricated, and Morris's library was not read."
+            )
+            return
+    built = subprocess.run(
+        ["python3", str(ROOT / "spikes" / "epub" / "fixtures" / "build_books.py")],
+        capture_output=True,
+        text=True,
+    )
+    synthetic = epub_plain(dest / "plain-zh.epub")
+    if built.returncode != 0 or "客店" not in synthetic or len(synthetic) < 1500:
+        CHINESE_SOURCE["ok"] = False
+        CHINESE_SOURCE["detail"] = (
+            "not executed: plain-zh.epub was not built to 1500 characters from the Gutenberg source. "
+            + (built.stderr or built.stdout or "").strip()
+        )
+        return
+    CHINESE_SOURCE["ok"] = True
+    CHINESE_SOURCE["detail"] = f"Gutenberg 25271, plain-zh {len(synthetic)} characters"
+
+
 def run_reading(out, window_tool, ocr_tool):
     rows = []
     proto = ROOT / "docs" / "prototypes" / "reading-view"
     proto.mkdir(parents=True, exist_ok=True)
+    prepare_chinese_source()
     builder = ROOT / "spikes" / "epub" / "fixtures" / "build_books.py"
     built = subprocess.run(["python3", str(builder)], capture_output=True, text=True)
     if built.returncode != 0:
@@ -5687,16 +5789,42 @@ def run_reading(out, window_tool, ocr_tool):
             SETTINGS.write_text(saved)
     note = proto / "gap.txt"
     note.write_text((gap_ratio or "no gap ratio") + "\n")
+    if not CHINESE_SOURCE["ok"]:
+        rows = hold_chinese_rows(rows)
+    return rows
+
+
+def hold_chinese_rows(rows):
+    detail = CHINESE_SOURCE["detail"]
+    present = set()
+    for row in rows:
+        if row["id"] not in CHINESE_ROWS:
+            continue
+        present.add(row["id"])
+        text = row.get("detail") or ""
+        english_failed = row["status"] == "fail" and any(
+            name in text for name in ("pride", "styled", "plain-en", "publisher")
+        )
+        if english_failed:
+            row["detail"] = text + " " + detail
+            continue
+        row["status"] = "pending"
+        row["detail"] = detail
+    for missing in sorted(CHINESE_ROWS - present):
+        rows.append(check(missing, "reading-view", "window", "pending", detail))
     return rows
 
 
 def default_trim_shots(out, window_tool, ocr_tool, proto):
     SETTINGS.unlink(missing_ok=True)
     want_w, want_h = TRIMS["paperback"]
-    shots = (
+    shots = [
         ("default-trim-pride", {"SPIKE_MODE": "webkit", "SPIKE_SELECT": "1"}, "pride"),
-        ("default-trim-zhaohua", {"SPIKE_MODE": "webkit", "SPIKE_BOOK": "zhaohua", "SPIKE_AT": "3"}, "zhaohua"),
-    )
+    ]
+    if CHINESE_SOURCE["ok"]:
+        shots.append(
+            ("default-trim-zhaohua", {"SPIKE_MODE": "webkit", "SPIKE_BOOK": "zhaohua", "SPIKE_AT": "3"}, "zhaohua")
+        )
     rows = []
     bad = []
     backgrounds = {}
@@ -5990,6 +6118,8 @@ def pride_trims(out, window_tool, ocr_tool, proto, qualities, notes):
 
 def zhaohua_trims(out, window_tool, ocr_tool, proto, qualities, notes):
     rows = []
+    if not CHINESE_SOURCE["ok"]:
+        return rows
     write_trim("32kai")
     WEBKIT_JSON.unlink(missing_ok=True)
     state = launch(
@@ -6117,6 +6247,8 @@ def style_books(out, window_tool, ocr_tool, proto, notes):
     ]
     write_trim("32kai")
     for book, check_id, pred in specs:
+        if book == "plain-zh" and not CHINESE_SOURCE["ok"]:
+            continue
         WEBKIT_JSON.unlink(missing_ok=True)
         state = launch(
             out,
@@ -6227,6 +6359,9 @@ def plain_en_bars(out):
 
 
 def plain_zh_bars(out):
+    if not CHINESE_SOURCE["ok"]:
+        return []
+
     def score(trim, body, layout):
         native = cjk_native(layout)
         return check(
@@ -7306,15 +7441,19 @@ def top_is_paper(width, rows, rows_px=60, skip_px=0):
         return False, "png row is shorter than the width"
     bad = 0
     total = 0
-    for row in rows[:rows_px]:
+    for y, row in enumerate(rows[:rows_px]):
         x = channels * max(skip_px, 4)
         limit = len(row) - channels * 4
         while x + 2 < limit:
-            if (
-                abs(row[x] - paper[0]) > 8
-                or abs(row[x + 1] - paper[1]) > 8
-                or abs(row[x + 2] - paper[2]) > 8
-            ):
+            px = x // channels
+            red, green, blue = row[x], row[x + 1], row[x + 2]
+            # A window capture paints its rounded corners black. That is not paper,
+            # and the old left-bar skip is not what hides them.
+            corner = y < 16 and (px < 28 or px >= width - 28)
+            if corner and max(red, green, blue) < 20:
+                x += channels * 4
+                continue
+            if abs(red - paper[0]) > 8 or abs(green - paper[1]) > 8 or abs(blue - paper[2]) > 8:
                 bad += 1
             total += 1
             x += channels * 4
@@ -8148,9 +8287,9 @@ def run_chrome(out, window_tool, ocr_tool):
                         f"{name}.png",
                     ))
                     width, _height, pixels = decode_png_rows(png)
-                    window_w = float(body.get("window_w") or body.get("stage_w") or 0)
-                    skip = int(round(float(body.get("bar_w") or 0) * width / window_w)) if window_w else 0
-                    paper_ok, paper_detail = top_is_paper(width, pixels, skip_px=skip)
+                    # bar_w is the traffic-light span, not a gray column. Skipping it
+                    # hid the left corner and left the right corner counted as paper.
+                    paper_ok, paper_detail = top_is_paper(width, pixels, skip_px=0)
                     rows.append(check(
                         "chrome-b-fullscreen-paper",
                         "window-chrome",
@@ -8593,22 +8732,32 @@ def bold_word_starts(out, window_tool):
     prefixes = off_body.get("bold_prefixes")
     dom_off = prefixes == []
     if not MAIN_SHELL.exists():
-        pixel = "baseline binary is missing"
-    elif not grabbed:
-        pixel = "a window capture is missing"
-    else:
-        pixel = bold_off_page_diff(off_png, off_box, main_png, main_box)
-    off_ok = dom_off and pixel == 0
-    rows.append(
-        check(
-            "bold-word-starts-off",
-            "bold-word-starts",
-            "window",
-            "pass" if off_ok else "fail",
-            f"prefixes {prefixes} pixels {pixel} above the {FOOTER_BAND_PT:.0f}pt footer",
-            "bold-off.png",
+        rows.append(
+            check(
+                "bold-word-starts-off",
+                "bold-word-starts",
+                "window",
+                "pending",
+                f"not executed: baseline binary missing at {MAIN_SHELL}; prefixes {prefixes}. This is not a typesetting pass or fail.",
+                "bold-off.png",
+            )
         )
-    )
+    else:
+        if not grabbed:
+            pixel = "a window capture is missing"
+        else:
+            pixel = bold_off_page_diff(off_png, off_box, main_png, main_box)
+        off_ok = dom_off and pixel == 0
+        rows.append(
+            check(
+                "bold-word-starts-off",
+                "bold-word-starts",
+                "window",
+                "pass" if off_ok else "fail",
+                f"prefixes {prefixes} pixels {pixel} above the {FOOTER_BAND_PT:.0f}pt footer",
+                "bold-off.png",
+            )
+        )
     SETTINGS.write_text('{"trim":"paperback","boldWordStarts":true}\n')
     clear_breaks()
     on = launch(
@@ -9863,6 +10012,20 @@ end tell
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "open panel failed")
 
 
+def reader_pdf_page():
+    path = Path("/tmp/superreader-spike/reader.json")
+    try:
+        body = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if body.get("mode") != "pdf":
+        return None
+    page = body.get("page")
+    if isinstance(page, int) and page > 0:
+        return page
+    return None
+
+
 def webkit_page():
     try:
         body = json.loads(WEBKIT_JSON.read_text())
@@ -9989,7 +10152,17 @@ def run_alpha(out, window_tool):
             webkit_page,
             "epub",
         )
-        rows.append(check("alpha-empty", "alpha", "window", "pass" if opened else "fail", "empty window has Open" if opened else "Open was not in the window", "empty.png"))
+        # S1 removed the Open button and said not to repair that flow. The shelf
+        # window is the empty state. An Open button here is the old window.
+        empty_ok = not opened
+        rows.append(check(
+            "alpha-empty",
+            "alpha",
+            "window",
+            "pass" if empty_ok else "fail",
+            "shelf window has no Open button" if empty_ok else "Open button returned",
+            "empty.png",
+        ))
         rows.append(check("alpha-epub-open", "alpha", "window", "pass" if shown == 1 else "fail", f"Pride opened at page {shown}", "epub.png"))
         rows.append(check("alpha-epub-turn", "alpha", "window", "pass" if isinstance(turned, int) and turned >= 2 else "fail", f"page after right arrow {turned}"))
         rows.append(check("alpha-epub-reopen", "alpha", "window", "pass" if isinstance(restored, int) and restored >= 2 else "fail", f"relaunched at page {restored}"))
@@ -10001,9 +10174,11 @@ def run_alpha(out, window_tool):
         def current_pdf():
             names, _dump = ax_names(state["pid"])
             numbers = page_numbers(names)
-            if not numbers:
-                return None
-            return int(numbers[0].split("/")[0])
+            if numbers:
+                return int(numbers[0].split("/")[0])
+            # The footer is painted, not an accessibility name. reader.json
+            # already records the pdf page from the same window.
+            return reader_pdf_page()
         first = None
         deadline = time.time() + 40
         while time.time() < deadline:
@@ -10027,9 +10202,9 @@ def run_alpha(out, window_tool):
         def current_again():
             names, _dump = ax_names(again["pid"])
             numbers = page_numbers(names)
-            if not numbers:
-                return None
-            return int(numbers[0].split("/")[0])
+            if numbers:
+                return int(numbers[0].split("/")[0])
+            return reader_pdf_page()
         back = None
         deadline = time.time() + 40
         while time.time() < deadline:

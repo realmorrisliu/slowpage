@@ -11,8 +11,9 @@ use objc2_app_kit::{
     NSButton, NSColor, NSColorSpace, NSEvent, NSEventMask, NSFont, NSFontWeightRegular, NSImage,
     NSImageAlignment, NSImageScaling, NSImageSymbolConfiguration, NSImageView, NSLineBreakMode,
     NSScreen, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSToolbarDelegate,
-    NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem, NSView, NSWindow,
-    NSWindowButton, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem,
+    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowButton,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
 
@@ -76,6 +77,7 @@ pub struct Runtime {
     entering: Cell<bool>,
     field: RefCell<Option<Retained<NSTextField>>>,
     hover_title: RefCell<Option<Retained<NSTextField>>>,
+    contents_button: RefCell<Option<Retained<NSButton>>>,
     contents_bar: RefCell<Option<Retained<ContentsBar>>>,
     icon_gap: Cell<f64>,
     icon_dy: Cell<f64>,
@@ -125,6 +127,7 @@ impl Default for Runtime {
             entering: Cell::new(false),
             field: RefCell::new(None),
             hover_title: RefCell::new(None),
+            contents_button: RefCell::new(None),
             contents_bar: RefCell::new(None),
             icon_gap: Cell::new(f64::NAN),
             icon_dy: Cell::new(f64::NAN),
@@ -1290,6 +1293,77 @@ fn place_title(window: &NSWindow, rt: &Runtime, alpha: f64) {
     }
 }
 
+/// The contents control in window coordinates. Its leading edge is 26pt past
+/// the zoom button, and it shares that button's vertical center.
+pub(crate) fn contents_button_frame(
+    zoom_x: f64,
+    zoom_y: f64,
+    zoom_w: f64,
+    zoom_h: f64,
+    icon: f64,
+) -> (f64, f64, f64, f64) {
+    let x = zoom_x + zoom_w + 26.0;
+    let y = zoom_y + (zoom_h - icon) / 2.0;
+    (x, y, icon, icon)
+}
+
+fn place_contents_button(window: &NSWindow, rt: &Runtime, alpha: f64) {
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let Some(zoom) = window.standardWindowButton(NSWindowButton::ZoomButton) else {
+        return;
+    };
+    let Some(image) = icons::contents_image() else {
+        return;
+    };
+    image.setTemplate(false);
+    let mtm = MainThreadMarker::from(&*window);
+    let existing = rt.contents_button.borrow().clone();
+    let button = if let Some(existing) = existing {
+        existing
+    } else {
+        let created = unsafe { NSButton::buttonWithImage_target_action(&image, None, None, mtm) };
+        created.setBordered(false);
+        created.setImageScaling(NSImageScaling::ScaleNone);
+        let label = NSString::from_str("Contents");
+        unsafe {
+            let _: () = msg_send![&*created, setAccessibilityLabel: &*label];
+        }
+        let view: Retained<NSView> = created.clone().into_super().into_super();
+        view.setIdentifier(Some(&NSString::from_str(CONTENTS_ID)));
+        *rt.contents_button.borrow_mut() = Some(created.clone());
+        created
+    };
+    button.setImage(Some(&image));
+    let zoom_frame = button_window_frame(&zoom);
+    let (x, y, width, height) = contents_button_frame(
+        zoom_frame.origin.x,
+        zoom_frame.origin.y,
+        zoom_frame.size.width,
+        zoom_frame.size.height,
+        image.size().width.max(18.0),
+    );
+    let host = content_window_frame(&content);
+    let local_x = x - host.origin.x;
+    let local_bottom = y - host.origin.y;
+    let flipped: bool = unsafe { msg_send![&*content, isFlipped] };
+    let local_y = if flipped {
+        content.bounds().size.height - local_bottom - height
+    } else {
+        local_bottom
+    };
+    let _ = mtm;
+    button.setFrame(NSRect::new(
+        NSPoint::new(local_x, local_y),
+        NSSize::new(width, height),
+    ));
+    button.setAlphaValue(alpha);
+    button.setHidden(alpha < 0.02);
+    button.setEnabled(alpha >= 0.9);
+    content.addSubview(&button);
+}
+
 /// The book title's frame in the content view. Width leaves the traffic lights
 /// clear. The 18-point row sits against the top. A flipped content view counts
 /// y from that top; an ordinary one counts y from the bottom.
@@ -1427,13 +1501,22 @@ pub const TOOLBAR_ORDER: [&str; 5] = [
 ];
 
 fn place_contents(window: &NSWindow, rt: &Runtime, alpha: f64) {
+    if std::env::var("SPIKE_ICON").ok().as_deref() == Some("0") {
+        if let Some(button) = rt.contents_button.borrow().clone() {
+            button.setHidden(true);
+        }
+        if let Some(toolbar) = window.toolbar() {
+            clear_contents(&toolbar);
+        }
+        return;
+    }
+    // The hidden title bar does not draw the toolbar item, so the lights stay
+    // and the contents control does not. The same list glyph is placed on the
+    // content view, 26pt past the zoom button.
+    place_contents_button(window, rt, alpha);
     let Some(toolbar) = window.toolbar() else {
         return;
     };
-    if std::env::var("SPIKE_ICON").ok().as_deref() == Some("0") {
-        clear_contents(&toolbar);
-        return;
-    }
     // Inserting the item while the lights are faded puts it in the
     // traffic-light row, and it stays there after they return. Wait until
     // the buttons are shown, which is the placement that leaves 26 pt.
@@ -1828,6 +1911,9 @@ fn button_frame(window: &NSWindow, kind: NSWindowButton) -> serde_json::Value {
 }
 
 fn icon_frame(window: &NSWindow) -> serde_json::Value {
+    if let Some(button) = rt_contents_button(window) {
+        return view_frame(&button);
+    }
     let Some(toolbar) = window.toolbar() else {
         return serde_json::Value::Null;
     };
@@ -1835,6 +1921,17 @@ fn icon_frame(window: &NSWindow) -> serde_json::Value {
         return serde_json::Value::Null;
     };
     view_frame(&view)
+}
+
+fn rt_contents_button(window: &NSWindow) -> Option<Retained<NSView>> {
+    let content = window.contentView()?;
+    for sub in content.subviews().iter() {
+        let ident = sub.identifier();
+        if ident.as_deref().map(NSString::to_string).as_deref() == Some(CONTENTS_ID) {
+            return Some(sub.clone());
+        }
+    }
+    None
 }
 
 fn view_frame(view: &NSView) -> serde_json::Value {
@@ -1980,6 +2077,18 @@ mod tests {
     fn the_page_starts_below_the_traffic_lights() {
         let (_, _, _, top) = content_box(800.0, 1000.0);
         assert!(top >= 44.0);
+    }
+
+    #[test]
+    fn the_contents_control_sits_26pt_past_the_zoom_button() {
+        let (x, y, width, height) = contents_button_frame(40.0, 800.0, 14.0, 16.0, 18.0);
+        close(x, 80.0);
+        close(y, 799.0);
+        close(width, 18.0);
+        close(height, 18.0);
+        let zoom_mid = 800.0 + 8.0;
+        let icon_mid = y + height / 2.0;
+        close(icon_mid, zoom_mid);
     }
 
     #[test]

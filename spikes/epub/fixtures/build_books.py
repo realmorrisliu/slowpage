@@ -14,6 +14,7 @@ ZHAOHUA = OUT / "zhaohua.epub"
 
 
 def blocks_from(epub, needle, fallback):
+    """Pull real paragraphs from an existing book. `fallback` is not used for 朝花夕拾."""
     blocks = []
     if epub.exists():
         with zipfile.ZipFile(epub) as book:
@@ -39,7 +40,7 @@ def blocks_from(epub, needle, fallback):
                     blocks.append(block)
                 if sum(len(piece) for _, piece in blocks) > 1500:
                     break
-    if not blocks:
+    if not blocks and fallback:
         blocks = [("p", fallback)]
     return blocks
 
@@ -107,11 +108,8 @@ def build():
         "truth universally acknowledged",
         "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
     )
-    chinese = blocks_from(
-        ZHAOHUA,
-        "范",
-        "在東京的客店裏，我們大抵一起來就看報。學生所看的多是朝日新聞和讀賣新聞。專愛看一點報上的雜感。",
-    )
+    chinese = blocks_from(ZHAOHUA, "范愛農", None)
+    chinese_len = sum(len(text) for _, text in chinese)
     container = """<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -139,7 +137,7 @@ h1, h2, h3 { font-family: "Literata", serif; font-size: 19px; text-align: center
             "",
             None,
             [],
-        ),
+        ) if chinese_len >= 1500 else None,
         "styled.epub": (
             "en",
             "Styled Literata",
@@ -165,7 +163,11 @@ h1, h2, h3 { font-family: "Literata", serif; font-size: 19px; text-align: center
             [],
         ),
     }
-    for name, (lang, title, body, head, viewport, extra) in books.items():
+    for name, spec in books.items():
+        if spec is None:
+            print(f"not written {name}: source under 1500 characters")
+            continue
+        lang, title, body, head, viewport, extra = spec
         items = [("chapter", "chapter.xhtml", "application/xhtml+xml"), *extra]
         files = {
             "META-INF/container.xml": container.encode(),
