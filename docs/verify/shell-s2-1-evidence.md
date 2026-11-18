@@ -66,6 +66,18 @@ Finder double-click, 继续阅读, library PDF open, ask, scroll column, comment
 
 `alpha-epub-reopen` ("Quit and launch again. The same book opens on the same page.") is the pre-shell reader. S1's removal list is the empty-window Open button, `open -a` / Open With, and the bare shelf screen. It does not name this row, and this change does not delete it. The part that stays is the stored page: an explicit file opens at `resume_page`, and the shelf's 继续阅读 row uses that same page. A stored page with no explicit file does not open the book.
 
+## Chinese fixture
+
+The admitted file is the original Project Gutenberg mirror of ebook 25271, not a rebuilt chapter. `spikes/epub/fixtures/chinese-admission.json` records the pglaf URL, sha256 `91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293`, 112970 bytes, and chapter 范愛農. The bytes loaded by the tests are `/tmp/superreader-fixtures/zhaohua.epub`. The reader's open skips the first text chunk because its body begins "Project Gutenberg", and the opened document is `OEBPS/3309323728932395831_25271-0-1.txt.html`. Its visible body starts at the spilled dateline 十月十二日 and then `<p id="id00021">范愛農</p>`. The file's `<title>` is the license heading and is not that page. 範愛農 stays as printed. plain-zh is still the separate unstyled fixture. `spikes/epub/fixtures/check_zhaohua.py` confirmed that selection on the original bytes: the opened body head is `十月十二日。 范愛農`, the title paragraph occurs once, and the first chunk does not contain it. That check is not a screenshot.
+
+## CI at 110e74d
+
+Run [44282176347](https://github.com/realmorrisliu/slowpage/actions/runs/44282176347) is success on `110e74de44d2e2072fc2dd22a1e8e544c86ec88b`, seven jobs. Release run 44282177266 is the eighth, job `macos`, also success. The test job never runs `cargo test -p spike-shell`. The names `a_stored_page_does_not_open_the_shelf_launch`, `an_explicit_file_resumes_its_stored_page`, `a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place`, and `a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported` do not appear in the log. `fixtures_open_on_chapter_text` is `ok` at 10:07:42, and the book fetch starts at 10:08:06, so that ok is the early return when the file is absent. It is not an open of 范愛農.
+
+## Bold off baseline
+
+`/tmp/spike-shell-main-fdd8183` is still absent. The compared commit is `fdd8183c5d43e0fbf623c188eebf29551254ab03` (`feat(bold-word-starts): paint the prefix in the page`, the main named by `00c8290`). The binary is a release `spike-shell` from that commit: `unset CARGO_TARGET_DIR` and `~/.local/bin/cargo build --manifest-path spikes/Cargo.toml -p spike-shell --release`, then copy `~/.cache/cargo-target/slowpage/release/spike-shell` to that path. It was not built. The 1-minute load at the single check was 8.96.
+
 ## Next run, when load is under 8
 
-One `just verify`. No `SR_VERIFY_MAX_LOAD` above 8. A Chinese book is in the run only after `spikes/epub/fixtures/chinese-admission.json` has the file's sha256 and the chapter text meets 1500 characters and 范愛農. Do not start it while another project's process would have to be killed. Do not install to `/Applications`. Do not write the real profile.
+One `just verify`, after coordination, and only when the 1-minute load is under 8. No `SR_VERIFY_MAX_LOAD` above 8. The Chinese rows use the admitted file at `/tmp/superreader-fixtures/zhaohua.epub`. A whole-book match is not the opened page. The spike-shell tests named above were not compiled locally: the one load sample was 8.96. Do not start the run while another project's process would have to be killed. Do not install to `/Applications`. Do not write the real profile.

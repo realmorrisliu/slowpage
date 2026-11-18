@@ -119,8 +119,15 @@ jobs:
           fetch "$dest/pride-se.epub" \
             "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice/downloads/jane-austen_pride-and-prejudice.epub?source=download"
           fetch "$dest/zhaohua.epub" \
-            "https://www.gutenberg.org/ebooks/25271.epub.noimages" \
             "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub"
+          # The admitted file. A cached copy with any other bytes is fetched again.
+          if ! echo "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293  $dest/zhaohua.epub" | shasum -a 256 -c -; then
+            rm -f "$dest/zhaohua.epub"
+            fetch "$dest/zhaohua.epub" \
+              "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub"
+            echo "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293  $dest/zhaohua.epub" | shasum -a 256 -c -
+          fi
+      - run: cargo test -p spike-epub --lib fixtures_open_on_chapter_text -- --nocapture
       - run: cargo test
         working-directory: crates/superreader-typeset
 

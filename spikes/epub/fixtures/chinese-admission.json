@@ -1,10 +1,14 @@
 {
-  "source": "Project Gutenberg ebook 25271",
-  "url": "https://www.gutenberg.org/ebooks/25271.epub.noimages",
-  "cache_url": "https://www.gutenberg.org/cache/epub/25271/pg25271.epub",
-  "sha256": "",
+  "source": "Project Gutenberg ebook 25271, 鲁迅《朝花夕拾》",
+  "url": "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub",
+  "rights": "Public domain in the USA.",
+  "sha256": "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293",
+  "bytes": 112970,
   "min_chars": 1500,
   "chapter": "范愛農",
+  "chapter_href": "OEBPS/3309323728932395831_25271-0-1.txt.html",
+  "chapter_anchor": "id00021",
   "plain_needle": "客店",
-  "note": "sha256 stays empty until the downloaded file is checked offline. An empty sha is not admitted. The text is not fabricated."
+  "fixture": "/tmp/superreader-fixtures/zhaohua.epub",
+  "note": "Original mirror bytes. Not re-chaptered and not rewritten. The opened spine item is the second text chunk. Its body begins with the spilled dateline 十月十二日 and then p#id00021 范愛農. 範愛農 in that edition is left as printed. plain-zh is a separate unstyled fixture and is not this file. A whole-book match is not a screenshot of the opened page."
 }

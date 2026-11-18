@@ -612,12 +612,17 @@ mod tests {
         assert!(pride.chapters[0].href.contains("chapter-1"), "{}", pride.chapters[0].href);
         assert!(pride.chapters[0].plain.contains("truth universally acknowledged"));
         let zhaohua = open_book(&zhaohua).unwrap();
+        let href = &zhaohua.chapters[0].href;
         assert!(
-            !zhaohua.chapters[0].href.contains("0-0"),
-            "{}",
-            zhaohua.chapters[0].href
+            href.contains("25271-0-1"),
+            "opened {href}; the first text chunk is not 范愛農"
         );
-        assert!(zhaohua.chapters[0].plain.contains("范愛農"), "{}", zhaohua.chapters[0].href);
+        // The file's <title> is the Gutenberg license heading. The page is the
+        // body, and that body contains the essay title paragraph.
+        assert!(
+            zhaohua.chapters[0].html.contains("id=\"id00021\">范愛農"),
+            "opened {href} does not contain the 范愛農 title paragraph"
+        );
     }
 
     #[test]
