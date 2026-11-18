@@ -349,6 +349,12 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     }
     note_fullscreen_hook(window, rt);
     request_fullscreen(window, rt, fullscreen, armed);
+    // Full screen changes the window frame without resizing the content view.
+    // The stage then stays at the old height and both panels stop short.
+    // Fitting from inside layout re-enters AppKit, so only the pump does it.
+    if !rt.laying_out.get() {
+        fit_full_content(window);
+    }
     if fullscreen {
         let shown = hover_target(window);
         if shell_on() {
@@ -590,12 +596,202 @@ fn restore_fullscreen_lights() {
     });
 }
 
+/// A full-size content view fills the window frame. A child that kept the
+/// previous frame is the unused band under the shelf and the chat.
+fn fit_full_content(window: &NSWindow) {
+    if !window
+        .styleMask()
+        .contains(NSWindowStyleMask::FullSizeContentView)
+    {
+        return;
+    }
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let frame = window.frame();
+    let current = content.frame();
+    let before = view_box(Some(&content));
+    if content_needs_fit(
+        frame.size.width as f64,
+        frame.size.height as f64,
+        before.0,
+        before.1,
+        before.2,
+        before.3,
+    ) {
+        note_fit("content", &frame, current);
+        content.setFrame(NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(frame.size.width, frame.size.height),
+        ));
+    }
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let bounds = content.bounds();
+    let Some(child) = filling_child(&content) else {
+        return;
+    };
+    let child_box = view_box(Some(&child));
+    if child_needs_fit(
+        bounds.size.width as f64,
+        bounds.size.height as f64,
+        child_box.0,
+        child_box.1,
+        child_box.2,
+        child_box.3,
+    ) {
+        note_fit("child", &bounds, child.frame());
+        child.setFrame(NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(bounds.size.width, bounds.size.height),
+        ));
+    }
+}
+
+pub fn content_size(window: &NSWindow) -> Option<(f64, f64)> {
+    let view = window.contentView()?;
+    let size = view.bounds().size;
+    let width = size.width as f64;
+    let height = size.height as f64;
+    if width > 2.0 && height > 2.0 {
+        Some((width, height))
+    } else {
+        None
+    }
+}
+
+fn view_box(view: Option<&NSView>) -> (f64, f64, f64, f64) {
+    let Some(view) = view else {
+        return (0.0, 0.0, 0.0, 0.0);
+    };
+    let frame = view.frame();
+    (
+        frame.origin.x as f64,
+        frame.origin.y as f64,
+        frame.size.width as f64,
+        frame.size.height as f64,
+    )
+}
+
+fn filling_child(content: &NSView) -> Option<Retained<NSView>> {
+    let children = content.subviews();
+    let mut best: Option<Retained<NSView>> = None;
+    let mut area = 0.0;
+    for index in 0..children.count() {
+        let child = children.objectAtIndex(index);
+        let frame = child.frame();
+        let next = frame.size.width as f64 * frame.size.height as f64;
+        if next > area {
+            area = next;
+            best = Some(child);
+        }
+    }
+    best
+}
+
+fn content_needs_fit(
+    window_w: f64,
+    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
+) -> bool {
+    if window_w < 2.0 || window_h < 2.0 || content_w < 2.0 || content_h < 2.0 {
+        return false;
+    }
+    content_x.abs() > 0.5
+        || content_y.abs() > 0.5
+        || (content_w - window_w).abs() > 0.5
+        || (content_h - window_h).abs() > 0.5
+}
+
+fn child_needs_fit(
+    parent_w: f64,
+    parent_h: f64,
+    child_x: f64,
+    child_y: f64,
+    child_w: f64,
+    child_h: f64,
+) -> bool {
+    if parent_w < 2.0 || parent_h < 2.0 || child_w < parent_w * 0.5 || child_h < 2.0 {
+        return false;
+    }
+    child_x.abs() > 0.5
+        || child_y.abs() > 0.5
+        || (child_w - parent_w).abs() > 0.5
+        || (child_h - parent_h).abs() > 0.5
+}
+
+fn note_fit(kind: &str, target: &NSRect, before: NSRect) {
+    let body = serde_json::json!({
+        "kind": kind,
+        "target_w": target.size.width as f64,
+        "target_h": target.size.height as f64,
+        "before_x": before.origin.x as f64,
+        "before_y": before.origin.y as f64,
+        "before_w": before.size.width as f64,
+        "before_h": before.size.height as f64,
+    });
+    let _ = std::fs::create_dir_all("/tmp/superreader-spike");
+    let _ = std::fs::write(
+        format!("/tmp/superreader-spike/content-fit-{kind}.json"),
+        body.to_string(),
+    );
+}
+
 fn content_window_frame(view: &NSView) -> NSRect {
     let frame = view.frame();
     match unsafe { view.superview() } {
         Some(parent) => parent.convertRect_toView(frame, None),
         None => frame,
     }
+}
+
+/// Window frame, content rect, and the stage view, in points. The shell's
+/// available height is whichever of these the layout actually fills.
+pub fn write_bounds(stage: &NSView) {
+    let Some(window) = stage.window() else {
+        return;
+    };
+    let frame = window.frame();
+    let layout = window.contentLayoutRect();
+    let content = window.contentView().map(|view| content_window_frame(&view));
+    let parent = unsafe { stage.superview() }.map(|view| view.bounds().size);
+    let stage_bounds = stage.bounds().size;
+    let screen = window.screen().map(|screen| {
+        serde_json::json!({
+            "frame_w": screen.frame().size.width as f64,
+            "frame_h": screen.frame().size.height as f64,
+            "visible_w": screen.visibleFrame().size.width as f64,
+            "visible_h": screen.visibleFrame().size.height as f64,
+            "scale": screen.backingScaleFactor() as f64,
+        })
+    });
+    let body = serde_json::json!({
+        "scale": window.backingScaleFactor() as f64,
+        "fullscreen": window.styleMask().contains(NSWindowStyleMask::FullScreen),
+        "window": rect_json(frame),
+        "content_layout": rect_json(layout),
+        "content": content.map(rect_json),
+        "stage_w": stage_bounds.width as f64,
+        "stage_h": stage_bounds.height as f64,
+        "parent_w": parent.map(|size| size.width as f64),
+        "parent_h": parent.map(|size| size.height as f64),
+        "screen": screen,
+    });
+    let _ = std::fs::create_dir_all("/tmp/superreader-spike");
+    let _ = std::fs::write("/tmp/superreader-spike/bounds.json", body.to_string());
+}
+
+fn rect_json(rect: NSRect) -> serde_json::Value {
+    serde_json::json!({
+        "x": rect.origin.x as f64,
+        "y": rect.origin.y as f64,
+        "w": rect.size.width as f64,
+        "h": rect.size.height as f64,
+    })
 }
 
 fn button_window_frame(button: &NSButton) -> NSRect {
@@ -1393,9 +1589,14 @@ fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
         zoom_max_y: 0.0,
         width: 0.0,
     });
+    let content = view_box(window.contentView().as_deref());
     let mut body = serde_json::json!({
         "window_w": frame.size.width,
         "window_h": frame.size.height,
+        "content_x": content.0,
+        "content_y": content.1,
+        "content_w": content.2,
+        "content_h": content.3,
         "page_x": page.x,
         "page_y": page.y,
         "page_w": page.w,
@@ -1523,6 +1724,21 @@ mod tests {
 
     fn close(got: f64, want: f64) {
         assert!((got - want).abs() < 0.02, "{got} vs {want}");
+    }
+
+    #[test]
+    fn full_content_fits_the_window_and_ignores_a_matched_frame() {
+        assert!(!content_needs_fit(1440.0, 855.0, 0.0, 0.0, 1440.0, 855.0));
+        assert!(!content_needs_fit(578.0, 528.0, 0.0, 0.0, 578.2, 528.0));
+        assert!(content_needs_fit(1512.0, 949.0, 0.0, 0.0, 1440.0, 855.0));
+        assert!(!content_needs_fit(1512.0, 949.0, 0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_short_root_is_fitted_and_a_traffic_button_is_not() {
+        assert!(child_needs_fit(1512.0, 949.0, 0.0, 0.0, 1440.0, 855.0));
+        assert!(!child_needs_fit(1512.0, 949.0, 0.0, 0.0, 1512.0, 949.0));
+        assert!(!child_needs_fit(1512.0, 949.0, 12.0, 900.0, 14.0, 14.0));
     }
 
     #[test]

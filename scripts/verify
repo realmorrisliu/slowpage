@@ -683,6 +683,65 @@ def _bottom(frame):
     return frame[1] + frame[3]
 
 
+def available_height_report(layout, chrome):
+    """The shelf and the chat use the window, leaving the approved bottom gap.
+
+    The layout file's own window is derived from the card, so it cannot see a
+    band under both panels. The window frame and the content view are the
+    root. Tolerance is the same 0.5pt as the inset token.
+    """
+    if not isinstance(layout, dict) or not isinstance(chrome, dict):
+        return ["available height missing"]
+    nodes = layout.get("nodes")
+    if not isinstance(nodes, list):
+        return ["available height missing"]
+    by_id = {
+        node.get("id"): node
+        for node in nodes
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+
+    def box(node_id):
+        node = by_id.get(node_id)
+        if node is None:
+            return None
+        return _box(node.get("frame"))
+
+    try:
+        window_h = float(chrome["window_h"])
+        window_w = float(chrome["window_w"])
+        stage_h = float(chrome["stage_h"])
+        stage_w = float(chrome["stage_w"])
+        content_h = float(chrome["content_h"])
+        content_w = float(chrome["content_w"])
+        inset = float(layout["inset"])
+        composer_inset = float(layout["composer_inset"])
+    except (KeyError, TypeError, ValueError):
+        return ["available height missing"]
+    problems = []
+    if abs(content_h - window_h) > ALIGN_TOL or abs(content_w - window_w) > ALIGN_TOL:
+        problems.append(f"content {content_w:.1f}x{content_h:.1f} window {window_w:.1f}x{window_h:.1f}")
+    del stage_h, stage_w
+    card = box("card")
+    if card is None:
+        problems.append("card missing")
+        return problems
+    card_gap = window_h - _bottom(card)
+    if abs(card_gap - inset) > ALIGN_TOL:
+        problems.append(f"card bottom gap {card_gap:.2f}")
+    chat = box("chat")
+    if chat is not None:
+        chat_gap = window_h - _bottom(chat)
+        if abs(chat_gap) > ALIGN_TOL:
+            problems.append(f"chat bottom gap {chat_gap:.2f}")
+    composer = box("composer")
+    if composer is not None:
+        composer_gap = window_h - _bottom(composer)
+        if abs(composer_gap - composer_inset) > ALIGN_TOL:
+            problems.append(f"composer bottom gap {composer_gap:.2f}")
+    return problems
+
+
 def alignment_report(layout):
     """Centers, edges, and repeated gaps against the layout.json grid. Tolerance is 0.5pt."""
     if not isinstance(layout, dict):
@@ -1880,6 +1939,25 @@ def form_diff_self_check():
     assert pixel_changes(flat, flat) == 0
     assert library_min_height() == 528
     assert alignment_report(_sample_layout()) == []
+    sample = _sample_layout()
+    sample_chrome = {
+        "window_w": sample["window"][0],
+        "window_h": sample["window"][1],
+        "stage_w": sample["window"][0],
+        "stage_h": sample["window"][1],
+        "content_w": sample["window"][0],
+        "content_h": sample["window"][1],
+    }
+    assert available_height_report(sample, sample_chrome) == []
+    short = dict(sample_chrome)
+    short["window_h"] = sample["window"][1] + 94
+    short["content_h"] = short["window_h"]
+    short["window_w"] = sample["window"][0] + 72
+    short["content_w"] = short["window_w"]
+    assert any(item.startswith("card bottom") for item in available_height_report(sample, short))
+    short_content = dict(sample_chrome)
+    short_content["content_h"] = sample["window"][1] - 94
+    assert any(item.startswith("content ") for item in available_height_report(sample, short_content))
     gapped = _sample_layout()
     gapped["nodes"].extend(
         [
@@ -2306,6 +2384,7 @@ def _size_note(label, pid=None):
     matched, match_detail = geometry_matches(geo)
     problems = clipping_report(frames)
     problems.extend(alignment_report(frames))
+    problems.extend(available_height_report(frames, read_chrome()))
     if pid is not None:
         problems.extend(ax_overflow(pid))
     chat = shell.get("chat_w")

@@ -70,10 +70,15 @@ define_class!(
                     let _: () = unsafe { msg_send![self, setNeedsDisplay: true] };
                 }
                 if crate::chrome::shell_on() {
+                    if let Some((width, height)) = crate::chrome::content_size(&window) {
+                        let mut state = self.ivars().state.borrow_mut();
+                        state.shell_w = width;
+                        state.shell_h = height;
+                    }
                     let state = self.ivars().state.borrow();
                     let key = (
-                        state.stage_w.round() as i32,
-                        state.stage_h.round() as i32,
+                        state.shell_w.round() as i32,
+                        state.shell_h.round() as i32,
                         state.chrome.bar_w.get().round() as i32,
                     );
                     drop(state);
@@ -131,6 +136,8 @@ define_class!(
             let _: () = unsafe { msg_send![super(self), layout] };
             let bounds: NSRect = unsafe { msg_send![self, bounds] };
             let window: Option<Retained<NSWindow>> = unsafe { msg_send![self, window] };
+            let view: &NSView = unsafe { &*std::ptr::from_ref(self).cast::<NSView>() };
+            crate::chrome::write_bounds(view);
             let fullscreen = window.as_ref().is_some_and(|window| {
                 window.styleMask().contains(objc2_app_kit::NSWindowStyleMask::FullScreen)
             });
@@ -263,6 +270,10 @@ struct State {
     declared: Option<(f64, f64)>,
     stage_w: f64,
     stage_h: f64,
+    /// The window's content view. The shelf lays out from this, not from the
+    /// reader stage, which can stay at the previous frame in full screen.
+    shell_w: f64,
+    shell_h: f64,
     placed: Option<(i32, i32, i32, i32, String)>,
     placed_zoom: f64,
     await_hold: bool,
@@ -1314,8 +1325,8 @@ impl State {
                 "bars_row": bars_row,
                 "trim": self.trim_id,
                 "empty": self.mode == Mode::Empty,
-                "stage_w": self.stage_w,
-                "stage_h": self.stage_h,
+                "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
+                "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
                 "bar_w": self.chrome.bar_w.get(),
                 "lights_visible": self.chrome.lights_visible.get(),
                 "content_top": self.chrome.content_top.get(),
@@ -1429,6 +1440,8 @@ impl Stage {
             declared: None,
             stage_w: 0.0,
             stage_h: 0.0,
+            shell_w: 0.0,
+            shell_h: 0.0,
             placed: None,
             placed_zoom: 1.0,
             await_hold: false,
