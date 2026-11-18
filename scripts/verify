@@ -2128,6 +2128,25 @@ def form_diff_self_check():
         ("fullscreen-settled", filled, full_chrome),
         ("fullscreen-exit", sample, sample_chrome),
     ]) == []
+    short_layout = layout_at_window(sample, 1440, 823)
+    short_chrome = {
+        "fullscreen": False,
+        "window_w": 1440,
+        "window_h": 855,
+        "content_w": 1440,
+        "content_h": 823,
+    }
+    fitted_layout = layout_at_window(sample, 1440, 855)
+    fitted_chrome = {
+        "fullscreen": False,
+        "window_w": 1440,
+        "window_h": 855,
+        "content_w": 1440,
+        "content_h": 855,
+    }
+    assert not enter_sample_ready(short_layout, short_chrome, (1440, 855))
+    assert enter_sample_ready(fitted_layout, fitted_chrome, (1440, 855))
+    assert not enter_sample_ready(fitted_layout, {**fitted_chrome, "fullscreen": True}, (1440, 855))
     shield = {
         "id": 1, "w": 1512, "h": 982, "x": 0, "y": 0,
         "vis_w": 1512, "vis_h": 949, "scale": 2, "screen_h": 982,
@@ -3132,8 +3151,7 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
         try:
             if (
                 not seen_full["value"]
-                and _layout_ready(layout)
-                and enter_is_windowed(chrome, windowed_size)
+                and enter_sample_ready(layout, chrome, windowed_size)
             ):
                 _archive_observed(io, out, "fullscreen-enter", layout, chrome)
                 entered["ok"] = True
@@ -3346,18 +3364,8 @@ class FormLibraries:
 
 
 def page_centered(body):
-    try:
-        x = float(body.get("page_x"))
-        width = float(body.get("page_w"))
-        stage = float(body.get("stage_w"))
-    except (TypeError, ValueError):
-        return False
-    if width <= 0 or stage <= 0 or x + width > stage + 2.0:
-        return False
-    bar = float(body.get("bar_w") or 0)
-    if bar > 1.0:
-        return content_centered(body)
-    return abs((x + width / 2.0) - (stage / 2.0)) <= 2.0
+    """The reader page is centered in the stage. The traffic-light row is not a column."""
+    return content_centered(body, tol=2.0)
 
 
 def content_centered(body, tol=0.5):
@@ -3365,14 +3373,29 @@ def content_centered(body, tol=0.5):
         x = float(body.get("page_x"))
         width = float(body.get("page_w"))
         stage = float(body.get("stage_w"))
-        bar = float(body.get("bar_w"))
     except (TypeError, ValueError):
         return False
-    if width <= 0 or stage <= bar or bar <= 1.0:
+    if width <= 0 or stage <= 0 or x + width > stage + 0.5:
         return False
-    page_mid = x + width / 2.0
-    area_mid = bar + (stage - bar) / 2.0
-    return abs(page_mid - area_mid) <= tol and x + 0.5 >= bar and x + width <= stage + 0.5
+    return abs((x + width / 2.0) - (stage / 2.0)) <= tol
+
+
+def gray_strip_painted(painted):
+    """A measured left column is the rejected reader strip. No column is the page."""
+    try:
+        width = float(painted)
+    except (TypeError, ValueError):
+        return False
+    return width >= 1.0
+
+
+def enter_sample_ready(layout, chrome, windowed_size):
+    """The windowed frame fullscreen may leave from. A short content view is not it."""
+    return (
+        _layout_ready(layout)
+        and enter_is_windowed(chrome, windowed_size)
+        and not available_height_report(layout, chrome)
+    )
 
 
 def near_white(red, green, blue):
@@ -3763,9 +3786,13 @@ def self_test():
             column[offset : offset + 4] = bytes((228, 228, 230, 255))
     got_w, _got_h, column_rows = decode_png_bytes(encode_png(column_w, column_h, column))
     assert abs(bar_column_pt(got_w, column_rows, 30.0) - 10.0) < 0.01
-    assert page_centered({"page_x": 399.0, "page_w": 400.0, "stage_w": 1100.0, "bar_w": 98.0})
+    assert page_centered({"page_x": 295.5, "page_w": 509.0, "stage_w": 1100.0, "bar_w": 78.0})
+    assert not page_centered({"page_x": 399.0, "page_w": 400.0, "stage_w": 1100.0, "bar_w": 98.0})
     assert not page_centered({"page_x": 98.0, "page_w": 400.0, "stage_w": 1100.0, "bar_w": 98.0})
     assert page_centered({"page_x": 52.0, "page_w": 518.0, "stage_w": 622.0})
+    assert not gray_strip_painted(None)
+    assert not gray_strip_painted(0.0)
+    assert gray_strip_painted(78.0)
     placed, _detail = icon_placement({
         "icon_frame": {"x": 106.0, "y": 17.0, "w": 18.0, "h": 18.0},
         "close": {"x": 18.0, "y": 18.0, "w": 16.0, "h": 16.0},
@@ -8092,9 +8119,6 @@ def run_chrome(out, window_tool, ocr_tool):
                     stage_w = float(body.get("stage_w") or 0)
                     stage_h = float(body.get("stage_h") or 0)
                     want_x, want_y, want_w, want_h = placed_page(stage_w, stage_h, *TRIMS["paperback"])
-                    bar_w = float(body.get("bar_w") or 0)
-                    if bar_w > 1 and bar_w + want_w <= stage_w:
-                        want_x = bar_w + (stage_w - bar_w - want_w) / 2.0
                     page_x = float(body.get("page_x") or 0)
                     page_y = float(body.get("page_y") or 0)
                     page_w = float(body.get("page_w") or 0)
@@ -9169,12 +9193,11 @@ if !CGImageDestinationFinalize(dest) { exit(1) }
             gap_left = float(full.get("close_min_x") or 0)
             gap_right = bar_w - float(full.get("zoom_max_x") or 0)
             gaps_ok = abs(gap_left - gap_right) <= 0.5 and gap_left > 0 and gap_right > 0
-            paint_ok = painted is not None and abs(painted - bar_w) <= 0.5
             home_ok, home_left, home_right = centered(left_full, home)
             save_full_crop(full, gap_left, gap_right)
             row(
                 "sidebar-fullscreen",
-                gaps_ok and paint_ok and home_ok and returned,
+                gaps_ok and not gray_strip_painted(painted) and home_ok and returned,
                 f"full bar {bar_w:.1f} painted {painted if painted is not None else 'none'} gaps {gap_left:.1f}/{gap_right:.1f} then {float(left_full.get('bar_w') or 0):.1f} left {home_left:.1f} right {home_right:.1f}",
             )
     finally:

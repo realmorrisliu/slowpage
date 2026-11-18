@@ -350,16 +350,19 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
             }
         }
     }
-    note_fullscreen_hook(window, rt);
-    request_fullscreen(window, rt, fullscreen, armed);
     // Full screen changes the window frame without resizing the content view.
     // The stage then stays at the old height and both panels stop short.
     // Fitting from inside layout re-enters AppKit, so only the pump does it.
     // A live resize is already changing the frame; fitting there fights the
-    // drag and can stall the tracking loop.
+    // drag and can stall the tracking loop. Enter waits until a later turn
+    // so the published shelf is the fitted one, not the 32pt-short first frame.
+    let was_fitted = content_is_fitted(window);
     if !rt.laying_out.get() && !window.inLiveResize() {
         fit_full_content(window);
     }
+    let stable_fit = was_fitted && content_is_fitted(window);
+    note_fullscreen_hook(window, rt);
+    request_fullscreen(window, rt, fullscreen, armed, stable_fit);
     if fullscreen {
         let shown = hover_target(window);
         if shell_on() {
@@ -471,6 +474,11 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     // system row while close and minimize sit in the 48pt bar. Align to the
     // shared center, for the reader and the shelf, once that restore is done.
     align_traffic_centers(window);
+    // settle_bar stored the buttons before this nudge. Write the frames
+    // the buttons actually have, or the green one still reads 8pt high.
+    if let Some(measured) = measure_traffic_bar(window) {
+        *rt.traffic.borrow_mut() = Some(measured);
+    }
     write_json(window, rt, false);
 }
 
@@ -489,6 +497,10 @@ fn style_window(window: &NSWindow, rt: &Runtime) {
         return;
     }
     apply_appearance(window);
+    let mask = window.styleMask();
+    if !mask.contains(NSWindowStyleMask::FullSizeContentView) {
+        window.setStyleMask(mask.union(NSWindowStyleMask::FullSizeContentView));
+    }
     window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
     window.setMovableByWindowBackground(true);
     window.setCollectionBehavior(
@@ -738,6 +750,15 @@ fn filling_child(content: &NSView) -> Option<Retained<NSView>> {
         }
     }
     best
+}
+
+fn content_is_fitted(window: &NSWindow) -> bool {
+    let Some(content) = window.contentView() else {
+        return false;
+    };
+    let frame = window.frame().size;
+    let (x, y, width, height) = view_box(Some(&content));
+    !content_needs_fit(frame.width as f64, frame.height as f64, x, y, width, height)
 }
 
 fn content_needs_fit(
@@ -1005,6 +1026,10 @@ struct FullscreenInput {
     window_ready: bool,
     /// `fullscreen-arm` is `0` while the driver still needs the windowed frame.
     hold_arm: bool,
+    /// The content view already filled the window on the previous turn.
+    /// A view fitted in this same turn is not ready: the shelf has not
+    /// published that height yet, and fullscreen would snapshot the short one.
+    content_fitted: bool,
 }
 
 fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
@@ -1024,7 +1049,7 @@ fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
         }
         return none;
     }
-    if input.hold_arm {
+    if input.hold_arm || !input.content_fitted {
         return none;
     }
     if input.is_full || !input.window_ready || input.enter_sent {
@@ -1048,7 +1073,13 @@ fn hold_pinned_frame(is_full: bool, enter_sent: bool, exit_sent: bool) -> bool {
     true
 }
 
-fn request_fullscreen(window: &NSWindow, rt: &Runtime, is_full: bool, armed: bool) {
+fn request_fullscreen(
+    window: &NSWindow,
+    rt: &Runtime,
+    is_full: bool,
+    armed: bool,
+    content_fitted: bool,
+) {
     let decision = fullscreen_decision(FullscreenInput {
         is_full,
         want: flag("SPIKE_FULLSCREEN"),
@@ -1057,6 +1088,7 @@ fn request_fullscreen(window: &NSWindow, rt: &Runtime, is_full: bool, armed: boo
         exit_sent: rt.fullscreen_exit_sent.get(),
         window_ready: armed && window.isVisible() && window.isKeyWindow(),
         hold_arm: file_flag("/tmp/superreader-spike/fullscreen-arm") == Some(false),
+        content_fitted,
     });
     if decision.enter {
         window.toggleFullScreen(None);
@@ -1807,6 +1839,7 @@ mod tests {
             exit_sent: false,
             window_ready: false,
             hold_arm: false,
+            content_fitted: true,
         };
         assert_eq!(
             fullscreen_decision(idle),
@@ -1820,6 +1853,12 @@ mod tests {
             ..idle
         };
         assert!(fullscreen_decision(ready).enter);
+        let short = FullscreenInput {
+            content_fitted: false,
+            ..ready
+        };
+        assert!(!fullscreen_decision(short).enter);
+        assert!(!fullscreen_decision(short).exit);
         let held = FullscreenInput {
             hold_arm: true,
             ..ready
@@ -1902,7 +1941,10 @@ mod tests {
         close(deltas[2], -8.0);
         let agreed = traffic_center_deltas(&[806.0, 806.0, 806.2]);
         assert!(agreed.iter().all(|delta| delta.abs() <= 0.5));
-        assert!(traffic_center_deltas(&[806.0]).is_empty() || traffic_center_deltas(&[806.0]) == vec![0.0]);
+        assert!(
+            traffic_center_deltas(&[806.0]).is_empty()
+                || traffic_center_deltas(&[806.0]) == vec![0.0]
+        );
     }
 
     #[test]
