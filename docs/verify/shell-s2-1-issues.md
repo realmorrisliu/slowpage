@@ -1,5 +1,7 @@
 # Shell S2.1 issue list
 
+The 60d0dcf count is not acceptance. The corrected table is `docs/verify/shell-s2-1-evidence.md`.
+
 Head this list was written against: `54d3529`, after the `1b33c34` run (82 pass, 31 fail, 11 pending). The Nov 11 summary (`ebad852`) is the last committed result on `885718f`. It predates the toolbar move and the alpha checks, so it is not a tip measurement.
 
 `#53` is the library full form. The reading page stays as it was. S3 (reading form, annotation margin), S4 (immersive), and Alan stay out.

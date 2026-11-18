@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import argparse
 import ast
+import hashlib
 import inspect
 import json
 import os
@@ -21,6 +22,7 @@ from xml.etree import ElementTree
 
 OPEN_TO_FIRST_MS = 100.0
 LATER_PAGE_MS = 16.7
+PRESCRIBED_LOAD = 8.0
 MEASURE_RUNS = 5
 NSH_VERSION = "0.5.1"
 
@@ -3945,8 +3947,8 @@ def self_test():
             offset = (y * 80 + x) * 4
             corners[offset : offset + 3] = bytes((0, 0, 0))
     _w, _h, rows = decode_png_bytes(encode_png(80, 70, corners))
-    ok, detail = top_is_paper(_w, rows)
-    assert ok, detail
+    ok, detail = top_is_paper(_w, rows, corner_radius=10)
+    assert not ok, detail
     corners[30 * 80 * 4 + 40 * 4 : 30 * 80 * 4 + 40 * 4 + 3] = bytes((0xF3, 0xEE, 0xE4))
     _w, _h, rows = decode_png_bytes(encode_png(80, 70, corners))
     ok, _detail = top_is_paper(_w, rows)
@@ -4368,7 +4370,367 @@ def self_test():
     )
     failed_row = next(row for row in doctor(session=failed_read) if row["id"] == "gui-session")
     assert failed_row["status"] == "fail", failed_row
+    state_admission_self_test()
     return True
+
+
+def load_one(text):
+    try:
+        return float(str(text).split()[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def performance_comparable(load_text):
+    value = load_one(load_text)
+    return value is not None and value < PRESCRIBED_LOAD
+
+
+def withhold_performance(check_id, feature, driver, load_text):
+    return check(
+        check_id,
+        feature,
+        driver,
+        "pending",
+        f"not executed: load {load_text} is not under the prescribed ceiling {PRESCRIBED_LOAD:g}. "
+        "A higher SR_VERIFY_MAX_LOAD does not make the sample comparable.",
+    )
+
+
+def title_has_book(book, title):
+    text = title or ""
+    if book == "pride":
+        return "Pride" in text
+    if book == "zhaohua":
+        return "朝花" in text
+    return book.lower() in text.lower()
+
+
+def admit_reader_fullscreen(chrome, capture, windowed):
+    """A fullscreen pass names the reader window, the flag, the native size, and the book."""
+    problems = []
+    if not isinstance(chrome, dict) or chrome.get("fullscreen") is not True:
+        problems.append("fullscreen flag was not set")
+    try:
+        chrome_pid = int(chrome.get("pid")) if isinstance(chrome, dict) else None
+    except (TypeError, ValueError):
+        chrome_pid = None
+    try:
+        reader_pid = int(capture.get("pid"))
+    except (TypeError, ValueError):
+        reader_pid = None
+    if chrome_pid is None or chrome_pid != reader_pid:
+        problems.append("chrome pid is not the reader process")
+    window_id = capture.get("window_id")
+    reader_window = capture.get("reader_window_id")
+    if window_id is None or window_id != reader_window:
+        problems.append("capture window is not the reader window")
+    if not title_has_book(capture.get("book") or "", (chrome or {}).get("title") if isinstance(chrome, dict) else ""):
+        problems.append("loaded book is not the requested book")
+    try:
+        native_w = float(chrome.get("window_w") or 0) if isinstance(chrome, dict) else 0.0
+        native_h = float(chrome.get("window_h") or 0) if isinstance(chrome, dict) else 0.0
+        scale = float(capture.get("scale") or 0)
+        px_w = float(capture.get("px_w") or 0)
+        px_h = float(capture.get("px_h") or 0)
+    except (TypeError, ValueError):
+        native_w = native_h = scale = px_w = px_h = 0.0
+    if native_w < 2 or native_h < 2 or scale <= 0 or px_w < 2 or px_h < 2:
+        problems.append("native size was not recorded")
+    elif abs(px_w - native_w * scale) > 2 or abs(px_h - native_h * scale) > 2:
+        problems.append("capture size does not match the native window")
+    if (
+        isinstance(windowed, dict)
+        and abs(native_w - float(windowed.get("w") or 0)) < 2
+        and abs(native_h - float(windowed.get("h") or 0)) < 2
+    ):
+        problems.append("fullscreen window is still the windowed size")
+    if capture.get("same_bytes"):
+        problems.append("fullscreen capture matches the windowed frame")
+    return problems
+
+
+def appearance_problems(requested, appearance, this_hash, blocked_hashes):
+    problems = []
+    name = str(appearance or "")
+    if requested == "dark":
+        if "Dark" not in name:
+            problems.append(f"appearance is {name or 'missing'}, not dark")
+    elif requested == "light":
+        if "Aqua" not in name or "Dark" in name:
+            problems.append(f"appearance is {name or 'missing'}, not light aqua")
+    else:
+        problems.append("appearance was not requested")
+    if this_hash and this_hash in set(blocked_hashes or ()):
+        problems.append("capture is the same file as another state")
+    return problems
+
+
+def reading_surface(names, webkit_page=None, pdf_ax_page=None):
+    """Open panel, empty shelf, or a book whose page is actually shown."""
+    text = "\n".join(str(name) for name in (names or []))
+    named_file = any(str(name).endswith((".epub", ".pdf")) for name in (names or []))
+    panel = ("打开" in text and "取消" in text) or (named_file and ("打开" in text or "Open" in text))
+    if panel:
+        return "open_panel"
+    if isinstance(webkit_page, int) and webkit_page > 0:
+        return "book_loaded"
+    if isinstance(pdf_ax_page, int) and pdf_ax_page > 0:
+        return "book_loaded"
+    return "empty_shelf"
+
+
+def displayed_pdf_page(names):
+    numbers = page_numbers(names or [])
+    if not numbers:
+        return None
+    return int(numbers[0].split("/")[0])
+
+
+def alpha_page_rows(kind, surface, shown, turned, restored):
+    prefix = f"alpha-{kind}"
+    if surface != "book_loaded":
+        detail = f"not executed: surface is {surface}, so the book was not loaded"
+        return [
+            check(f"{prefix}-open", "alpha", "window", "pending", detail),
+            check(f"{prefix}-turn", "alpha", "window", "pending", detail),
+            check(f"{prefix}-reopen", "alpha", "window", "pending", detail),
+        ]
+    return [
+        check(
+            f"{prefix}-open",
+            "alpha",
+            "window",
+            "pass" if shown == 1 else "fail",
+            f"opened at page {shown}",
+        ),
+        check(
+            f"{prefix}-turn",
+            "alpha",
+            "window",
+            "pass" if isinstance(turned, int) and turned >= 2 else "fail",
+            f"page after right arrow {turned}",
+        ),
+        check(
+            f"{prefix}-reopen",
+            "alpha",
+            "window",
+            "pass" if isinstance(restored, int) and restored >= 2 else "fail",
+            f"relaunched at page {restored}",
+        ),
+    ]
+
+
+def epub_turn_status(names, dark_pixels):
+    if dark_pixels < 200:
+        return "pending", "not executed: the turn capture does not show a loaded page"
+    shown = [name for name in names if name.startswith("2/") and EPUB_PAGE.fullmatch(name)]
+    if shown:
+        return "pass", "page " + shown[0]
+    return "fail", "loaded page has no 2/N footer"
+
+
+def outside_rounded_corner(x, y, width, height, radius):
+    if radius <= 0 or width < 1 or height < 1:
+        return False
+    radius = float(radius)
+    if x < radius and y < radius:
+        return (radius - x) ** 2 + (radius - y) ** 2 > radius * radius
+    if x >= width - radius and y < radius:
+        return (x - (width - radius)) ** 2 + (radius - y) ** 2 > radius * radius
+    if x < radius and y >= height - radius:
+        return (radius - x) ** 2 + (y - (height - radius)) ** 2 > radius * radius
+    if x >= width - radius and y >= height - radius:
+        return (x - (width - radius)) ** 2 + (y - (height - radius)) ** 2 > radius * radius
+    return False
+
+
+def body_background_status(pride, zhaohua, flashes, admitted):
+    pride_flashes = [item for item in flashes if str(item).startswith("pride")]
+    if pride != (255, 255, 255) or pride_flashes:
+        detail = f"pride {pride}"
+        if pride_flashes:
+            detail += "; " + "; ".join(pride_flashes)
+        return "fail", detail
+    if not admitted:
+        return "pass", f"pride {pride}; zhaohua not executed"
+    others = [item for item in flashes if not str(item).startswith("pride")]
+    if zhaohua != (255, 255, 255) or others:
+        extra = "; ".join(others) if others else "color"
+        return "fail", f"pride {pride}, zhaohua {zhaohua}; {extra}"
+    return "pass", f"pride {pride}, zhaohua {zhaohua}; no other color"
+
+
+def admit_recorded_chinese(path, record):
+    record = record if isinstance(record, dict) else {}
+    expected = str(record.get("sha256") or "")
+    chapter = record.get("chapter") or "范愛農"
+    try:
+        minimum = int(record.get("min_chars") or 1500)
+    except (TypeError, ValueError):
+        minimum = 1500
+    if not expected:
+        return False, (
+            "not executed: Chinese fixture has no recorded sha256. "
+            "Gutenberg 25271 is the source. The text is not fabricated."
+        )
+    if not Path(path).is_file():
+        return False, "not executed: the recorded Chinese fixture is not on disk."
+    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    if digest != expected:
+        return False, "not executed: Chinese fixture sha256 does not match the recorded source."
+    plain = epub_plain(Path(path))
+    if chapter not in plain or len(plain) < minimum:
+        return False, (
+            f"not executed: recorded fixture does not contain {chapter} "
+            f"at {minimum} characters."
+        )
+    return True, f"sha256 {digest}, {len(plain)} characters, chapter {chapter}"
+
+
+def state_admission_self_test():
+    copied = admit_reader_fullscreen(
+        {"fullscreen": False, "pid": 7, "window_w": 582, "window_h": 781, "title": "Pride and Prejudice"},
+        {
+            "pid": 7,
+            "window_id": 4,
+            "reader_window_id": 4,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 1164,
+            "px_h": 1562,
+            "same_bytes": True,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert "fullscreen flag was not set" in copied
+    assert "fullscreen capture matches the windowed frame" in copied
+    assert "fullscreen window is still the windowed size" in copied
+    mismatched = admit_reader_fullscreen(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
+        {
+            "pid": 7,
+            "window_id": 4,
+            "reader_window_id": 9,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 3024,
+            "px_h": 1898,
+            "same_bytes": False,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert "capture window is not the reader window" in mismatched
+    entered = admit_reader_fullscreen(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
+        {
+            "pid": 7,
+            "window_id": 9,
+            "reader_window_id": 9,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 3024,
+            "px_h": 1898,
+            "same_bytes": False,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert entered == [], entered
+    wrong_book = admit_reader_fullscreen(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "全部书籍"},
+        {
+            "pid": 7,
+            "window_id": 9,
+            "reader_window_id": 9,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 3024,
+            "px_h": 1898,
+            "same_bytes": False,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert "loaded book is not the requested book" in wrong_book
+    dark_same = appearance_problems("dark", "NSAppearanceNameAqua", "abc", ["abc"])
+    assert any("not dark" in item for item in dark_same)
+    assert any("same file" in item for item in dark_same)
+    assert appearance_problems("dark", "NSAppearanceNameDarkAqua", "abc", ["def"]) == []
+    assert appearance_problems("light", "NSAppearanceNameAqua", "abc", []) == []
+    panel = reading_surface(["打开", "取消", "pride-se.epub"], 1, None)
+    assert panel == "open_panel"
+    assert reading_surface(["全部书籍"], None, None) == "empty_shelf"
+    assert reading_surface([], 2, None) == "book_loaded"
+    held = alpha_page_rows("epub", "open_panel", None, None, None)
+    assert [row["status"] for row in held] == ["pending", "pending", "pending"]
+    assert all("not executed" in row["detail"] for row in held)
+    loaded = alpha_page_rows("epub", "book_loaded", 1, 2, None)
+    assert [row["status"] for row in loaded] == ["pass", "pass", "fail"]
+    assert displayed_pdf_page([]) is None
+    assert displayed_pdf_page(["3/12"]) == 3
+    status, detail = epub_turn_status([], 0)
+    assert status == "pending" and "not executed" in detail
+    status, detail = epub_turn_status(["2/10页"], 400)
+    assert status == "pass" and detail == "page 2/10页"
+    status, _detail = epub_turn_status(["1/10页"], 400)
+    assert status == "fail"
+    refused = withhold_performance("reading-cold-open", "reading-view", "window", "51.23 82.01 63.92")
+    assert refused["status"] == "pending"
+    fast = score_times(
+        "reading-cold-open",
+        [100, 110, 120, 130, 140],
+        [100, 110, 120, 130, 140],
+        0,
+        load_text="2.00 2.00 2.00",
+    )
+    assert fast["status"] == "pass", fast
+    blocked = score_times(
+        "reading-cold-open",
+        [100, 110, 120, 130, 140],
+        [100, 110, 120, 130, 140],
+        0,
+        load_text="51.23 82.01 63.92",
+    )
+    assert blocked["status"] == "pending", blocked
+    pride_only, pride_detail = body_background_status((255, 255, 255), None, [], False)
+    assert pride_only == "pass" and "not executed" in pride_detail
+    pride_bad, bad_detail = body_background_status((243, 238, 228), None, [], False)
+    assert pride_bad == "fail" and "zhaohua" not in bad_detail
+    wide = 80
+    height = 70
+    outside = bytearray([255, 255, 255, 255]) * (wide * height)
+    outside[(0 * wide + 4) * 4 : (0 * wide + 4) * 4 + 3] = bytes((0, 0, 0))
+    _w, _h, rows = decode_png_bytes(encode_png(wide, height, outside))
+    ok, detail = top_is_paper(_w, rows, corner_radius=10)
+    assert ok, detail
+    inside = bytearray([255, 255, 255, 255]) * (wide * height)
+    inside[(8 * wide + 8) * 4 : (8 * wide + 8) * 4 + 3] = bytes((0, 0, 0))
+    _w, _h, rows = decode_png_bytes(encode_png(wide, height, inside))
+    ok, detail = top_is_paper(_w, rows, corner_radius=10)
+    assert not ok, detail
+    record = {"sha256": "", "chapter": "范愛農", "min_chars": 1500}
+    admitted, detail = admit_recorded_chinese(Path("/tmp/does-not-exist.epub"), record)
+    assert not admitted and "sha256" in detail
+    chapter = "范愛農" + ("文" * 1500)
+    xhtml = f"<html><body><p>{chapter}</p></body></html>".encode()
+    import zipfile
+    from io import BytesIO
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as book:
+        book.writestr("chapter.xhtml", xhtml)
+    raw = buffer.getvalue()
+    digest = hashlib.sha256(raw).hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "zhaohua.epub"
+        path.write_bytes(raw)
+        empty, _detail = admit_recorded_chinese(path, {"sha256": "", "chapter": "范愛農", "min_chars": 1500})
+        assert not empty
+        mismatched, _detail = admit_recorded_chinese(path, {"sha256": "0" * 64, "chapter": "范愛農", "min_chars": 1500})
+        assert not mismatched
+        matched, detail = admit_recorded_chinese(
+            path, {"sha256": digest, "chapter": "范愛農", "min_chars": 1500}
+        )
+        assert matched, detail
 
 
 def loadavg():
@@ -5547,14 +5909,16 @@ def run_windows(out, window_tool, ocr_tool):
         )
     )
     turn = states["epub-turned"]
-    turned = any(name.startswith("2/") and EPUB_PAGE.fullmatch(name) for name in turn["names"])
+    turn_png = out / (turn.get("png") or "epub-turned.png")
+    dark = png_dark_pixels(turn_png) if turn_png.exists() else 0
+    turn_status, turn_detail = epub_turn_status(turn["names"], dark)
     rows.append(
         check(
             "epub-turn",
             "read-an-epub",
             "window",
-            "pass" if turned else "fail",
-            "page " + ", ".join(name for name in turn["names"] if EPUB_PAGE.fullmatch(name)) or "missing",
+            turn_status,
+            turn_detail,
             turn.get("png"),
         )
     )
@@ -5654,10 +6018,9 @@ def page_shot(state, window_tool, ocr_tool, png):
 
 
 CHINESE_SOURCE = {"ok": False, "detail": "not checked"}
+# Rows that exist only to measure the Chinese book. A missing book marks these
+# not executed. Pride rows are not in this set.
 CHINESE_ROWS = {
-    "reading-default-trim",
-    "book-body-background",
-    "page-bands-white",
     "trim-32kai-zhaohua",
     "justify-zhaohua-32kai",
     "trim-paperback-zhaohua",
@@ -5668,9 +6031,6 @@ CHINESE_ROWS = {
     "justify-plain-zh-paperback",
     "justify-plain-zh-32kai",
     "justify-plain-zh-trade",
-    "reading-page-box",
-    "reading-text-complete",
-    "reading-text-clean",
 }
 
 
@@ -5693,46 +6053,37 @@ def epub_plain(path):
 def prepare_chinese_source():
     dest = Path(os.environ.get("SPIKE_FIXTURES", "/tmp/superreader-fixtures"))
     dest.mkdir(parents=True, exist_ok=True)
+    record_path = ROOT / "spikes" / "epub" / "fixtures" / "chinese-admission.json"
+    try:
+        record = json.loads(record_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        record = {}
     book = dest / "zhaohua.epub"
-    plain = epub_plain(book)
-    if "范愛農" not in plain or len(plain) < 1500:
-        # spikes/fetch-fixtures.sh names the ebook URL. The cache URL is the
-        # same Gutenberg file when that redirect is down.
-        proc = None
-        for url in (
-            "https://www.gutenberg.org/ebooks/25271.epub.noimages",
-            "https://www.gutenberg.org/cache/epub/25271/pg25271.epub",
-        ):
-            proc = subprocess.run(
-                ["curl", "-fsSL", "--max-time", "40", "-o", str(book), url],
-                capture_output=True,
-                text=True,
-            )
-            plain = epub_plain(book) if proc.returncode == 0 else ""
-            if proc.returncode == 0 and "范愛農" in plain and len(plain) >= 1500:
-                break
-        if proc is None or proc.returncode != 0 or "范愛農" not in plain or len(plain) < 1500:
-            CHINESE_SOURCE["ok"] = False
-            CHINESE_SOURCE["detail"] = (
-                "not executed: Gutenberg 25271 is missing or has no 范愛農 chapter of 1500 characters. "
-                "朝花夕拾 is not fabricated, and Morris's library was not read."
-            )
-            return
+    admitted, detail = admit_recorded_chinese(book, record)
+    if not admitted:
+        CHINESE_SOURCE["ok"] = False
+        CHINESE_SOURCE["detail"] = detail
+        return
     built = subprocess.run(
         ["python3", str(ROOT / "spikes" / "epub" / "fixtures" / "build_books.py")],
         capture_output=True,
         text=True,
     )
     synthetic = epub_plain(dest / "plain-zh.epub")
-    if built.returncode != 0 or "客店" not in synthetic or len(synthetic) < 1500:
+    needle = record.get("plain_needle") or "客店"
+    try:
+        minimum = int(record.get("min_chars") or 1500)
+    except (TypeError, ValueError):
+        minimum = 1500
+    if built.returncode != 0 or needle not in synthetic or len(synthetic) < minimum:
         CHINESE_SOURCE["ok"] = False
         CHINESE_SOURCE["detail"] = (
-            "not executed: plain-zh.epub was not built to 1500 characters from the Gutenberg source. "
+            f"not executed: plain-zh.epub was not built to {minimum} characters with {needle}. "
             + (built.stderr or built.stdout or "").strip()
         )
         return
     CHINESE_SOURCE["ok"] = True
-    CHINESE_SOURCE["detail"] = f"Gutenberg 25271, plain-zh {len(synthetic)} characters"
+    CHINESE_SOURCE["detail"] = f"{detail}; plain-zh {len(synthetic)} characters"
 
 
 def run_reading(out, window_tool, ocr_tool):
@@ -5778,7 +6129,12 @@ def run_reading(out, window_tool, ocr_tool):
                 "reading-view",
                 "window",
                 "pass" if qualities and not dirty else "fail",
-                "clean" if not dirty else f"tofu or a space between CJK in {dirty}",
+                (
+                    "books "
+                    + (", ".join(item["name"] for item in qualities) or "none")
+                    + ("; clean" if not dirty else f"; tofu or a space between CJK in {dirty}")
+                    + ("" if CHINESE_SOURCE["ok"] else "; " + CHINESE_SOURCE["detail"])
+                ),
             )
         )
     finally:
@@ -5795,19 +6151,14 @@ def run_reading(out, window_tool, ocr_tool):
 
 
 def hold_chinese_rows(rows):
+    if CHINESE_SOURCE["ok"]:
+        return rows
     detail = CHINESE_SOURCE["detail"]
     present = set()
     for row in rows:
         if row["id"] not in CHINESE_ROWS:
             continue
         present.add(row["id"])
-        text = row.get("detail") or ""
-        english_failed = row["status"] == "fail" and any(
-            name in text for name in ("pride", "styled", "plain-en", "publisher")
-        )
-        if english_failed:
-            row["detail"] = text + " " + detail
-            continue
         row["status"] = "pending"
         row["detail"] = detail
     for missing in sorted(CHINESE_ROWS - present):
@@ -5896,20 +6247,21 @@ def default_trim_shots(out, window_tool, ocr_tool, proto):
         boxes = other_rects(width, pixels)
         if boxes:
             flashes.append(f"{book} {boxes[0]['w']}x{boxes[0]['h']}")
-    kept = pride == (255, 255, 255) and zhaohua == (255, 255, 255) and not flashes
-    detail = f"pride {pride}, zhaohua {zhaohua}"
-    detail += "; " + ("; ".join(flashes) if flashes else "no other color")
+    status, detail = body_background_status(pride, zhaohua, flashes, CHINESE_SOURCE["ok"])
     rows.append(
         check(
             "book-body-background",
             "reading-view",
             "window",
-            "pass" if kept else "fail",
+            status,
             detail,
         )
     )
     bands = []
-    for book, png in shot_paths.items():
+    band_paths = shot_paths
+    if not CHINESE_SOURCE["ok"]:
+        band_paths = {book: png for book, png in shot_paths.items() if book not in ("zhaohua", "plain-zh")}
+    for book, png in band_paths.items():
         if not png.exists():
             bands.append(f"{book} shot missing")
             continue
@@ -5926,7 +6278,10 @@ def default_trim_shots(out, window_tool, ocr_tool, proto):
             "reading-view",
             "window",
             "pass" if not bands else "fail",
-            "header, footer, margins, text #ffffff"
+            (
+                "header, footer, margins, text #ffffff"
+                + ("" if CHINESE_SOURCE["ok"] else "; " + CHINESE_SOURCE["detail"])
+            )
             if not bands
             else "; ".join(bands),
         )
@@ -6626,7 +6981,10 @@ def warm_cached(out):
     )
 
 
-def score_times(check_id, times, native_times, errors, extra=""):
+def score_times(check_id, times, native_times, errors, extra="", load_text=None):
+    observed = loadavg() if load_text is None else load_text
+    if not performance_comparable(observed):
+        return withhold_performance(check_id, "reading-view", "window", observed)
     if len(times) != 5:
         return check(
             check_id,
@@ -6989,13 +7347,14 @@ def layout_and_text_checks(notes):
         copies = duplicate_blocks(plain)
         if missing or copies:
             dropped.append(f"{book} missing {missing} copies {copies[:4]}")
+    books = ", ".join(note["book"] for note in notes) or "none"
     rows = [
         check(
             "reading-page-box",
             "reading-view",
             "window",
             "pass" if notes and not off and not rules else "fail",
-            "centered" if not off and not rules else f"offset {off} rule {rules}",
+            f"books {books}; " + ("centered" if not off and not rules else f"offset {off} rule {rules}"),
         )
     ]
     rows.append(
@@ -7004,7 +7363,7 @@ def layout_and_text_checks(notes):
             "reading-view",
             "window",
             "pass" if notes and not dropped else "fail",
-            "source text is on the page" if not dropped else f"dropped {dropped}",
+            f"books {books}; " + ("source text is on the page" if not dropped else f"dropped {dropped}"),
         )
     )
     return rows
@@ -7099,8 +7458,11 @@ def slide_turn(out, window_tool, proto):
         finish_launch(state)
     if video.exists():
         shutil.copyfile(video, proto / "slide.mp4")
+    observed = loadavg()
+    if not performance_comparable(observed):
+        return [withhold_performance("reading-slide", "reading-view", "window", observed)]
     floor = bool(frames) and all(item < 33.4 for item in frames) and video.exists()
-    report = {"floor_ms": 16.7, "loadavg": loadavg(), "frames_ms": frames, "ok": floor}
+    report = {"floor_ms": 16.7, "loadavg": observed, "frames_ms": frames, "ok": floor}
     (proto / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
     (out / "reading-latency.json").write_text(json.dumps(report, indent=2) + "\n")
     return [
@@ -7117,6 +7479,12 @@ def slide_turn(out, window_tool, proto):
 
 
 def run_measure(out):
+    observed = loadavg()
+    if not performance_comparable(observed):
+        return [
+            withhold_performance("pdf-open-to-first", "reading-bars", "measure", observed),
+            withhold_performance("pdf-later-page", "reading-bars", "measure", observed),
+        ]
     samples = []
     errors = []
     for index in range(1, MEASURE_RUNS + 1):
@@ -7432,7 +7800,7 @@ def clear_bar_hooks():
         path.unlink(missing_ok=True)
 
 
-def top_is_paper(width, rows, rows_px=60, skip_px=0):
+def top_is_paper(width, rows, rows_px=60, skip_px=0, corner_radius=0):
     paper = (255, 255, 255)
     if not rows or width < 1 or len(rows) < rows_px:
         return False, f"capture is {len(rows)} px tall"
@@ -7441,16 +7809,16 @@ def top_is_paper(width, rows, rows_px=60, skip_px=0):
         return False, "png row is shorter than the width"
     bad = 0
     total = 0
+    height = len(rows)
     for y, row in enumerate(rows[:rows_px]):
         x = channels * max(skip_px, 4)
         limit = len(row) - channels * 4
         while x + 2 < limit:
             px = x // channels
             red, green, blue = row[x], row[x + 1], row[x + 2]
-            # A window capture paints its rounded corners black. That is not paper,
-            # and the old left-bar skip is not what hides them.
-            corner = y < 16 and (px < 28 or px >= width - 28)
-            if corner and max(red, green, blue) < 20:
+            # Only the pixels outside the window's rounded corner. Black inside
+            # the curve is still paper that failed.
+            if outside_rounded_corner(px, y, width, height, corner_radius) and max(red, green, blue) < 20:
                 x += channels * 4
                 continue
             if abs(red - paper[0]) > 8 or abs(green - paper[1]) > 8 or abs(blue - paper[2]) > 8:
@@ -7873,7 +8241,12 @@ def run_flash(out, window_tool):
     mouse = compile_mouse(out)
     drag = compile_drag(out)
     rows = []
+    if CHINESE_SOURCE["detail"] == "not checked":
+        prepare_chinese_source()
     for book in ("pride", "zhaohua"):
+        if book == "zhaohua" and not CHINESE_SOURCE["ok"]:
+            rows.append(check("flash-zhaohua", "window-chrome", "window", "pending", CHINESE_SOURCE["detail"]))
+            continue
         ok, detail, evidence = flash_book(out, window_tool, mouse, drag, book)
         rows.append(
             check(
@@ -8058,8 +8431,25 @@ def aqua_case(out, window_tool, ocr_tool, mouse, name, dark):
         width, _height, rows = decode_png_rows(png)
         pixels_ok, pixel_detail = toolbar_dark_on_white(width, rows)
         placed, _ = icon_placement(body)
-        ok = pixels_ok and aqua_appearance(appearance) and placed
+        this_hash = hashlib.sha256(png.read_bytes()).hexdigest() if png.exists() else ""
+        blocked = []
+        if dark:
+            for prior in ("b-pride-hover.png", "b-pride.png", "aqua-light.png"):
+                other = out / prior
+                if other.is_file():
+                    blocked.append(hashlib.sha256(other.read_bytes()).hexdigest())
+        problems = appearance_problems("dark" if dark else "light", appearance, this_hash, blocked)
         mode = "dark" if dark else "light"
+        if problems:
+            return check(
+                check_id,
+                "window-chrome",
+                "window",
+                "pending",
+                "not executed: " + "; ".join(problems),
+                png.name if png.exists() else None,
+            )
+        ok = pixels_ok and placed
         detail = f"{mode} appearance {appearance}; {place}; {pixel_detail}"
         if dark and png.exists():
             shots = ROOT / "docs" / "verify" / "aqua"
@@ -8102,6 +8492,8 @@ def run_aqua(out, window_tool, ocr_tool):
 
 
 def run_chrome(out, window_tool, ocr_tool):
+    if CHINESE_SOURCE["detail"] == "not checked":
+        prepare_chinese_source()
     clear_bar_hooks()
     rows = []
     proto = ROOT / "docs" / "prototypes" / "window-chrome"
@@ -8114,6 +8506,10 @@ def run_chrome(out, window_tool, ocr_tool):
         ("b-zhaohua", {"SPIKE_MODE": "webkit", "SPIKE_BOOK": "zhaohua", "SPIKE_AT": "3"}, "zhaohua", False, "hide", False),
         ("b-pride-fullscreen", {"SPIKE_FULLSCREEN": "1", "SPIKE_MODE": "webkit", "SPIKE_BOOK": "pride"}, "pride", True, None, False),
     ]
+    if not CHINESE_SOURCE["ok"]:
+        shots = [shot for shot in shots if shot[2] != "zhaohua"]
+        rows.append(check("chrome-b-zhaohua-footer", "window-chrome", "window", "pending", CHINESE_SOURCE["detail"]))
+    windowed = None
     try:
         write_trim("paperback")
         for name, env, book, fullscreen, lights, measure in shots:
@@ -8122,6 +8518,8 @@ def run_chrome(out, window_tool, ocr_tool):
                 png = out / f"{name}.png"
                 if png.exists():
                     shutil.copyfile(png, proto / f"{name}.png")
+                if name == "b-pride" and png.exists() and metrics:
+                    windowed = {"w": metrics.get("w"), "h": metrics.get("h"), "png": png, "id": metrics.get("id")}
                 if measure:
                     ratio_w, ratio_h = TRIMS["paperback"]
                     if isinstance(body, dict) and metrics:
@@ -8246,6 +8644,33 @@ def run_chrome(out, window_tool, ocr_tool):
                         f"{name}.png",
                     ))
                 if png.exists() and fullscreen and isinstance(body, dict):
+                    width, height, pixels = decode_png_rows(png)
+                    same = False
+                    if windowed and Path(windowed["png"]).is_file():
+                        same = png.read_bytes() == Path(windowed["png"]).read_bytes()
+                    problems = admit_reader_fullscreen(
+                        body,
+                        {
+                            "pid": state.get("pid"),
+                            "window_id": None if not metrics else metrics.get("id"),
+                            "reader_window_id": None if not metrics else metrics.get("id"),
+                            "book": book,
+                            "scale": None if not metrics else metrics.get("scale"),
+                            "px_w": width,
+                            "px_h": height,
+                            "same_bytes": same,
+                        },
+                        windowed,
+                    )
+                    if problems:
+                        detail = "not executed: " + "; ".join(problems)
+                        for check_id in (
+                            "chrome-b-fullscreen-footer",
+                            "chrome-b-fullscreen-page",
+                            "chrome-b-fullscreen-paper",
+                        ):
+                            rows.append(check(check_id, "window-chrome", "window", "pending", detail, f"{name}.png"))
+                        continue
                     footer = footer_ok(lines, png)
                     rows.append(check(
                         "chrome-b-fullscreen-footer",
@@ -8287,9 +8712,8 @@ def run_chrome(out, window_tool, ocr_tool):
                         f"{name}.png",
                     ))
                     width, _height, pixels = decode_png_rows(png)
-                    # bar_w is the traffic-light span, not a gray column. Skipping it
-                    # hid the left corner and left the right corner counted as paper.
-                    paper_ok, paper_detail = top_is_paper(width, pixels, skip_px=0)
+                    radius = 10.0 * float(metrics.get("scale") or 1.0) if metrics else 0.0
+                    paper_ok, paper_detail = top_is_paper(width, pixels, skip_px=0, corner_radius=radius)
                     rows.append(check(
                         "chrome-b-fullscreen-paper",
                         "window-chrome",
@@ -8466,28 +8890,38 @@ def hold_verify_lock():
     (LOCK_DIR / "branch").write_text((branch.stdout or "unknown").strip() + "\n")
     (LOCK_DIR / "started").write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n")
     atexit.register(release)
+    load = one_minute_load()
+    ceiling = load_ceiling()
+    if load >= ceiling:
+        print(
+            f"not started: 1m loadavg={load:.2f} is not under the prescribed ceiling {ceiling:g}. "
+            "SR_VERIFY_MAX_LOAD cannot raise it. No process was killed.",
+            flush=True,
+        )
+        release()
+        raise SystemExit(75)
+    print(f"verify starting: 1m loadavg={load:.2f}", flush=True)
     while True:
-        load = one_minute_load()
-        ceiling = load_ceiling()
-        if load < ceiling:
-            print(f"verify starting: 1m loadavg={load:.2f}", flush=True)
-            while True:
-                held = subprocess.run(["pgrep", "-fl", "/spike-shell$"], capture_output=True, text=True)
-                if held.returncode != 0:
-                    break
-                print("waiting for spike-shell to exit", flush=True)
-                time.sleep(30)
-            return load
-        print(f"waiting for load < {ceiling} (now {load:.2f})", flush=True)
+        held = subprocess.run(["pgrep", "-fl", "/spike-shell$"], capture_output=True, text=True)
+        if held.returncode != 0:
+            break
+        print("waiting for spike-shell to exit", flush=True)
         time.sleep(30)
+    return load
 
 
 def load_ceiling():
-    raw = os.environ.get("SR_VERIFY_MAX_LOAD", "8").strip() or "8"
+    """The prescribed ceiling is 8. A caller can lower it, not raise it."""
+    raw = os.environ.get("SR_VERIFY_MAX_LOAD", "").strip()
+    if not raw:
+        return PRESCRIBED_LOAD
     try:
-        return float(raw)
+        asked = float(raw)
     except ValueError:
-        return 8.0
+        return PRESCRIBED_LOAD
+    if asked <= 0:
+        return PRESCRIBED_LOAD
+    return min(asked, PRESCRIBED_LOAD)
 
 
 def one_minute_load():
@@ -9685,6 +10119,13 @@ def main():
         load_start = float(os.environ["SR_VERIFY_LOAD_START"])
     else:
         load_start = hold_verify_lock()
+    if load_start >= load_ceiling():
+        print(
+            f"not started: 1m loadavg={load_start:.2f} is not under the prescribed ceiling {load_ceiling():g}. "
+            "SR_VERIFY_MAX_LOAD cannot raise it. No process was killed.",
+            flush=True,
+        )
+        return 75
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     out = args.out or (ROOT / "docs" / "verify" / "runs" / stamp)
     if not out.is_absolute():
@@ -10121,6 +10562,12 @@ def run_alpha(out, window_tool):
             if isinstance(page_after, int) and page_after >= 2:
                 break
             time.sleep(0.4)
+        names_now, _dump = ax_names(state["pid"])
+        surface = reading_surface(
+            names_now,
+            page_after if kind == "epub" and isinstance(page_after, int) else None,
+            page_after if kind == "pdf" and isinstance(page_after, int) else None,
+        )
         finish_launch(state)
         time.sleep(0.6)
         if kind == "epub" and WEBKIT_JSON.exists():
@@ -10141,12 +10588,12 @@ def run_alpha(out, window_tool):
                 break
             time.sleep(0.4)
         finish_launch(again)
-        return opened, shown, page_after, restored
+        return opened, shown, page_after, restored, surface
 
     try:
         pride = os.environ.get("SPIKE_PRIDE", "/tmp/superreader-fixtures/pride-se.epub")
         pdf = os.environ.get("SPIKE_GPT3", "/tmp/superreader-fixtures/gpt3.pdf")
-        opened, shown, turned, restored = drive(
+        opened, shown, turned, restored, surface = drive(
             "epub",
             pride,
             webkit_page,
@@ -10163,9 +10610,7 @@ def run_alpha(out, window_tool):
             "shelf window has no Open button" if empty_ok else "Open button returned",
             "empty.png",
         ))
-        rows.append(check("alpha-epub-open", "alpha", "window", "pass" if shown == 1 else "fail", f"Pride opened at page {shown}", "epub.png"))
-        rows.append(check("alpha-epub-turn", "alpha", "window", "pass" if isinstance(turned, int) and turned >= 2 else "fail", f"page after right arrow {turned}"))
-        rows.append(check("alpha-epub-reopen", "alpha", "window", "pass" if isinstance(restored, int) and restored >= 2 else "fail", f"relaunched at page {restored}"))
+        rows.extend(alpha_page_rows("epub", surface, shown, turned, restored))
         support = out / "alpha-support-pdf"
         shutil.rmtree(support, ignore_errors=True)
         support.mkdir()
@@ -10173,16 +10618,13 @@ def run_alpha(out, window_tool):
         menu_open(state["pid"], pdf)
         def current_pdf():
             names, _dump = ax_names(state["pid"])
-            numbers = page_numbers(names)
-            if numbers:
-                return int(numbers[0].split("/")[0])
-            # The footer is painted, not an accessibility name. reader.json
-            # already records the pdf page from the same window.
-            return reader_pdf_page()
+            # reader.json is internal. It cannot stand in for a page on screen.
+            return displayed_pdf_page(names), names
         first = None
+        pdf_names = []
         deadline = time.time() + 40
         while time.time() < deadline:
-            first = current_pdf()
+            first, pdf_names = current_pdf()
             if first == 1:
                 break
             time.sleep(0.4)
@@ -10192,7 +10634,7 @@ def run_alpha(out, window_tool):
         second = None
         deadline = time.time() + 20
         while time.time() < deadline:
-            second = current_pdf()
+            second, pdf_names = current_pdf()
             if isinstance(second, int) and second >= 2:
                 break
             time.sleep(0.4)
@@ -10201,10 +10643,7 @@ def run_alpha(out, window_tool):
         again = launch(out, "alpha-pdf-again", product_env(support), lambda names: True, 8, binary=binary)
         def current_again():
             names, _dump = ax_names(again["pid"])
-            numbers = page_numbers(names)
-            if numbers:
-                return int(numbers[0].split("/")[0])
-            return reader_pdf_page()
+            return displayed_pdf_page(names)
         back = None
         deadline = time.time() + 40
         while time.time() < deadline:
@@ -10213,9 +10652,13 @@ def run_alpha(out, window_tool):
                 break
             time.sleep(0.4)
         finish_launch(again)
-        rows.append(check("alpha-pdf-open", "alpha", "window", "pass" if first == 1 else "fail", f"PDF opened at page {first}", "pdf.png"))
-        rows.append(check("alpha-pdf-turn", "alpha", "window", "pass" if isinstance(second, int) and second >= 2 else "fail", f"page after right arrow {second}"))
-        rows.append(check("alpha-pdf-reopen", "alpha", "window", "pass" if isinstance(back, int) and back >= 2 else "fail", f"relaunched at page {back}"))
+        pdf_surface = reading_surface(pdf_names, None, first if isinstance(first, int) else None)
+        internal = reader_pdf_page()
+        pdf_rows = alpha_page_rows("pdf", pdf_surface, first, second, back)
+        if pdf_surface != "book_loaded" and internal:
+            for row in pdf_rows:
+                row["detail"] += f"; reader.json page {internal} is internal and was not on screen"
+        rows.extend(pdf_rows)
     except Exception as exc:
         rows.append(check("alpha-empty", "alpha", "window", "fail", str(exc)))
     rows.append(check("alpha-finder-open", "alpha", "none", "pending", FINDER_GAP))

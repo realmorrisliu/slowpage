@@ -17,7 +17,7 @@ From the repo root:
 just verify --out docs/verify/runs/$RUN_ID
 ```
 
-`just verify` takes `/tmp/superreader-verify.lock` with `mkdir`, waiting 30 seconds between tries, and releases it with `rmdir` when the run exits. It then waits until `sysctl -n vm.loadavg` shows a 1-minute load under `SR_VERIFY_MAX_LOAD` (default 8). A caller-supplied `SR_VERIFY_LOAD_START` is recorded as `load_start`; otherwise the summary records the load after that wait, and `load_end` when the run finishes. Do not start a second window run while the lock is held.
+`just verify` takes `/tmp/superreader-verify.lock` with `mkdir`, waiting 30 seconds between tries, and releases it with `rmdir` when the run exits. It then reads `sysctl -n vm.loadavg`. The prescribed ceiling is 8. `SR_VERIFY_MAX_LOAD` cannot raise it. If the 1-minute load is not under the ceiling, the run does not start. Do not start a second window run while the lock is held.
 
 The script builds `spike-shell` and `spike-measure` in release, then starts each drive as its own process. A PDF drive is ready when Accessibility shows the paper title and a `N pages left` footer. An EPUB drive is ready when the footer shows `N/M` with more than one page and `page left in this chapter` or `pages left in this chapter`. There is no shared server and no seeded database.
 
@@ -80,8 +80,10 @@ scripts/verify --out docs/verify/runs/manual
 Before the full suite, prove the shell form on its own. This builds the release shell, launches the fixture library in an isolated temp support directory, and scores only that form. It walks 1440, the 578 by 528 minimum, and fullscreen enter, settled, and exit, and it requires the accessibility titles and a shelf wheel that moves pixels. It does not install to `/Applications` and it does not set `CARGO_TARGET_DIR`.
 
 ```sh
-SR_VERIFY_MAX_LOAD=999 SR_VERIFY_LOAD_START=999 just verify --subset preflight --out /tmp/superreader-preflight-s2-1-9
+just verify --subset preflight --out /tmp/superreader-preflight-s2-1-9
 ```
+
+Do not set `SR_VERIFY_MAX_LOAD` above 8. A load at or above 8 means this command does not start.
 
 `shell-form-fixture`, `shell-shelf-scroll`, and `shell-clip` have to pass. `frames/` has to contain `1440`, `minimum`, `fullscreen-enter`, `fullscreen-settled`, and `fullscreen-exit`. `form-minimum.png`, `form-fullscreen.png`, and `form-restored.png` have to exist, and the fullscreen capture has to differ from the windowed one. The wheel before and after captures have to differ. A pass here is the gate for the full suite. The full suite uses a new run directory and still scores every other row.
 
