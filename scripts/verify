@@ -710,18 +710,28 @@ def available_height_report(layout, chrome):
     try:
         window_h = float(chrome["window_h"])
         window_w = float(chrome["window_w"])
-        stage_h = float(chrome["stage_h"])
-        stage_w = float(chrome["stage_w"])
-        content_h = float(chrome["content_h"])
-        content_w = float(chrome["content_w"])
+        layout_w = float(layout["window"][0])
+        layout_h = float(layout["window"][1])
         inset = float(layout["inset"])
         composer_inset = float(layout["composer_inset"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, IndexError):
         return ["available height missing"]
     problems = []
-    if abs(content_h - window_h) > ALIGN_TOL or abs(content_w - window_w) > ALIGN_TOL:
-        problems.append(f"content {content_w:.1f}x{content_h:.1f} window {window_w:.1f}x{window_h:.1f}")
-    del stage_h, stage_w
+    if abs(layout_w - window_w) > ALIGN_TOL or abs(layout_h - window_h) > ALIGN_TOL:
+        problems.append(
+            f"layout {layout_w:.0f}x{layout_h:.0f} window {window_w:.0f}x{window_h:.0f}"
+        )
+    if "content_w" in chrome and "content_h" in chrome:
+        try:
+            content_w = float(chrome["content_w"])
+            content_h = float(chrome["content_h"])
+        except (TypeError, ValueError):
+            problems.append("content missing")
+        else:
+            if abs(content_w - window_w) > ALIGN_TOL or abs(content_h - window_h) > ALIGN_TOL:
+                problems.append(
+                    f"content {content_w:.1f}x{content_h:.1f} window {window_w:.1f}x{window_h:.1f}"
+                )
     card = box("card")
     if card is None:
         problems.append("card missing")
@@ -1075,6 +1085,19 @@ def _same_box(left, right):
         and right is not None
         and all(abs(left[index] - right[index]) <= ALIGN_TOL for index in range(4))
     )
+
+
+def transition_size_report(pairs):
+    """Each enter, settled, and exit frame must use that frame's window.
+
+    A 6pt card gap in a window that is already 855pt passes. A layout that
+    stays 1440x855 after the window is 1512x949 does not.
+    """
+    problems = []
+    for label, layout, chrome in pairs:
+        for item in available_height_report(layout, chrome):
+            problems.append(f"{label} {item}")
+    return problems
 
 
 def transition_report(frames):
@@ -1954,10 +1977,53 @@ def form_diff_self_check():
     short["content_h"] = short["window_h"]
     short["window_w"] = sample["window"][0] + 72
     short["content_w"] = short["window_w"]
-    assert any(item.startswith("card bottom") for item in available_height_report(sample, short))
+    band = available_height_report(sample, short)
+    assert any(item.startswith("layout ") for item in band), band
+    assert any(item.startswith("card bottom") for item in band), band
     short_content = dict(sample_chrome)
     short_content["content_h"] = sample["window"][1] - 94
     assert any(item.startswith("content ") for item in available_height_report(sample, short_content))
+    # The windowed frame is 45pt shorter than a 900pt mockup and still agrees with itself.
+    assert available_height_report(sample, sample_chrome) == []
+
+    def at_height(layout, width, height):
+        laid = json.loads(json.dumps(layout))
+        laid["window"] = [width, height]
+        inset = float(laid["inset"])
+        composer_inset = float(laid["composer_inset"])
+        for node in laid["nodes"]:
+            frame = node.get("frame")
+            if not isinstance(frame, list):
+                continue
+            if node.get("id") == "card":
+                frame[3] = height - frame[1] - inset
+            elif node.get("id") == "chat":
+                frame[3] = height - frame[1]
+            elif node.get("id") == "composer":
+                frame[1] = height - composer_inset - frame[3]
+        return laid
+
+    filled = at_height(sample, 1512, 949)
+    full_chrome = {
+        "window_w": 1512,
+        "window_h": 949,
+        "content_w": 1512,
+        "content_h": 949,
+    }
+    assert available_height_report(filled, full_chrome) == [], available_height_report(filled, full_chrome)
+    stale = transition_size_report([
+        ("fullscreen-enter", sample, sample_chrome),
+        ("fullscreen-settled", sample, full_chrome),
+        ("fullscreen-exit", sample, sample_chrome),
+    ])
+    assert any(item.startswith("fullscreen-settled layout ") for item in stale), stale
+    assert not any(item.startswith("fullscreen-enter") for item in stale), stale
+    assert not any(item.startswith("fullscreen-exit") for item in stale), stale
+    assert transition_size_report([
+        ("fullscreen-enter", sample, sample_chrome),
+        ("fullscreen-settled", filled, full_chrome),
+        ("fullscreen-exit", sample, sample_chrome),
+    ]) == []
     gapped = _sample_layout()
     gapped["nodes"].extend(
         [
@@ -2929,6 +2995,7 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
         if jump:
             matched = False
             note += "; " + "; ".join(jump[:6])
+    pairs = []
     for label in ("fullscreen-enter", "fullscreen-settled", "fullscreen-exit"):
         frame_dir = out / "frames"
         if not (frame_dir / f"{label}-layout.json").is_file() and not (
@@ -2936,6 +3003,19 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
         ).is_file():
             matched = False
             note += f"; {label} frame missing"
+            continue
+        layout_path = frame_dir / f"{label}-layout.json"
+        chrome_path = frame_dir / f"{label}-chrome.json"
+        try:
+            layout = json.loads(layout_path.read_text()) if layout_path.is_file() else None
+            chrome = json.loads(chrome_path.read_text()) if chrome_path.is_file() else None
+        except (OSError, json.JSONDecodeError):
+            layout = chrome = None
+        if isinstance(layout, dict) and isinstance(chrome, dict):
+            pairs.append((label, layout, chrome))
+    for item in transition_size_report(pairs):
+        matched = False
+        note += f"; {item}"
     notes.append(note)
     ok = ok and matched
     return ok, "; ".join(notes), state

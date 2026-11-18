@@ -44,6 +44,9 @@ x=330 is the same colors at the same y as the 855-point window, and
 y=860 through y=945 is flat gray. The saved fullscreen layout still
 says window 1440x855 while chrome.json says 1512x949.
 
-No token change in this step. The peek and the fullscreen reflow are
-layout rules, not a one-control nudge, and they need Morris's call
-before a design change.
+The 6-point cover sliver is the leftover row in the 855-point window.
+It is not the bottom band. Fullscreen chrome is 1512x949 while the
+saved layout stays 1440x855, and y=860 through y=945 is unused window.
+That is a root sizing bug: the layout did not take the new content
+rect. The approved inset stays 6 points on the card and 18 on the
+composer. Filling that window is the existing rule, not a new choice.

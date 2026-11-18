@@ -608,4 +608,14 @@ mod tests {
         assert!((content_top(949.0, 925.0, 0.0, 925.0)).abs() < 0.01);
         assert!((content_top(949.0, 100.0, 0.0, 949.0)).abs() < 0.01);
     }
+
+    #[test]
+    fn a_short_fullscreen_stage_is_not_converted_into_an_inset() {
+        // The content view already fills the 949pt window. The old 855pt
+        // stage is not a title bar, and neither is the 45pt menu bar.
+        assert!(content_top(949.0, 949.0, 0.0, 855.0).abs() < 0.01);
+        assert!(content_top(949.0, 855.0, 0.0, 855.0).abs() < 0.01);
+        assert!(content_top(855.0, 855.0, 0.0, 855.0).abs() < 0.01);
+        assert!((content_top(949.0, 925.0, 0.0, 949.0) - 24.0).abs() < 0.01);
+    }
 }
