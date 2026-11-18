@@ -1,0 +1,113 @@
+{
+ "support": "/var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/superreader-lights-gzcg051a",
+ "foreign": 75399,
+ "reader_windowed": {
+  "pid": 2522,
+  "centers": {
+   "close": {
+    "x": 9.0,
+    "y": 750.0,
+    "h": 14.0,
+    "from_top": 24.0
+   },
+   "miniaturize": {
+    "x": 32.0,
+    "y": 750.0,
+    "h": 14.0,
+    "from_top": 24.0
+   },
+   "zoom": {
+    "x": 55.0,
+    "y": 750.0,
+    "h": 14.0,
+    "from_top": 24.0
+   }
+  },
+  "window": [
+   582.0,
+   781.0
+  ],
+  "fullscreen": false
+ },
+ "reader_fullscreen": {
+  "centers": {
+   "close": {
+    "x": 9.0,
+    "y": 41.0,
+    "h": 14.0,
+    "from_top": 901.0
+   },
+   "miniaturize": {
+    "x": 32.0,
+    "y": 41.0,
+    "h": 14.0,
+    "from_top": 901.0
+   },
+   "zoom": {
+    "x": 55.0,
+    "y": 41.0,
+    "h": 14.0,
+    "from_top": 901.0
+   }
+  },
+  "fullscreen": true,
+  "window": [
+   1512.0,
+   949.0
+  ]
+ },
+ "reader_restored": {
+  "centers": {
+   "close": {
+    "x": 9.0,
+    "y": 750.0,
+    "h": 14.0,
+    "from_top": 24.0
+   },
+   "miniaturize": {
+    "x": 32.0,
+    "y": 750.0,
+    "h": 14.0,
+    "from_top": 24.0
+   },
+   "zoom": {
+    "x": 55.0,
+    "y": 750.0,
+    "h": 14.0,
+    "from_top": 24.0
+   }
+  },
+  "fullscreen": false,
+  "window": [
+   582.0,
+   781.0
+  ]
+ },
+ "shelf_windowed": {
+  "pid": 2579,
+  "centers": {
+   "close": {
+    "x": 9.0,
+    "y": 609.0,
+    "h": 14.0,
+    "from_top": 24.0
+   },
+   "miniaturize": {
+    "x": 32.0,
+    "y": 609.0,
+    "h": 14.0,
+    "from_top": 24.0
+   },
+   "zoom": {
+    "x": 55.0,
+    "y": 609.0,
+    "h": 14.0,
+    "from_top": 24.0
+   }
+  },
+  "window": [
+   980.0,
+   640.0
+  ]
+ }
+}

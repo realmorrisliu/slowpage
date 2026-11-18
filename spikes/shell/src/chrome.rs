@@ -315,9 +315,6 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
         install_shelf_wheel();
     }
     window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
-    if shell_on() && !window.styleMask().contains(NSWindowStyleMask::FullScreen) {
-        center_traffic_lights(window);
-    }
     note_immersive(rt);
     settle_bar(window, rt);
     let fullscreen = window.styleMask().contains(NSWindowStyleMask::FullScreen);
@@ -463,6 +460,11 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     if shell_on() && window.isVisible() {
         rt.shown.set(true);
     }
+    // After a fullscreen exit the buttons are back in the title bar. AppKit
+    // then lays the reader toolbar out and can leave the zoom button on the
+    // system row while close and minimize sit in the 48pt bar. Align to the
+    // shared center, for the reader and the shelf, once that restore is done.
+    align_traffic_centers(window);
     write_json(window, rt, false);
 }
 
@@ -496,17 +498,32 @@ fn style_window(window: &NSWindow, rt: &Runtime) {
     rt.mark_bar_dirty();
 }
 
-/// NSH 0.5 centers the lights in the 48pt hidden bar. If a build leaves them
-/// within 8 points of that center, move them onto it.
-fn center_traffic_lights(window: &NSWindow) {
-    let Some(content) = window.contentView() else {
-        return;
-    };
-    let window_h = content.frame().size.height;
-    if !window_h.is_finite() || window_h < TOP {
+/// How far each window-space center must move to share one vertical center.
+/// The shared center is the median, so the button AppKit left on a different
+/// row moves to the other two, and a row that already agrees is not shifted.
+pub(crate) fn traffic_center_deltas(centers: &[f64]) -> Vec<f64> {
+    if centers.len() < 2 || centers.iter().any(|center| !center.is_finite()) {
+        return vec![0.0; centers.len()];
+    }
+    let mut ordered: Vec<f64> = centers.to_vec();
+    ordered.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let shared = ordered[ordered.len() / 2];
+    centers.iter().map(|center| shared - center).collect()
+}
+
+/// The three system buttons, in window coordinates, onto one center.
+/// A button outside the title-bar band is left where it is: fullscreen parks
+/// one there, and a fixed green-only offset would not survive the next layout.
+fn align_traffic_centers(window: &NSWindow) {
+    if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
         return;
     }
-    let center_y = window_h - (TOP / 2.0);
+    let top = window.frame().size.height;
+    if !top.is_finite() || top < TOP {
+        return;
+    }
+    let band = f64::from(crate::tokens::CHROME_H) + 16.0;
+    let mut buttons = Vec::new();
     for kind in [
         NSWindowButton::CloseButton,
         NSWindowButton::MiniaturizeButton,
@@ -516,13 +533,38 @@ fn center_traffic_lights(window: &NSWindow) {
             continue;
         };
         let frame = button_window_frame(&button);
-        let mid = frame.origin.y + frame.size.height / 2.0;
-        let dy = center_y - mid;
-        if !dy.is_finite() || dy.abs() < 0.5 || dy.abs() > 8.0 {
+        if frame.size.height < 1.0 || frame.size.width < 1.0 {
             continue;
         }
-        let local = button.frame();
-        button.setFrameOrigin(NSPoint::new(local.origin.x, local.origin.y + dy));
+        let mid = frame.origin.y + frame.size.height / 2.0;
+        let from_top = top - mid;
+        if !from_top.is_finite() || !(-1.0..=band).contains(&from_top) {
+            continue;
+        }
+        buttons.push((button, mid));
+    }
+    if buttons.len() < 2 {
+        return;
+    }
+    let deltas = traffic_center_deltas(&buttons.iter().map(|(_, mid)| *mid).collect::<Vec<_>>());
+    for ((button, _), delta) in buttons.iter().zip(deltas) {
+        if !delta.is_finite() || delta.abs() <= 0.5 {
+            continue;
+        }
+        let view = view_of(button);
+        let Some(parent) = (unsafe { view.superview() }) else {
+            continue;
+        };
+        let frame = button_window_frame(button);
+        let shifted = NSPoint::new(frame.origin.x, frame.origin.y + delta);
+        let local: NSPoint = unsafe {
+            msg_send![
+                &*parent,
+                convertPoint: shifted,
+                fromView: std::ptr::null::<NSView>()
+            ]
+        };
+        button.setFrameOrigin(local);
     }
 }
 
@@ -1834,6 +1876,19 @@ mod tests {
         close(page_mid, area_mid);
         assert!(content_page_x(1100.0, 400.0, 0.0).is_none());
         assert!(content_page_x(200.0, 180.0, 98.0).is_none());
+    }
+
+    #[test]
+    fn the_high_button_joins_the_other_two_centers() {
+        // Window y grows upward. The zoom button in the reader shot sits
+        // about 8pt closer to the top, so its center is 8pt greater.
+        let deltas = traffic_center_deltas(&[806.0, 806.0, 814.0]);
+        assert!(deltas[0].abs() <= 0.5);
+        assert!(deltas[1].abs() <= 0.5);
+        close(deltas[2], -8.0);
+        let agreed = traffic_center_deltas(&[806.0, 806.0, 806.2]);
+        assert!(agreed.iter().all(|delta| delta.abs() <= 0.5));
+        assert!(traffic_center_deltas(&[806.0]).is_empty() || traffic_center_deltas(&[806.0]) == vec![0.0]);
     }
 
     #[test]
