@@ -165,9 +165,15 @@ pub fn centered_bar_width(close_min_x: f64, zoom_max_x: f64) -> f64 {
     zoom_max_x + close_min_x
 }
 
-/// Horizontal origin of a page centered in the area from the bar's right edge
-/// to the window's right edge. `None` when there is no bar or the page does
-/// not fit in that area.
+/// Horizontal origin of the reader page. The side mats are equal. The
+/// traffic-light row is not a column, and it does not push the page right.
+pub fn reader_page_x(left: f64, ix: f64) -> f64 {
+    left + ix
+}
+
+/// Where a page would sit if it were kept clear of a left bar. The reader
+/// does not use this. The test keeps it to show the shift that was removed.
+#[cfg(test)]
 pub fn content_page_x(stage_w: f64, page_w: f64, bar: f64) -> Option<f64> {
     if bar <= 1.0 || page_w <= 0.0 || stage_w <= bar + 1.0 || page_w > stage_w - bar + 0.5 {
         return None;
@@ -1866,6 +1872,14 @@ mod tests {
     fn the_page_starts_below_the_traffic_lights() {
         let (_, _, _, top) = content_box(800.0, 1000.0);
         assert!(top >= 44.0);
+    }
+
+    #[test]
+    fn the_reader_page_is_not_pushed_aside_for_the_traffic_lights() {
+        let (_, _, left, _) = content_box(582.0, 781.0);
+        close(reader_page_x(left, 0.0), SIDE);
+        let pushed = content_page_x(582.0, 478.0, 82.0).unwrap();
+        assert!(pushed > reader_page_x(left, 0.0) + 20.0);
     }
 
     #[test]

@@ -308,20 +308,6 @@ impl State {
             };
             CGContext::set_rgb_fill_color(Some(&ctx), red, green, blue, 1.0);
             CGContext::fill_rect(Some(&ctx), bounds);
-            let bar = self.chrome.bar_w.get();
-            if bar > 1.0 && !crate::chrome::shell_on() {
-                CGContext::set_rgb_fill_color(
-                    Some(&ctx),
-                    228.0 / 255.0,
-                    228.0 / 255.0,
-                    230.0 / 255.0,
-                    1.0,
-                );
-                CGContext::fill_rect(
-                    Some(&ctx),
-                    NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(bar, bounds.size.height)),
-                );
-            }
         }
     }
 
@@ -1132,8 +1118,7 @@ impl State {
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
         let (box_w, box_h, left, top) = crate::chrome::content_box(self.stage_w, self.stage_h);
         let (ix, iy, w, h) = crate::reading::fit_page(box_w, box_h, rw, rh);
-        let bar = self.chrome.bar_w.get();
-        let x = crate::chrome::content_page_x(self.stage_w, w, bar).unwrap_or(left + ix);
+        let x = crate::chrome::reader_page_x(left, ix);
         let y = top + iy;
         let design = crate::chrome::reading_page(
             rw,
@@ -1345,9 +1330,9 @@ impl State {
     }
 }
 
-fn pdf_origin_of(product: bool, bar_w: f64) -> (f64, f64) {
+fn pdf_origin_of(product: bool) -> (f64, f64) {
     if product {
-        (bar_w.max(24.0), crate::chrome::TOP)
+        (crate::chrome::SIDE, crate::chrome::TOP)
     } else {
         (24.0, 0.0)
     }
@@ -1355,7 +1340,7 @@ fn pdf_origin_of(product: bool, bar_w: f64) -> (f64, f64) {
 
 impl State {
     fn pdf_origin(&self) -> (f64, f64) {
-        pdf_origin_of(self.product, self.chrome.bar_w.get())
+        pdf_origin_of(self.product)
     }
 }
 
