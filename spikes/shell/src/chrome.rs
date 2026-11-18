@@ -352,7 +352,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     // Full screen changes the window frame without resizing the content view.
     // The stage then stays at the old height and both panels stop short.
     // Fitting from inside layout re-enters AppKit, so only the pump does it.
-    if !rt.laying_out.get() {
+    // A live resize is already changing the frame; fitting there fights the
+    // drag and can stall the tracking loop.
+    if !rt.laying_out.get() && !window.inLiveResize() {
         fit_full_content(window);
     }
     if fullscreen {
@@ -953,6 +955,8 @@ struct FullscreenInput {
     enter_sent: bool,
     exit_sent: bool,
     window_ready: bool,
+    /// `fullscreen-arm` is `0` while the driver still needs the windowed frame.
+    hold_arm: bool,
 }
 
 fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
@@ -970,6 +974,9 @@ fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
                 exit: true,
             };
         }
+        return none;
+    }
+    if input.hold_arm {
         return none;
     }
     if input.is_full || !input.window_ready || input.enter_sent {
@@ -1001,6 +1008,7 @@ fn request_fullscreen(window: &NSWindow, rt: &Runtime, is_full: bool, armed: boo
         enter_sent: rt.fullscreen_sent.get(),
         exit_sent: rt.fullscreen_exit_sent.get(),
         window_ready: armed && window.isVisible() && window.isKeyWindow(),
+        hold_arm: file_flag("/tmp/superreader-spike/fullscreen-arm") == Some(false),
     });
     if decision.enter {
         window.toggleFullScreen(None);
@@ -1750,6 +1758,7 @@ mod tests {
             enter_sent: false,
             exit_sent: false,
             window_ready: false,
+            hold_arm: false,
         };
         assert_eq!(
             fullscreen_decision(idle),
@@ -1763,6 +1772,12 @@ mod tests {
             ..idle
         };
         assert!(fullscreen_decision(ready).enter);
+        let held = FullscreenInput {
+            hold_arm: true,
+            ..ready
+        };
+        assert!(!fullscreen_decision(held).enter);
+        assert!(!fullscreen_decision(held).exit);
         let sent = FullscreenInput {
             enter_sent: true,
             ..ready

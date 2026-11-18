@@ -1643,8 +1643,10 @@ fn write_frames(placed: &Placement, library: &LibraryIn) {
         "lights": placed.chrome.lights && placed.chrome.bar > 8.0,
         "traffic_bar": placed.chrome.bar,
         "content_top": placed.chrome.top,
+        "pid": std::process::id(),
         "nodes": nodes,
     });
+    crate::stage::trace_resize("layout-json", window_w, window_h, true);
     let path = std::path::Path::new("/tmp/superreader-spike/layout.json");
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);

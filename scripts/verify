@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import argparse
 import ast
+import inspect
 import json
 import os
 import re
@@ -750,6 +751,109 @@ def available_height_report(layout, chrome):
         if abs(composer_gap - composer_inset) > ALIGN_TOL:
             problems.append(f"composer bottom gap {composer_gap:.2f}")
     return problems
+
+
+def layout_at_window(layout, width, height):
+    """Copy a layout onto a window, keeping the card, chat, and composer gaps."""
+    laid = json.loads(json.dumps(layout))
+    laid["window"] = [width, height]
+    try:
+        inset = float(laid["inset"])
+        composer_inset = float(laid["composer_inset"])
+    except (KeyError, TypeError, ValueError):
+        return laid
+    for node in laid.get("nodes") or []:
+        frame = node.get("frame")
+        if not isinstance(frame, list) or len(frame) < 4:
+            continue
+        if node.get("id") == "card":
+            frame[3] = height - frame[1] - inset
+        elif node.get("id") == "chat":
+            frame[3] = height - frame[1]
+        elif node.get("id") == "composer":
+            frame[1] = height - composer_inset - frame[3]
+        elif node.get("id") == "sidebar":
+            frame[3] = height - frame[1]
+    return laid
+
+
+def _layout_ready(layout):
+    return isinstance(layout, dict) and "lights" in layout and bool(layout.get("nodes"))
+
+
+def transition_frame(layout, chrome):
+    """Classify one native sample. A fullscreen sample is settled only when
+    the layout window matches the NSWindow. A short layout under a tall
+    window is not the enter frame and not the settled frame.
+    """
+    if not _layout_ready(layout) or not isinstance(chrome, dict):
+        return None
+    if "fullscreen" not in chrome and "window_w" not in chrome:
+        return "enter"
+    if available_height_report(layout, chrome):
+        return None
+    if chrome.get("fullscreen") is True:
+        return "settled"
+    return "enter"
+
+
+def enter_is_windowed(chrome, windowed_size):
+    """The enter frame is a non-fullscreen NSWindow.
+
+    When the windowed size was recorded, the frame has to match it within
+    0.5pt. A fullscreen sample is never the enter frame, even if a later
+    reread would have the same layout.
+    """
+    if not isinstance(chrome, dict) or chrome.get("fullscreen") is not False:
+        return False
+    try:
+        width = float(chrome["window_w"])
+        height = float(chrome["window_h"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if width <= 2 or height <= 2:
+        return False
+    if not windowed_size:
+        return True
+    try:
+        want_w = float(windowed_size[0])
+        want_h = float(windowed_size[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    return abs(width - want_w) <= ALIGN_TOL and abs(height - want_h) <= ALIGN_TOL
+
+
+def record_transition(samples):
+    """Fold timed samples into the enter and settled labels they actually prove."""
+    enter = settled = None
+    seen_full = False
+    for chrome, layout in samples:
+        if isinstance(chrome, dict) and chrome.get("fullscreen") is True:
+            seen_full = True
+        kind = transition_frame(layout, chrome)
+        if kind == "enter" and not seen_full:
+            enter = "enter"
+        elif kind == "settled" and settled is None:
+            settled = "settled"
+    return enter, settled
+
+
+def exit_pending(was_full, chrome, layout):
+    """Empty when the window has left fullscreen and the layout lights match it.
+
+    A restored NSWindow with layout lights still false is not an exit. The
+    height check stays the same 0.5pt agreement as the settled frame.
+    """
+    if not was_full:
+        return "fullscreen was not entered"
+    if not isinstance(chrome, dict) or chrome.get("fullscreen") is not False:
+        return "window still fullscreen"
+    if not isinstance(layout, dict) or layout.get("lights") is not True:
+        return "layout lights have not matched the window"
+    problems = available_height_report(layout, chrome)
+    if problems:
+        return "layout has not matched the window (" + "; ".join(problems) + ")"
+    return ""
 
 
 def alignment_report(layout):
@@ -2024,6 +2128,53 @@ def form_diff_self_check():
         ("fullscreen-settled", filled, full_chrome),
         ("fullscreen-exit", sample, sample_chrome),
     ]) == []
+    shield = {
+        "id": 1, "w": 1512, "h": 982, "x": 0, "y": 0,
+        "vis_w": 1512, "vis_h": 949, "scale": 2, "screen_h": 982,
+    }
+    content = {
+        "id": 2, "w": 1512, "h": 949, "x": 0, "y": 33,
+        "vis_w": 1512, "vis_h": 949, "scale": 2, "screen_h": 982,
+    }
+    strip = {
+        "id": 3, "w": 1512, "h": 32, "x": 0, "y": 33,
+        "vis_w": 1512, "vis_h": 949, "scale": 2, "screen_h": 982,
+    }
+    listed = [shield, content, strip]
+    assert max(listed, key=lambda row: row["w"] * row["h"])["id"] == 1
+    assert choose_content_window(listed, full_chrome)["id"] == 2
+    assert choose_content_window([shield, strip], full_chrome) is None
+    assert choose_content_window([content], full_chrome)["id"] == 2
+    windowed_chrome = dict(sample_chrome)
+    windowed_chrome["fullscreen"] = False
+    full_now = dict(full_chrome)
+    full_now["fullscreen"] = True
+    assert transition_frame(sample, full_now) is None
+    assert transition_frame(filled, full_now) == "settled"
+    assert transition_frame(sample, windowed_chrome) == "enter"
+    assert record_transition([
+        (full_now, sample),
+        (full_now, filled),
+    ]) == (None, "settled")
+    assert record_transition([
+        (windowed_chrome, sample),
+        (full_now, sample),
+        (full_now, filled),
+    ]) == ("enter", "settled")
+    restored = dict(windowed_chrome)
+    restored["lights_visible"] = True
+    dark = json.loads(json.dumps(sample))
+    dark["lights"] = False
+    assert exit_pending(True, restored, dark) == "layout lights have not matched the window"
+    assert exit_pending(True, restored, sample) == ""
+    assert not enter_is_windowed({"fullscreen": True, "window_w": 1512, "window_h": 949}, (1440, 855))
+    assert enter_is_windowed({"fullscreen": False, "window_w": 1440, "window_h": 855}, (1440, 855))
+    assert not enter_is_windowed({"fullscreen": False, "window_w": 1512, "window_h": 949}, (1440, 855))
+    wheel_body = inspect.getsource(shelf_wheel)
+    assert wheel_body.index("compile_wheel") < wheel_body.index("capture(window, before)")
+    assert wheel_body.index("claim_front") < wheel_body.index("capture(window, before)")
+    picker = inspect.getsource(compile_window_id)
+    assert "bestArea" not in picker
     gapped = _sample_layout()
     gapped["nodes"].extend(
         [
@@ -2424,11 +2575,34 @@ def run_form_fixture(out, window_tool):
 def _capture_form(out, window_tool, state, png_name):
     if not state["alive"]:
         return False
-    window = window_id(window_tool, state["pid"])
-    if window is None:
-        return False
-    capture(window, out / png_name)
-    return (out / png_name).exists()
+    dest = out / png_name
+    deadline = time.time() + 6
+    last = "window id was not listed"
+    while time.time() < deadline:
+        proc = state.get("proc")
+        if proc is not None and proc.poll() is not None:
+            state["alive"] = False
+            last = "window process exited before capture"
+            break
+        chosen, rows, chrome = lookup_content_window(window_tool, state["pid"])
+        if chosen is None:
+            want = ""
+            if isinstance(chrome, dict) and chrome.get("window_w") and chrome.get("window_h"):
+                want = f" for {chrome.get('window_w')}x{chrome.get('window_h')}"
+            last = f"no content window{want}; saw {describe_windows(rows)}"
+            time.sleep(0.1)
+            continue
+        try:
+            capture(chosen["id"], dest)
+        except RuntimeError as exc:
+            last = f"window {chosen['id']} {chosen['w']:.0f}x{chosen['h']:.0f} {exc}"
+            time.sleep(0.1)
+            continue
+        if dest.exists():
+            return True
+        last = f"window {chosen['id']} capture wrote nothing"
+        time.sleep(0.1)
+    raise RuntimeError(last)
 
 
 def _form_env(root, libs, extra):
@@ -2692,15 +2866,59 @@ def compile_wheel(out):
     return binary
 
 
+def frontmost_pid():
+    proc = subprocess.run(
+        [
+            "osascript",
+            "-e",
+            'tell application "System Events" to unix id of first process whose frontmost is true',
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        return int((proc.stdout or "").strip())
+    except ValueError:
+        return None
+
+
+def claim_front(pid):
+    """The wheel is delivered only to the key app. Return whether this pid is front."""
+    current = frontmost_pid()
+    if current == pid:
+        return True, current
+    subprocess.run(
+        [
+            "osascript",
+            "-e",
+            f'tell application "System Events" to set frontmost of (first process whose unix id is {int(pid)}) to true',
+        ],
+        capture_output=True,
+        text=True,
+    )
+    time.sleep(0.2)
+    current = frontmost_pid()
+    return current == pid, current
+
+
 def shelf_wheel(out, window_tool, state):
     """A wheel over the shelf grid has to move pixels. Page Down is not a substitute."""
     if not state.get("alive"):
         return False, "shelf wheel had no window"
+    try:
+        tool = compile_wheel(out)
+    except (OSError, RuntimeError) as exc:
+        return False, f"shelf wheel {exc}"
+    focused, front = claim_front(state["pid"])
+    if not focused:
+        return False, f"shelf wheel window was not key (front pid {front})"
     metrics = window_metrics(window_tool, state["pid"])
     layout = read_shell_layout()
     card = layout.get("card") if isinstance(layout.get("card"), list) else None
     if metrics is None or card is None or len(card) != 4 or "x" not in metrics:
-        return False, "shelf wheel had no grid point"
+        return False, f"shelf wheel had no grid point ({describe_windows(window_rows(window_tool, state['pid']))})"
     point_x = float(card[0]) + float(card[2]) * 0.55
     point_y = float(card[1]) + float(card[3]) * 0.72
     if "screen_h" not in metrics:
@@ -2713,7 +2931,6 @@ def shelf_wheel(out, window_tool, state):
     after = out / "shelf-wheel-after.png"
     try:
         capture(window, before)
-        tool = compile_wheel(out)
         proc = subprocess.run(
             [str(tool), str(screen_x), str(screen_y), "-220"],
             capture_output=True,
@@ -2775,12 +2992,31 @@ class _LiveAdaptive:
     def archive(self, out, label):
         archive_frame(out, label)
 
+    def archive_observed(self, out, label, layout, chrome):
+        dest = out / "frames"
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / f"{label}-layout.json").write_text(json.dumps(layout))
+        (dest / f"{label}-chrome.json").write_text(json.dumps(chrome))
+        root = Path("/tmp/superreader-spike")
+        for name in ("geometry.json", "shell-layout.json"):
+            src = root / name
+            if src.is_file():
+                (dest / f"{label}-{name}").write_bytes(src.read_bytes())
+
     def chrome_full(self):
         return _chrome_fullscreen()
 
 
 def _stage_error(notes, label, exc):
     notes.append(f"{label} {type(exc).__name__}: {exc}")
+
+
+def _archive_observed(io, out, label, layout, chrome):
+    writer = getattr(io, "archive_observed", None)
+    if writer is not None:
+        writer(out, label, layout, chrome)
+    else:
+        io.archive(out, label)
 
 
 def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
@@ -2870,6 +3106,9 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
         _stage_error(notes, "fullscreen", exc)
         ok = False
     transition = []
+    seen_full = {"value": False}
+    entered = {"ok": False}
+    arm = Path("/tmp/superreader-spike/fullscreen-arm")
 
     def watch_transition(_started, bucket=transition):
         try:
@@ -2878,24 +3117,43 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
             _stage_error(notes, "fullscreen watch", exc)
             return False
         chrome = {}
+        chrome_error = False
         try:
             chrome = io.read_chrome() or {}
         except Exception as exc:
+            chrome_error = True
             _stage_error(notes, "fullscreen watch", exc)
         if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
             bucket.append(json.loads(json.dumps(layout)))
-            try:
-                if chrome.get("fullscreen") is True:
-                    io.archive(out, "fullscreen-settled")
-                elif not (out / "frames" / "fullscreen-enter-layout.json").is_file():
-                    io.archive(out, "fullscreen-enter")
-            except Exception as exc:
-                _stage_error(notes, "fullscreen watch", exc)
-        return False
+        if isinstance(chrome, dict) and chrome.get("fullscreen") is True:
+            seen_full["value"] = True
+        kind = transition_frame(layout, chrome)
+        frames = out / "frames"
+        try:
+            if (
+                not seen_full["value"]
+                and _layout_ready(layout)
+                and enter_is_windowed(chrome, windowed_size)
+            ):
+                _archive_observed(io, out, "fullscreen-enter", layout, chrome)
+                entered["ok"] = True
+                arm.parent.mkdir(parents=True, exist_ok=True)
+                arm.write_text("1")
+            elif chrome_error and not (frames / "fullscreen-enter-layout.json").is_file():
+                io.archive(out, "fullscreen-enter")
+            elif kind == "settled" and not (frames / "fullscreen-settled-layout.json").is_file():
+                _archive_observed(io, out, "fullscreen-settled", layout, chrome)
+        except Exception as exc:
+            _stage_error(notes, "fullscreen watch", exc)
+            return False
+        return kind == "settled" and entered["ok"]
 
     try:
         io.finish(state)
         io.clear()
+        arm.parent.mkdir(parents=True, exist_ok=True)
+        arm.write_text("0")
+        Path("/tmp/superreader-spike/bar-fullscreen").unlink(missing_ok=True)
         state = io.launch(
             out,
             "form-fullscreen",
@@ -2923,7 +3181,18 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
             notes.append("fullscreen capture returned false")
             ok = False
         io.crops(out, "form-fullscreen", out / "form-fullscreen.png")
-        io.archive(out, "fullscreen-settled")
+        try:
+            settled_layout = io.read_layout()
+            settled_chrome = io.read_chrome() or {}
+            if transition_frame(settled_layout, settled_chrome) == "settled":
+                _archive_observed(io, out, "fullscreen-settled", settled_layout, settled_chrome)
+            elif not (out / "frames" / "fullscreen-settled-layout.json").is_file():
+                io.archive(out, "fullscreen-settled")
+        except Exception as exc:
+            notes.append(f"fullscreen settled read {type(exc).__name__}: {exc}")
+            ok = False
+            if not (out / "frames" / "fullscreen-settled-layout.json").is_file():
+                io.archive(out, "fullscreen-settled")
     except (OSError, RuntimeError) as exc:
         notes.append(f"fullscreen capture {type(exc).__name__}: {exc}")
         ok = False
@@ -2947,6 +3216,8 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
         note += "; png missing"
     exit_note = ""
     left = False
+    exit_reason = ""
+    exit_pair = None
     try:
         exit_flag.parent.mkdir(parents=True, exist_ok=True)
         exit_flag.write_text("1")
@@ -2957,26 +3228,29 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
             if isinstance(layout, dict) and "lights" in layout and layout.get("nodes"):
                 transition.append(json.loads(json.dumps(layout)))
             chrome = io.read_chrome() or {}
-            if (
-                was_full
-                and chrome.get("fullscreen") is False
-                and isinstance(layout, dict)
-                and layout.get("lights") is True
-            ):
+            pending = exit_pending(was_full, chrome, layout)
+            if pending == "":
                 left = True
+                exit_pair = (layout, chrome)
                 break
-            time.sleep(0.4)
+            exit_reason = pending
+            time.sleep(0.15)
     except Exception as exc:
         matched = False
         exit_note += f"; fullscreen exit {type(exc).__name__}: {exc}"
     try:
-        io.archive(out, "fullscreen-exit")
+        if exit_pair is not None:
+            _archive_observed(io, out, "fullscreen-exit", exit_pair[0], exit_pair[1])
+        else:
+            io.archive(out, "fullscreen-exit")
     except Exception as exc:
         matched = False
         exit_note += f"; fullscreen-exit archive {type(exc).__name__}: {exc}"
     if not left:
         matched = False
         exit_note += "; fullscreen did not exit"
+        if exit_reason:
+            exit_note += f" ({exit_reason})"
     if not (out / "form-restored.png").is_file():
         try:
             if io.capture(out, window_tool, state, "form-restored.png") is False:
@@ -3016,6 +3290,14 @@ def adaptive_layout(out, window_tool, root, libs, state, mock_shot, io=None):
     for item in transition_size_report(pairs):
         matched = False
         note += f"; {item}"
+    enter_pair = next((item for item in pairs if item[0] == "fullscreen-enter"), None)
+    if enter_pair is not None and not enter_is_windowed(enter_pair[2], windowed_size):
+        matched = False
+        note += "; fullscreen-enter is already fullscreen"
+    try:
+        arm.unlink(missing_ok=True)
+    except OSError:
+        pass
     notes.append(note)
     ok = ok and matched
     return ok, "; ".join(notes), state
@@ -3291,18 +3573,29 @@ class _ScriptedAdaptive:
         if flag.is_file() and launched:
             self.exit_reads += 1
             if self.exit_reads >= 2:
-                return {
+                self.chrome = {
                     "fullscreen": False,
                     "window_w": 1440,
                     "window_h": 855,
                     "lights_visible": True,
+                    "content_w": 1440,
+                    "content_h": 855,
                 }
+                return dict(self.chrome)
         return dict(self.chrome)
 
     def read_layout(self):
         body = json.loads(json.dumps(self.layout))
         if self.drop_nodes and any(name == "form-fullscreen" for name, _window, _full in self.launches):
             body["nodes"] = []
+            return body
+        try:
+            width = float(self.chrome.get("window_w"))
+            height = float(self.chrome.get("window_h"))
+        except (TypeError, ValueError):
+            return body
+        if width > 2 and height > 2:
+            return layout_at_window(body, width, height)
         return body
 
     def read_shell(self):
@@ -3360,7 +3653,7 @@ class _ScriptedAdaptive:
         dest = out / "frames"
         dest.mkdir(parents=True, exist_ok=True)
         (dest / f"{label}-chrome.json").write_text(json.dumps(self.chrome))
-        (dest / f"{label}-layout.json").write_text(json.dumps(self.layout))
+        (dest / f"{label}-layout.json").write_text(json.dumps(self.read_layout()))
 
     def chrome_full(self):
         return self.chrome.get("fullscreen") is True and float(self.chrome.get("window_w") or 0) > 1500
@@ -4719,17 +5012,13 @@ guard CommandLine.arguments.count > 1, let pid = Int32(CommandLine.arguments[1])
   exit(2)
 }
 let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
-var bestArea: CGFloat = 0
-var best = ""
+var lines: [String] = []
 for window in info {
   let owner = window[kCGWindowOwnerPID as String] as? Int32 ?? -1
   let layer = window[kCGWindowLayer as String] as? Int ?? -1
   guard owner == pid, layer == 0, let dict = window[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
   let width = dict["Width"] ?? 0
   let height = dict["Height"] ?? 0
-  let area = width * height
-  if area <= bestArea { continue }
-  bestArea = area
   let number = window[kCGWindowNumber as String] as? Int ?? 0
   let screen = NSScreen.main
   let visible = screen?.visibleFrame ?? .zero
@@ -4737,10 +5026,10 @@ for window in info {
   let screenH = screen?.frame.height ?? 0
   let x = dict["X"] ?? 0
   let y = dict["Y"] ?? 0
-  best = "\\(number) \\(width) \\(height) \\(visible.width) \\(visible.height) \\(scale) \\(screenH) \\(x) \\(y)"
+  lines.append("\\(number) \\(width) \\(height) \\(visible.width) \\(visible.height) \\(scale) \\(screenH) \\(x) \\(y)")
 }
-if best.isEmpty { exit(1) }
-print(best)
+if lines.isEmpty { exit(1) }
+print(lines.joined(separator: "\\n"))
 exit(0)
 """
     )
@@ -4755,29 +5044,91 @@ exit(0)
     return binary
 
 
-def window_metrics(tool, pid):
+def parse_window_rows(text):
+    rows = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) < 9:
+            continue
+        try:
+            rows.append(
+                {
+                    "id": int(float(parts[0])),
+                    "w": float(parts[1]),
+                    "h": float(parts[2]),
+                    "vis_w": float(parts[3]),
+                    "vis_h": float(parts[4]),
+                    "scale": float(parts[5]),
+                    "screen_h": float(parts[6]),
+                    "x": float(parts[7]),
+                    "y": float(parts[8]),
+                }
+            )
+        except ValueError:
+            continue
+    return rows
+
+
+def choose_content_window(rows, chrome):
+    """The content window matches the NSWindow frame. The largest layer is the
+    fullscreen shield (the screen frame), and screencapture cannot image it.
+    """
+    if not rows:
+        return None
+    want = None
+    if isinstance(chrome, dict):
+        try:
+            want_w = float(chrome["window_w"])
+            want_h = float(chrome["window_h"])
+        except (KeyError, TypeError, ValueError):
+            want_w = want_h = None
+        if want_w is not None and want_w > 2 and want_h is not None and want_h > 2:
+            want = (want_w, want_h)
+    if want is not None:
+        matched = [
+            row
+            for row in rows
+            if abs(row["w"] - want[0]) <= ALIGN_TOL and abs(row["h"] - want[1]) <= ALIGN_TOL
+        ]
+        if not matched:
+            return None
+        return max(matched, key=lambda row: row["y"])
+    content = [row for row in rows if row["h"] >= 40]
+    if not content:
+        return None
+    return max(content, key=lambda row: row["w"] * row["h"])
+
+
+def describe_windows(rows):
+    if not rows:
+        return "no layer-0 window"
+    return ", ".join(
+        f"{row['id']} {row['w']:.0f}x{row['h']:.0f}@{row['x']:.0f},{row['y']:.0f}" for row in rows
+    )
+
+
+def window_rows(tool, pid):
+    if tool is None:
+        return []
     proc = subprocess.run([str(tool), str(pid)], capture_output=True, text=True)
-    if proc.returncode != 0:
-        return None
-    parts = proc.stdout.split()
-    if len(parts) < 7:
-        return None
-    try:
-        metrics = {
-            "id": int(float(parts[0])),
-            "w": float(parts[1]),
-            "h": float(parts[2]),
-            "vis_w": float(parts[3]),
-            "vis_h": float(parts[4]),
-            "scale": float(parts[5]),
-            "screen_h": float(parts[6]),
-        }
-        if len(parts) >= 9:
-            metrics["x"] = float(parts[7])
-            metrics["y"] = float(parts[8])
-        return metrics
-    except ValueError:
-        return None
+    if proc.returncode != 0 and not (proc.stdout or "").strip():
+        return []
+    return parse_window_rows(proc.stdout)
+
+
+def lookup_content_window(tool, pid, chrome=None):
+    rows = window_rows(tool, pid)
+    if chrome is None:
+        try:
+            chrome = read_chrome()
+        except Exception:
+            chrome = None
+    return choose_content_window(rows, chrome), rows, chrome
+
+
+def window_metrics(tool, pid):
+    chosen, _rows, _chrome = lookup_content_window(tool, pid)
+    return chosen
 
 
 def window_id(tool, pid):
@@ -4896,11 +5247,19 @@ def launch(out, name, env, ready, timeout, watch=None, binary=None):
         while time.time() < deadline:
             if proc.poll() is not None:
                 break
+            # Accessibility walks take longer than the fullscreen animation.
+            # A watch samples the native files on its own clock, then the
+            # walk runs once. Other launches still wait on the walk.
+            if watch is not None:
+                if watch(started):
+                    break
+                time.sleep(0.05)
+                continue
             names, dump = ax_names(proc.pid)
-            if ready(names) or (watch and watch(started)):
+            if ready(names):
                 break
             time.sleep(0.4)
-        else:
+        if not names:
             names, dump = ax_names(proc.pid)
         return {
             "pid": proc.pid,

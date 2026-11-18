@@ -9,7 +9,9 @@ use nsh_platform_macos::objc2::{
     define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use nsh_platform_macos::objc2_app_kit::{NSEvent, NSResponder, NSView, NSWindow, NSWindowButton};
-use nsh_platform_macos::objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
+use nsh_platform_macos::objc2_foundation::{
+    NSArray, NSObjectProtocol, NSPoint, NSRect, NSRunLoopCommonModes, NSSize,
+};
 use nsh_platform_macos::{ComponentContext, Components, NativeComponent};
 use objc2_core_graphics::CGContext;
 use serde_json::{json, Value};
@@ -44,6 +46,7 @@ define_class!(
         #[unsafe(method(pumpLights))]
         fn pump_lights(&self) {
             let window: Option<Retained<NSWindow>> = unsafe { msg_send![self, window] };
+            let live = window.as_ref().is_some_and(|window| window.inLiveResize());
             if let Some(window) = window {
                 let queued = crate::launch::take_opens();
                 if !queued.is_empty() {
@@ -71,42 +74,20 @@ define_class!(
                 }
                 if crate::chrome::shell_on() {
                     if let Some((width, height)) = crate::chrome::content_size(&window) {
-                        let mut state = self.ivars().state.borrow_mut();
-                        state.shell_w = width;
-                        state.shell_h = height;
-                    }
-                    let state = self.ivars().state.borrow();
-                    let key = (
-                        state.shell_w.round() as i32,
-                        state.shell_h.round() as i32,
-                        state.chrome.bar_w.get().round() as i32,
-                    );
-                    drop(state);
-                    thread_local! {
-                        static LAST: std::cell::Cell<(i32, i32, i32)> = const { std::cell::Cell::new((0, 0, 0)) };
-                    }
-                    let changed = LAST.with(|last| {
-                        if last.get() == key || key.0 < 2 || key.1 < 2 {
-                            false
-                        } else {
-                            last.set(key);
-                            true
-                        }
-                    });
-                    if changed {
-                        self.ivars().state.borrow().publish();
+                        publish_shell_if_resized(
+                            &self.ivars().state,
+                            width,
+                            height,
+                            "pump",
+                        );
                     }
                 }
                 self.ivars().state.borrow().note_probe(self);
             }
-            let _: () = unsafe {
-                msg_send![
-                    self,
-                    performSelector: sel!(pumpLights),
-                    withObject: std::ptr::null::<objc2::runtime::AnyObject>(),
-                    afterDelay: 0.05_f64
-                ]
-            };
+            // afterDelay alone is NSDefaultRunLoopMode. A drag tracks in
+            // NSEventTrackingRunLoopMode, so that timer does not run until
+            // the mouse is released and the layout jumps once.
+            schedule_shell_pump(self, if live { 1.0 / 60.0 } else { 0.05 });
         }
 
         #[unsafe(method(pollSettings))]
@@ -156,6 +137,19 @@ define_class!(
             };
             if let Some(window) = window {
                 crate::chrome::sync(&window, &chrome, page);
+                // AppKit calls layout during the drag. The pump timer does
+                // not. Publish the content view's size from this callback so
+                // the shelf follows the window instead of waiting for mouse-up.
+                if crate::chrome::shell_on() {
+                    if let Some((width, height)) = crate::chrome::content_size(&window) {
+                        publish_shell_if_resized(
+                            &self.ivars().state,
+                            width,
+                            height,
+                            "layout",
+                        );
+                    }
+                }
             }
             chrome.laying_out.set(false);
         }
@@ -1529,14 +1523,7 @@ impl Stage {
                 state.borrow_mut().select_phrase("Abstract");
             }
         }
-        let _: () = unsafe {
-            msg_send![
-                &*view,
-                performSelector: sel!(pumpLights),
-                withObject: std::ptr::null::<AnyObject>(),
-                afterDelay: 0.05_f64
-            ]
-        };
+        schedule_shell_pump(&*view, 0.05);
         let _: () = unsafe {
             msg_send![
                 &*view,
@@ -1626,15 +1613,148 @@ fn layout_target(placed_width: f64, zoom: f64) -> f64 {
     }
 }
 
+/// `performSelector:afterDelay:` waits in the default mode only. Common modes
+/// include the tracking mode a window resize runs in, so the pump still sees
+/// the content view while the mouse is down.
+fn schedule_shell_pump(view: &StageView, delay: f64) {
+    let modes = NSArray::from_slice(&[unsafe { NSRunLoopCommonModes }]);
+    let _: () = unsafe {
+        msg_send![
+            view,
+            performSelector: sel!(pumpLights),
+            withObject: std::ptr::null::<AnyObject>(),
+            afterDelay: delay,
+            inModes: &*modes,
+        ]
+    };
+}
+
+/// One shared key, so a layout callback and the pump do not publish the same
+/// size twice. The layout callback is what AppKit delivers during a drag.
+fn publish_shell_if_resized(
+    state: &Rc<RefCell<State>>,
+    width: f64,
+    height: f64,
+    source: &str,
+) {
+    let key = {
+        let mut state = state.borrow_mut();
+        state.shell_w = width;
+        state.shell_h = height;
+        shell_publish_key(
+            state.shell_w,
+            state.shell_h,
+            state.chrome.bar_w.get(),
+            state.chrome.lights_visible.get(),
+        )
+    };
+    thread_local! {
+        static LAST: std::cell::Cell<Option<(i32, i32, i32, i32)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    let changed = LAST.with(|last| match key {
+        Some(key) if last.get() != Some(key) => {
+            last.set(Some(key));
+            true
+        }
+        _ => false,
+    });
+    trace_resize(source, width, height, changed);
+    if changed {
+        state.borrow().publish();
+    }
+}
+
+pub(crate) fn trace_resize(source: &str, width: f64, height: f64, published: bool) {
+    if std::env::var("SPIKE_RESIZE_TRACE").ok().as_deref() != Some("1") {
+        return;
+    }
+    let Ok(elapsed) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return;
+    };
+    let line = format!(
+        "{{\"t\":{:.4},\"src\":\"{source}\",\"w\":{width:.1},\"h\":{height:.1},\"published\":{published}}}\n",
+        elapsed.as_secs_f64()
+    );
+    let path = std::path::Path::new("/tmp/superreader-spike/resize-trace.jsonl");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// The shell status event is skipped when this key is unchanged. Lights are
+/// part of it: exit restores the old window size before the buttons are
+/// visible again, and a size-only key then never publishes the shown lights.
+fn shell_publish_key(
+    shell_w: f64,
+    shell_h: f64,
+    bar_w: f64,
+    lights_visible: bool,
+) -> Option<(i32, i32, i32, i32)> {
+    let key = (
+        shell_w.round() as i32,
+        shell_h.round() as i32,
+        bar_w.round() as i32,
+        i32::from(lights_visible),
+    );
+    if key.0 < 2 || key.1 < 2 {
+        None
+    } else {
+        Some(key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::layout_target;
+    use super::{layout_target, shell_publish_key};
 
     #[test]
     fn a_smaller_placement_is_the_layout_target() {
         assert_eq!(layout_target(400.0, 1.0), 400.0);
         assert_eq!(layout_target(800.0, 2.0), 400.0);
         assert!(layout_target(400.0, 1.0) < 534.0);
+    }
+
+    #[test]
+    fn live_resize_publishes_from_layout_in_common_modes() {
+        let source = include_str!("stage.rs");
+        let layout = source
+            .split("fn layout_view")
+            .nth(1)
+            .and_then(|rest| rest.split("fn scroll_wheel").next())
+            .unwrap_or("");
+        assert!(
+            layout.contains("publish_shell_if_resized"),
+            "layout() has to publish the content size while a drag is tracking"
+        );
+        let pump = source
+            .split("fn pump_lights")
+            .nth(1)
+            .and_then(|rest| rest.split("fn poll_settings").next())
+            .unwrap_or("");
+        assert!(
+            pump.contains("NSRunLoopCommonModes") || pump.contains("schedule_shell_pump"),
+            "the lights pump has to be scheduled in the tracking run-loop mode"
+        );
+        let schedule = source
+            .split("fn schedule_shell_pump")
+            .nth(1)
+            .unwrap_or("");
+        assert!(
+            schedule.contains("NSRunLoopCommonModes"),
+            "schedule_shell_pump must use common modes, not afterDelay alone"
+        );
+    }
+
+    #[test]
+    fn a_light_change_republishes_the_restored_window() {
+        let hidden = shell_publish_key(1440.0, 855.0, 78.0, false);
+        let shown = shell_publish_key(1440.0, 855.0, 78.0, true);
+        assert_eq!(hidden, Some((1440, 855, 78, 0)));
+        assert_eq!(shown, Some((1440, 855, 78, 1)));
+        assert_ne!(hidden, shown);
+        assert_eq!(shell_publish_key(1.0, 855.0, 78.0, true), None);
     }
 }
 
