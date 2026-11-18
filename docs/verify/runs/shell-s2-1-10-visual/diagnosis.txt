@@ -1,0 +1,49 @@
+Visual check, 2026-11-18 09:13 CST. Head 6c5e1d4, binary
+sha256 e1ade42162ff921b2dd0701b174848d8e8a69cc61425e2aa12160092ab6fda03.
+Morris's own screenshot was not available. This compares the approved
+mockup docs/design/shell/approved-full-form.png (2880x1800, 1440x900)
+with the synthetic fixture captured while the console was unlocked.
+
+Runtime window, not the mockup size
+- requested SPIKE_WINDOW 1440x900
+- measured window 1440x855, screenshot 2880x1710, fullscreen false,
+  lights 1.0 and lights_visible true
+- fullscreen settled: chrome 1512x949, lights 0, lights_visible false,
+  screenshot 3024x1898
+- minimum: chrome 578x528, screenshot 1156x1056, lights visible
+
+Shelf
+The mockup and the live window both show two full shelf rows and then
+the top of the next row. In the mockup that top is about 60 points of
+cover, enough to read the cover title. In the 1440x855 window it is
+about 6 points (y 832 to 838 on the first-cover column), a colored
+line above the card corner. The window is 45 points shorter than the
+mockup, and the card keeps the 12-point corner pad, which accounts for
+the missing peek. A wheel on this same window moved that row up:
+Meditations and 人间词话 became full covers. The strip is the leftover
+viewport, not a broken row. It is a poor scroll cue at the size the
+window actually gets. The 578x528 window shows one complete row and
+its caption, with no sliver. That is the minimum rule.
+
+Traffic lights
+Windowed: the red, yellow, and green buttons are the system lights.
+The close button starts at x=9. The sidebar toggle's ink starts at
+x=85, 16 points after the green light. The mockup draws the lights
+starting at x=20 and the toggle ink at x=91. The live toggle tracks
+the measured light bar (traffic_bar 78, toggle frame x=78 y=10).
+Fullscreen: the lights are hidden and the toggle moves to x=10
+(SIDE_PAD_X). Its ink starts at x=17. That is the hidden-light rule,
+and it is the state that looks like a custom control sitting where
+the traffic lights were.
+
+Card and chat
+At 1440x855 the white card ends at x=1114 and the gray chat starts at
+x=1120. The 6-point gap is the inset token. The chat is 320 points
+and does not grow. Fullscreen does not reflow: the shelf column at
+x=330 is the same colors at the same y as the 855-point window, and
+y=860 through y=945 is flat gray. The saved fullscreen layout still
+says window 1440x855 while chrome.json says 1512x949.
+
+No token change in this step. The peek and the fullscreen reflow are
+layout rules, not a one-control nudge, and they need Morris's call
+before a design change.
