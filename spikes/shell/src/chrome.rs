@@ -75,6 +75,7 @@ pub struct Runtime {
     styled: Cell<bool>,
     entering: Cell<bool>,
     field: RefCell<Option<Retained<NSTextField>>>,
+    hover_title: RefCell<Option<Retained<NSTextField>>>,
     contents_bar: RefCell<Option<Retained<ContentsBar>>>,
     icon_gap: Cell<f64>,
     icon_dy: Cell<f64>,
@@ -123,6 +124,7 @@ impl Default for Runtime {
             styled: Cell::new(false),
             entering: Cell::new(false),
             field: RefCell::new(None),
+            hover_title: RefCell::new(None),
             contents_bar: RefCell::new(None),
             icon_gap: Cell::new(f64::NAN),
             icon_dy: Cell::new(f64::NAN),
@@ -1266,6 +1268,10 @@ fn place_title(window: &NSWindow, rt: &Runtime, alpha: f64) {
     if !shown.is_empty() && !rt.product.get() {
         window.setTitle(&NSString::from_str(&shown));
     }
+    // The toolbar field is created only after the contents icon exists. The
+    // hover label does not wait for that, and a hidden title bar does not
+    // draw the toolbar item anyway.
+    place_hover_title(window, rt, &shown, alpha);
     let Some(field) = rt.field.borrow().clone() else {
         return;
     };
@@ -1281,6 +1287,69 @@ fn place_title(window: &NSWindow, rt: &Runtime, alpha: f64) {
         let _: () = msg_send![&*field, setAlignment: objc2_app_kit::NSTextAlignment(1)];
         let _: () = msg_send![&*field, setAlphaValue: alpha];
         let _: () = msg_send![&*field, setHidden: alpha < 0.02];
+    }
+}
+
+/// The book title's frame in the content view. Width leaves the traffic lights
+/// clear. The 18-point row sits against the top. A flipped content view counts
+/// y from that top; an ordinary one counts y from the bottom.
+pub(crate) fn hover_title_frame(
+    content_w: f64,
+    content_h: f64,
+    flipped: bool,
+) -> (f64, f64, f64, f64) {
+    let width = (content_w - 180.0).max(40.0);
+    let x = (content_w - width) / 2.0;
+    let y = if flipped { 18.0 } else { content_h - 36.0 };
+    (x, y, width, 18.0)
+}
+
+fn place_hover_title(window: &NSWindow, rt: &Runtime, shown: &str, alpha: f64) {
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let mtm = MainThreadMarker::from(&*window);
+    let existing = rt.hover_title.borrow().clone();
+    let field = if let Some(existing) = existing {
+        existing
+    } else {
+        let created = NSTextField::labelWithString(&NSString::from_str(""), mtm);
+        created.setTextColor(Some(&NSColor::colorWithRed_green_blue_alpha(
+            0.36, 0.33, 0.29, 1.0,
+        )));
+        created.setBezeled(false);
+        created.setBordered(false);
+        created.setDrawsBackground(false);
+        created.setEditable(false);
+        created.setSelectable(false);
+        *rt.hover_title.borrow_mut() = Some(created.clone());
+        created
+    };
+    // The page view is added after the first sync. Re-adding keeps the label
+    // above that view. A hidden title bar still does not draw the toolbar item.
+    content.addSubview(&field);
+    let face = NSString::from_str(title_face(shown));
+    if let Some(font) = NSFont::fontWithName_size(&face, 13.0) {
+        unsafe {
+            let _: () = msg_send![&*field, setFont: &*font];
+        }
+    }
+    let flipped: bool = unsafe { msg_send![&*content, isFlipped] };
+    let (x, y, width, height) = hover_title_frame(
+        content.bounds().size.width,
+        content.bounds().size.height,
+        flipped,
+    );
+    unsafe {
+        let value = NSString::from_str(shown);
+        let _: () = msg_send![&*field, setStringValue: &*value];
+        let _: () = msg_send![&*field, setAlignment: objc2_app_kit::NSTextAlignment(1)];
+        let _: () = msg_send![&*field, setAlphaValue: alpha];
+        let _: () = msg_send![&*field, setHidden: alpha < 0.02];
+        let _: () = msg_send![
+            &*field,
+            setFrame: NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+        ];
     }
 }
 
@@ -1911,6 +1980,19 @@ mod tests {
     fn the_page_starts_below_the_traffic_lights() {
         let (_, _, _, top) = content_box(800.0, 1000.0);
         assert!(top >= 44.0);
+    }
+
+    #[test]
+    fn the_hover_title_is_centered_and_clears_the_lights() {
+        let (x, y, width, height) = hover_title_frame(582.0, 781.0, false);
+        close(width, 402.0);
+        close(x, 90.0);
+        close(y, 745.0);
+        close(height, 18.0);
+        let (fx, fy, _, _) = hover_title_frame(582.0, 781.0, true);
+        close(fx, x);
+        close(fy, 18.0);
+        assert!(x >= 70.0, "the title must clear the traffic lights");
     }
 
     #[test]
