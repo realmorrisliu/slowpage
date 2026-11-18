@@ -321,6 +321,11 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     }
     let _release = Release(&rt.entering);
     rt.page.set(page);
+    // `set_level` replaces the collection behavior with `MoveToActiveSpace`.
+    // The green button and `toggleFullScreen:` both no-op without
+    // `FullScreenPrimary`, so put the bit back on every sync, not only the
+    // first style.
+    keep_fullscreen_primary(window);
     style_window(window, rt);
     if shell_on() {
         install_shelf_wheel();
@@ -497,6 +502,13 @@ pub fn paint_paper_layer(view: &AnyObject) {
     }
 }
 
+fn keep_fullscreen_primary(window: &NSWindow) {
+    let current = window.collectionBehavior();
+    if !current.contains(NSWindowCollectionBehavior::FullScreenPrimary) {
+        window.setCollectionBehavior(current | NSWindowCollectionBehavior::FullScreenPrimary);
+    }
+}
+
 fn style_window(window: &NSWindow, rt: &Runtime) {
     if rt.styled.replace(true) {
         return;
@@ -508,9 +520,7 @@ fn style_window(window: &NSWindow, rt: &Runtime) {
     }
     window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
     window.setMovableByWindowBackground(true);
-    window.setCollectionBehavior(
-        window.collectionBehavior() | NSWindowCollectionBehavior::FullScreenPrimary,
-    );
+    keep_fullscreen_primary(window);
     window.makeKeyAndOrderFront(None);
     expose_window(window);
     let mtm = MainThreadMarker::from(&*window);
@@ -1035,6 +1045,10 @@ struct FullscreenInput {
     /// A view fitted in this same turn is not ready: the shelf has not
     /// published that height yet, and fullscreen would snapshot the short one.
     content_fitted: bool,
+    /// The reader settle loop has stopped calling `setFrame`. Entering before
+    /// that lets the next frame cancel `toggleFullScreen:`, and `enter_sent`
+    /// then never tries again.
+    frame_settled: bool,
 }
 
 fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
@@ -1057,7 +1071,7 @@ fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
     if input.hold_arm || !input.content_fitted {
         return none;
     }
-    if input.is_full || !input.window_ready || input.enter_sent {
+    if input.is_full || !input.window_ready || input.enter_sent || !input.frame_settled {
         return none;
     }
     FullscreenDecision {
@@ -1094,6 +1108,7 @@ fn request_fullscreen(
         window_ready: armed && window.isVisible() && window.isKeyWindow(),
         hold_arm: file_flag("/tmp/superreader-spike/fullscreen-arm") == Some(false),
         content_fitted,
+        frame_settled: rt.settled.get(),
     });
     if decision.enter {
         window.toggleFullScreen(None);
@@ -2006,6 +2021,7 @@ mod tests {
             window_ready: false,
             hold_arm: false,
             content_fitted: true,
+            frame_settled: true,
         };
         assert_eq!(
             fullscreen_decision(idle),
@@ -2019,6 +2035,12 @@ mod tests {
             ..idle
         };
         assert!(fullscreen_decision(ready).enter);
+        let unsettled = FullscreenInput {
+            frame_settled: false,
+            ..ready
+        };
+        assert!(!fullscreen_decision(unsettled).enter);
+        assert!(!fullscreen_decision(unsettled).exit);
         let short = FullscreenInput {
             content_fitted: false,
             ..ready

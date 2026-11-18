@@ -1456,25 +1456,33 @@ impl Stage {
                 state.mode = Mode::Empty;
             }
         }
-        let shelf = crate::launches_full();
-        if shelf {
-            crate::chrome::engage_shell();
-            state.borrow_mut().mode = Mode::Empty;
-            state.borrow_mut().publish();
-        } else if product {
-            let mut state = state.borrow_mut();
-            if let Ok(path) = std::env::var("SUPERREADER_OPEN_PATH") {
-                let path = path.trim();
-                if !path.is_empty() {
-                    state.open_requested(&view, path);
-                } else {
-                    state.publish();
-                }
-            } else if let Some(place) = crate::settings::load_place(&crate::settings::path()) {
-                state.open_at(&view, &place.path, place.page);
+        // An explicit file is decided before the shelf. A bare launch is Full
+        // and does not consume `place`. The stored page is for this file and
+        // for 继续阅读, not for opening the book on its own.
+        let explicit = std::env::var("SUPERREADER_OPEN_PATH").ok().and_then(|raw| {
+            let path = raw.trim().to_string();
+            if path.is_empty() || !std::path::Path::new(&path).exists() {
+                None
             } else {
-                state.publish();
+                Some(path)
             }
+        });
+        let stored = explicit
+            .as_deref()
+            .map(|path| crate::settings::resume_page(&crate::settings::path(), path));
+        let shelf = crate::launches_full();
+        match crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored) {
+            crate::LaunchTarget::File { page } if product => {
+                if let Some(path) = explicit {
+                    state.borrow_mut().open_at(&view, &path, page);
+                }
+            }
+            crate::LaunchTarget::Shelf => {
+                crate::chrome::engage_shell();
+                state.borrow_mut().mode = Mode::Empty;
+                state.borrow_mut().publish();
+            }
+            crate::LaunchTarget::File { .. } | crate::LaunchTarget::Forced => {}
         }
         if !product && !shelf {
             let engine = match std::env::var("SPIKE_ENGINE").as_deref() {

@@ -287,7 +287,39 @@ fn launch_title() -> Option<String> {
 /// The shelf is the open flow for the installed app and for fixture launches.
 /// Reader-forcing `SPIKE_*` launches and a dropped file skip it.
 pub fn launches_full() -> bool {
-    !reader_forcing_launch() && launch_title().is_none()
+    matches!(
+        launch_target(launch_title().is_some(), reader_forcing_launch(), None),
+        LaunchTarget::Shelf
+    )
+}
+
+/// Where a launch opens.
+///
+/// `docs/design/shell/spec.md` Commands: "Launch opens Full. The sidebar is
+/// shown and the chat panel is open." A stored place does not open the book
+/// by itself. That place is what an explicit file, and the shelf's 继续阅读
+/// row, resume. The row is not the S3 reading form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchTarget {
+    Shelf,
+    File { page: u32 },
+    Forced,
+}
+
+pub fn launch_target(
+    explicit_file: bool,
+    reader_forcing: bool,
+    stored_page: Option<u32>,
+) -> LaunchTarget {
+    if explicit_file {
+        return LaunchTarget::File {
+            page: stored_page.filter(|page| *page >= 1).unwrap_or(1),
+        };
+    }
+    if reader_forcing {
+        return LaunchTarget::Forced;
+    }
+    LaunchTarget::Shelf
 }
 
 pub fn shelf_launch() -> bool {
@@ -844,4 +876,40 @@ fn reading_menu(
     );
     menus.push(MenuItem::submenu("View", view_items));
     menus
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::{launch_target, LaunchTarget};
+
+    #[test]
+    fn a_stored_page_does_not_open_the_shelf_launch() {
+        assert_eq!(launch_target(false, false, Some(2)), LaunchTarget::Shelf);
+        assert_eq!(launch_target(false, false, None), LaunchTarget::Shelf);
+    }
+
+    #[test]
+    fn an_explicit_file_resumes_its_stored_page() {
+        assert_eq!(
+            launch_target(true, false, Some(2)),
+            LaunchTarget::File { page: 2 }
+        );
+        assert_eq!(
+            launch_target(true, true, Some(4)),
+            LaunchTarget::File { page: 4 }
+        );
+        assert_eq!(
+            launch_target(true, false, None),
+            LaunchTarget::File { page: 1 }
+        );
+        assert_eq!(
+            launch_target(true, false, Some(0)),
+            LaunchTarget::File { page: 1 }
+        );
+    }
+
+    #[test]
+    fn a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place() {
+        assert_eq!(launch_target(false, true, Some(2)), LaunchTarget::Forced);
+    }
 }

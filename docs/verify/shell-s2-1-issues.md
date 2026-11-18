@@ -50,7 +50,7 @@ Head this list was written against: `54d3529`, after the `1b33c34` run (82 pass,
 ## Alpha
 
 - `alpha-empty`: S1 removed the Open button and said not to put it back. The shelf window is the empty state. The assertion is updated. Open and turn of Pride already passed (`page 1`, then `2`).
-- Reopen `page None`: `launches_full()` takes the shelf branch before `load_place`, so a packaged relaunch does not auto-open the book. 继续阅读 is the pending S3 click, not this PR. The row is not waived by a missing diff; the source order is the cause. Auto-opening would skip the shelf this PR is building, so it is not changed here.
+- Reopen `page None`: a bare relaunch opens Full, which `docs/design/shell/spec.md` states as "Launch opens Full." The stored page is not discarded. An explicit file resumes it, and so does the 继续阅读 row. That row is not the S3 margin. `alpha-epub-reopen` still describes the pre-shell "launch again on that page" check; S1 did not name it in the removal list.
 - PDF `page None`: the footer is painted. The check asked the accessibility tree for `N/M`. `reader.json` already records the pdf page. The check now reads that when the tree has no number. If the pdf never opens, the row still fails.
 
 ## Bold cache, slide frames

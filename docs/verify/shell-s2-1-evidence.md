@@ -60,6 +60,12 @@ Future, not a #53 block:
 
 Finder double-click, 继续阅读, library PDF open, ask, scroll column, comment note and UI, Alan, `superreader` JSON, SQLite annotations, tantivy. S3 is the reading form. S4 is immersive.
 
+## Launch and the stored page
+
+`docs/design/shell/spec.md`, Commands: "Launch opens Full. The sidebar is shown and the chat panel is open." Opening the book is the next sentence: "Opening a book from a cover or from **继续阅读** enters Page and panel." A bare relaunch staying on the shelf is that launch form. It is not the S3 margin.
+
+`alpha-epub-reopen` ("Quit and launch again. The same book opens on the same page.") is the pre-shell reader. S1's removal list is the empty-window Open button, `open -a` / Open With, and the bare shelf screen. It does not name this row, and this change does not delete it. The part that stays is the stored page: an explicit file opens at `resume_page`, and the shelf's 继续阅读 row uses that same page. A stored page with no explicit file does not open the book.
+
 ## Next run, when load is under 8
 
 One `just verify`. No `SR_VERIFY_MAX_LOAD` above 8. A Chinese book is in the run only after `spikes/epub/fixtures/chinese-admission.json` has the file's sha256 and the chapter text meets 1500 characters and 范愛農. Do not start it while another project's process would have to be killed. Do not install to `/Applications`. Do not write the real profile.
