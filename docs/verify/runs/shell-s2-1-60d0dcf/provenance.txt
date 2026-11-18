@@ -1,0 +1,19 @@
+Head 60d0dcf6371fa01dd25d7873ab1eabdc73351fc5. One scripts/verify after the contents control and the empty-check gates. No merge.
+
+The run started once at 1-minute load 51.23. The max was set to 999 so the wrapper did not loop. It ended at load 12.66. Support was /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/superreader-verify-shell-s2-1-60d0dcf-mzlh5wez. No file under the real Application Support directory is newer than 2026-11-18 16:00. The lock is gone and no spike-shell is left.
+
+The release binary is /Users/morris/.cache/cargo-target/slowpage/release/spike-shell, mtime 16:53:23, sha256 ecb1f699ae1165d4f27b98715b6ae66b51b23534297403f05b58ee29905dd32a. ~/.local/bin/cargo was used. CARGO_TARGET_DIR was not set in the shell. The wrapper set the cache directory above. No worktree target directory was created.
+
+summary.json: 85 pass, 12 fail, 27 pending, 124 rows. ok is false. verified-head is this head.
+
+The contents control is the existing list glyph. On the hover capture it sits with the traffic lights, and the book title reads Pride and Prejudice. window-aqua and window-aqua-light both report gap 26.0 and dy 0.0, title glyphs 1183, icon glyphs 182. sidebar-icon is the same gap. b-pride-hover.png is 1164 by 1562. The dark aqua file is the same bytes as that hover file, so this run does not show a separate dark appearance.
+
+b-pride-fullscreen.png is the same bytes as b-pride.png, 1164 by 1562. SPIKE_FULLSCREEN was set and the window did not change. The chrome-b-fullscreen footer, page, and paper rows scored that windowed frame. They are not a fullscreen result. The same run's form fixture did enter and leave fullscreen: frames/fullscreen-enter-chrome.json is 1440 by 855, fullscreen false, content_top 0; fullscreen-settled-chrome.json is 1512 by 949, fullscreen true, content_top 0; fullscreen-exit-chrome.json is back to 1440 by 855, content_top 0. form-fullscreen.png is 3024 by 1898. form-restored.png is 2880 by 1710. That is the library window, not the reader title. sidebar-fullscreen reports no painted gray column and equal light gaps. bar-window.png has no gray column. The animation between the scored fullscreen frames was not snapshotted.
+
+Gutenberg 25271 returned 503 on both the ebook URL and the cache URL. The 朝花 and plain-zh rows were not executed. book-body-background stayed fail because the missing zhaohua sample is in a row that also names pride; pride's paper was white. No Chinese typesetting pass or fail was measured. Bold Word Starts off was not executed: /tmp/spike-shell-main-fdd8183 is absent. The on probe passed. The cache row failed: on cached source was null and live was 0 after an on-live sample of 32.
+
+epub-turned.png has no ink in the middle band after the 8 second wait. The OCR label is empty. The row stays failed. Alpha empty passed: the shelf has no Open button. The epub capture still shows the open panel on pride-se.epub, and the pdf capture is the empty shelf. Open, turn, and reopen page numbers were not measured. Slide frames were posted and some are under the 16.7 ms floor, so that row stays failed. Cold and warm open stay failed. The cold p95 was 465.9 ms at load 57.23. The warm p95 was 1835.4 ms at load 95.04.
+
+Pending stays pending for the S3, S4, and post-shell rows, plus the Chinese rows and the missing Bold baseline.
+
+CI is separate. This note does not claim a GitHub Actions result for 60d0dcf.
