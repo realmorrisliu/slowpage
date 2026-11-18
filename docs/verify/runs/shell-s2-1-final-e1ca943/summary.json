@@ -1,0 +1,696 @@
+{
+  "ok": false,
+  "nsh": "nsh 0.5.1 (224d9a7)",
+  "load_start": 12.78,
+  "load_end": 12.78,
+  "loadavg": "12.78 13.42 18.01",
+  "top": [
+    {
+      "cpu": 60.7,
+      "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+    },
+    {
+      "cpu": 40.9,
+      "command": "/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/157.0.8103.78/Helpers/Codex (Aperitif).app/Contents/MacOS/Codex (Aperitif)"
+    },
+    {
+      "cpu": 40.7,
+      "command": "/Applications/Gemini.app/Contents/Helpers/agy"
+    },
+    {
+      "cpu": 20.0,
+      "command": "/Applications/OrbStack.app/Contents/Frameworks/OrbStack Helper.app/Contents/MacOS/OrbStack Helper"
+    },
+    {
+      "cpu": 14.7,
+      "command": "/System/Library/Input Methods/SCIM.app/Contents/PlugIns/SCIM_Extension.appex/Contents/MacOS/SCIM_Extension"
+    },
+    {
+      "cpu": 14.4,
+      "command": "/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/157.0.8103.78/Helpers/Codex (Aperitif Renderer).app/Contents/MacOS/Codex (Aperitif Renderer)"
+    },
+    {
+      "cpu": 10.5,
+      "command": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent"
+    },
+    {
+      "cpu": 8.9,
+      "command": "/Library/SystemExtensions/C51001B6-448C-46AE-9E66-51DF100EC58E/io.tailscale.ipn.macsys.network-extension.systemextension/Contents/MacOS/io.tailscale.ipn.macsys.network-extension"
+    }
+  ],
+  "warm_phases": null,
+  "head": "e1ca943785b71964c36b18dd918ecf1c6f485441",
+  "checks": [
+    {
+      "id": "nsh-pin",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "nsh 0.5.1 (224d9a7)"
+    },
+    {
+      "id": "nsh-cargo-pin",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "nsh-core, nsh-base, and nsh-platform-macos are =0.5.1"
+    },
+    {
+      "id": "fixtures",
+      "feature": "open-a-pdf",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "gpt3, pride, and libpdfium are present under /tmp/superreader-fixtures and /tmp/pdfium/lib"
+    },
+    {
+      "id": "no-agpl-gpl",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "Cargo.lock has neither the epub crate nor mupdf"
+    },
+    {
+      "id": "spike-shell-free",
+      "feature": "open-a-pdf",
+      "status": "fail",
+      "driver": "doctor",
+      "detail": "spike-shell is already running as pid 75399. Quit that process. This run will not kill it."
+    },
+    {
+      "id": "macos",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "darwin"
+    },
+    {
+      "id": "gui-session",
+      "feature": "doctor",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "console is lock flag not reported. frontmost app is Gemini."
+    },
+    {
+      "id": "nsh-title",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "nsh",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "nsh-no-night-mode",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "nsh",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "nsh-no-theme-switch",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "nsh",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "nsh-no-spread",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "nsh",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "pdf-title",
+      "feature": "open-a-pdf",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "pdf-footer-nm",
+      "feature": "open-a-pdf",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "pdf-highlight-ink",
+      "feature": "open-a-pdf",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "pdf-highlight-ink-zoom",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "pdf-highlight-zoom-scale",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "epub-title",
+      "feature": "read-an-epub",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "epub-footer-nm",
+      "feature": "read-an-epub",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "epub-pages-left-in-chapter",
+      "feature": "read-an-epub",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "single-page",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "epub-highlight-on-sentence",
+      "feature": "read-an-epub",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "epub-turn",
+      "feature": "read-an-epub",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-default-trim",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "trim-32kai-pride",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "trim-paperback-pride",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "trim-trade-pride",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "trim-32kai-zhaohua",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "trim-paperback-zhaohua",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "trim-trade-zhaohua",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-styled",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-plain-en",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-plain-zh",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-fixed-ignores-trim",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-slide",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-page-box",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-text-complete",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-text-clean",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-pride-32kai",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-pride-paperback",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-pride-trade",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-plain-en-paperback",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-plain-en-32kai",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-plain-en-trade",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-zhaohua-32kai",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-zhaohua-paperback",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-zhaohua-trade",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-plain-zh-paperback",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-plain-zh-32kai",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-plain-zh-trade",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-styled",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-publisher-paperback",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-publisher-32kai",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "justify-publisher-trade",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-cold-open",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-warm-open",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-warm-cached",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-hyphen-reopen",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-trim-stamp",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-resize-breaks",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "reading-chapter-turn",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "pdf-open-to-first",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "measure",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "pdf-later-page",
+      "feature": "reading-bars",
+      "status": "fail",
+      "driver": "measure",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-aspect",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-clear",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-footer",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "footer-no-divider",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-fill",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-measure",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-toolbar-order",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-footer-font",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-trim",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-zhaohua-footer",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-fullscreen-footer",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-fullscreen-page",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-fullscreen-paper",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "chrome-b-hover",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "window-aqua",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "window-aqua-light",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "flash-pride",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "flash-zhaohua",
+      "feature": "window-chrome",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "book-body-background",
+      "feature": "reading-view",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "open-cold-epub",
+      "feature": "official-open",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "open-running-pdf",
+      "feature": "official-open",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "open-dock-equivalent",
+      "feature": "official-open",
+      "status": "fail",
+      "driver": "window",
+      "detail": "not run because doctor failed"
+    },
+    {
+      "id": "open-pdf-from-library",
+      "feature": "open-a-pdf",
+      "status": "pending",
+      "driver": "none",
+      "detail": "The spike opens gpt3.pdf from SPIKE_GPT3. There is no library."
+    },
+    {
+      "id": "open-pdf-ask",
+      "feature": "open-a-pdf",
+      "status": "pending",
+      "driver": "none",
+      "detail": "Nothing in the spike explains a selection or keeps that explanation."
+    },
+    {
+      "id": "open-pdf-scroll-column",
+      "feature": "open-a-pdf",
+      "status": "pending",
+      "driver": "none",
+      "detail": "The native view scrolls a column. This run does not score a scroll."
+    },
+    {
+      "id": "comment-note",
+      "feature": "highlight-comment-alan",
+      "status": "pending",
+      "driver": "none",
+      "detail": "A highlight cannot carry the reader's note yet."
+    },
+    {
+      "id": "comment-ui",
+      "feature": "highlight-comment-alan",
+      "status": "pending",
+      "driver": "none",
+      "detail": "The comment chrome is still a later prototype."
+    },
+    {
+      "id": "alan-spawn",
+      "feature": "highlight-comment-alan",
+      "status": "pending",
+      "driver": "none",
+      "detail": "Blocked until alan issue 1078 closes. The spike does not spawn alan."
+    },
+    {
+      "id": "superreader-json",
+      "feature": "highlight-comment-alan",
+      "status": "pending",
+      "driver": "none",
+      "detail": "The superreader command is not in this repo yet."
+    },
+    {
+      "id": "annotations-sqlite",
+      "feature": "highlight-comment-alan",
+      "status": "pending",
+      "driver": "none",
+      "detail": "Annotations are not stored in SQLite yet."
+    },
+    {
+      "id": "library-search-tantivy",
+      "feature": "reading-bars",
+      "status": "pending",
+      "driver": "none",
+      "detail": "There is no tantivy index yet."
+    }
+  ]
+}
