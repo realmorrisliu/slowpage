@@ -64,10 +64,35 @@ jobs:
           workspaces: |
             spikes
             crates/superreader-typeset
-      - run: cargo test -p spike-report -p spike-epub --lib
+      - run: cargo test -p spike-report -p spike-epub --lib -- --skip fixtures_open_on_chapter_text
       - run: cargo test -p spike-bold-word-starts
       - run: cargo test -p spike-library
       - run: cargo test -p spike-pdf --lib
+      # nsh-platform-macos and objc2 need the macOS SDK on this macos-latest
+      # runner. One package, not the workspace: spike-measure in the same
+      # cargo command unifies taffy's features and fails the build.
+      - name: Shell launch, break origin, and fullscreen decisions
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          cargo test -p spike-shell --lib -- --test-threads=1 \
+            a_stored_page_does_not_open_the_shelf_launch \
+            an_explicit_file_resumes_its_stored_page \
+            a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
+            a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
+            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
+            | tee "$log"
+          for name in \
+            a_stored_page_does_not_open_the_shelf_launch \
+            an_explicit_file_resumes_its_stored_page \
+            a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
+            a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
+            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice
+          do
+            grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
+          done
       - name: Cache typesetter fixture fonts
         uses: actions/cache@v4
         with:
@@ -92,8 +117,9 @@ jobs:
             /tmp/superreader-fixtures/pride-se.epub
             /tmp/superreader-fixtures/zhaohua.epub
           key: typesetter-books-se-pride-25271
-      - name: Fetch books the typesetter tests open
+      - name: Fetch admitted books
         run: |
+          set -euo pipefail
           dest=/tmp/superreader-fixtures
           mkdir -p "$dest"
           fetch() {
@@ -113,21 +139,33 @@ jobs:
               done
             done
             rm -f "$out"
-            echo "could not fetch $out" >&2
+            echo "network: could not download $out. This is not a product or chapter failure." >&2
             return 1
           }
           fetch "$dest/pride-se.epub" \
             "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice/downloads/jane-austen_pride-and-prejudice.epub?source=download"
           fetch "$dest/zhaohua.epub" \
             "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub"
-          # The admitted file. A cached copy with any other bytes is fetched again.
+          # A cached copy with any other bytes is not the admitted file.
           if ! echo "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293  $dest/zhaohua.epub" | shasum -a 256 -c -; then
             rm -f "$dest/zhaohua.epub"
             fetch "$dest/zhaohua.epub" \
               "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub"
-            echo "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293  $dest/zhaohua.epub" | shasum -a 256 -c -
+            if ! echo "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293  $dest/zhaohua.epub" | shasum -a 256 -c -; then
+              echo "fixture sha mismatch for $dest/zhaohua.epub. This is not a chapter assertion." >&2
+              exit 1
+            fi
           fi
-      - run: cargo test -p spike-epub --lib fixtures_open_on_chapter_text -- --nocapture
+      - name: Admitted chapter is the 范愛農 document
+        run: python3 epub/fixtures/check_zhaohua.py
+      - name: Open the admitted chapter
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          cargo test -p spike-epub --lib fixtures_open_on_chapter_text -- --nocapture | tee "$log"
+          grep -E "test .*fixtures_open_on_chapter_text \\.\\.\\. ok$" "$log"
       - run: cargo test
         working-directory: crates/superreader-typeset
 

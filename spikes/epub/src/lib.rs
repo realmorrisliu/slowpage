@@ -605,8 +605,11 @@ mod tests {
     fn fixtures_open_on_chapter_text() {
         let pride = spike_report::pride_path();
         let zhaohua = spike_report::zhaohua_path();
-        if !std::path::Path::new(&pride).exists() || !std::path::Path::new(&zhaohua).exists() {
-            return;
+        for path in [&pride, &zhaohua] {
+            assert!(
+                std::path::Path::new(path).is_file(),
+                "fixture not admitted: {path} is missing. This is not a chapter result."
+            );
         }
         let pride = open_book(&pride).unwrap();
         assert!(pride.chapters[0].href.contains("chapter-1"), "{}", pride.chapters[0].href);
