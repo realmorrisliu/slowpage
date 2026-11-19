@@ -266,6 +266,10 @@ struct State {
     book_path: String,
     product: bool,
     saved_page: u32,
+    saved_sentence: u32,
+    pending_sentence: u32,
+    awaiting_pin: Option<u32>,
+    hold_shown: Option<u32>,
     page_total: Option<u32>,
     epub_page: usize,
     anchor: Option<Anchor>,
@@ -795,6 +799,10 @@ impl State {
         };
         let page = page.max(1);
         self.page_total = None;
+        self.saved_sentence = 0;
+        self.pending_sentence = 0;
+        self.awaiting_pin = None;
+        self.hold_shown = None;
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
         self.dismiss_web();
         self.pdf = None;
@@ -814,6 +822,12 @@ impl State {
             } else {
                 None
             };
+            let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
+            self.saved_sentence = sentence;
+            self.pending_sentence = sentence;
+            if sentence > 0 {
+                self.goto = None;
+            }
             self.epub_page = 0;
             self.web_pages = 1;
             self.shown_at = None;
@@ -859,13 +873,17 @@ impl State {
         if self.book_path.is_empty() || page == self.saved_page {
             return;
         }
-        self.saved_page = page;
         let path = self.book_path.clone();
+        let (page, offset) =
+            crate::visit::next_sentence(self.saved_page, self.saved_sentence, page, 0);
+        self.saved_page = page;
+        self.saved_sentence = offset;
         let _ = crate::settings::record_progress(
             &crate::settings::path(),
             &path,
             page,
             self.page_total,
+            offset,
         );
     }
 
@@ -927,15 +945,45 @@ impl State {
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
             let shown = self.epub_page as u32 + 1;
             let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-            if !still_turning && shown != self.saved_page {
-                let path = self.book_path.clone();
-                self.saved_page = shown;
-                let _ = crate::settings::record_progress(
-                    &crate::settings::path(),
-                    &path,
+            let reported = web.inbox.borrow().pages.is_some();
+            let sentence = web.inbox.borrow().sentence.unwrap_or(0);
+            let pinned = web.inbox.borrow().pinned;
+            let missed = web.inbox.borrow().pin_missed;
+            if self.pending_sentence > 0 && reported {
+                let offset = self.pending_sentence;
+                self.pending_sentence = 0;
+                self.awaiting_pin = Some(offset);
+                web.reveal(offset);
+            }
+            let step = crate::visit::step_restore(
+                self.pending_sentence > 0,
+                self.awaiting_pin,
+                self.hold_shown,
+                shown,
+                pinned,
+                missed,
+            );
+            self.awaiting_pin = step.want;
+            self.hold_shown = step.hold;
+            if step.write && !still_turning {
+                let (page, offset) = crate::visit::next_sentence(
+                    self.saved_page,
+                    self.saved_sentence,
                     shown,
-                    self.page_total,
+                    sentence,
                 );
+                if page != self.saved_page || offset != self.saved_sentence {
+                    let path = self.book_path.clone();
+                    self.saved_page = page;
+                    self.saved_sentence = offset;
+                    let _ = crate::settings::record_progress(
+                        &crate::settings::path(),
+                        &path,
+                        page,
+                        self.page_total,
+                        offset,
+                    );
+                }
             }
         }
         if changed || self.chrome_moving() {
@@ -1463,6 +1511,10 @@ impl Stage {
             book_path: String::new(),
             product: false,
             saved_page: 0,
+            saved_sentence: 0,
+            pending_sentence: 0,
+            awaiting_pin: None,
+            hold_shown: None,
             page_total: None,
             epub_page: 0,
             anchor: None,

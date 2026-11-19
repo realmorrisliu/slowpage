@@ -660,7 +660,7 @@ const SCRIPT: &str = r#"
   function post(extra) {
     const box = column();
     const fill = columnFill();
-    const body = { page: box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf") };
+    const body = { page: box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
     body.fill_gap = fill.fill_gap;
     body.line_h = fill.line_h;
     body.content_bottom = fill.content_bottom;
@@ -772,17 +772,19 @@ const SCRIPT: &str = r#"
     }
     return "ok";
   };
-  window.spikeHold = function () {
+  function heldOffset() {
     const x = Math.max(24, Math.min(80, window.innerWidth * 0.2));
     const y = Math.max(48, Math.min(140, window.innerHeight * 0.18));
     const caret = document.caretRangeFromPoint(x, y) || document.caretRangeFromPoint(x, y + 40);
-    let offset = 0;
-    if (caret && caret.startContainer) {
-      const node = caret.startContainer.nodeType === 3
-        ? caret.startContainer
-        : (caret.startContainer.firstChild || null);
-      if (node && node.nodeType === 3) offset = offsetOf(node, caret.startOffset || 0);
-    }
+    if (!caret || !caret.startContainer) return 0;
+    const node = caret.startContainer.nodeType === 3
+      ? caret.startContainer
+      : (caret.startContainer.firstChild || null);
+    if (!node || node.nodeType !== 3) return 0;
+    return offsetOf(node, caret.startOffset || 0);
+  }
+  window.spikeHold = function () {
+    const offset = heldOffset();
     window.spikeHeld = offset;
     post({ hold: offset });
     return offset;
@@ -793,7 +795,7 @@ const SCRIPT: &str = r#"
       requestAnimationFrame(function () {
         const found = locate(offset);
         if (!found) {
-          post();
+          post({ pinned: offset, missed: true });
           return;
         }
         const prev = root.style.transform;

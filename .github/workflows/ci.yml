@@ -92,6 +92,8 @@ jobs:
             a_file_open_while_running_switches_books_and_refuses_a_bad_file \
             a_page_key_turns_one_page_and_stops_at_the_ends \
             a_click_on_the_page_edge_turns_and_the_middle_does_not \
+            a_reopen_keeps_the_sentence_on_the_same_page \
+            a_stored_sentence_round_trips \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             | tee "$log"
@@ -110,6 +112,8 @@ jobs:
             a_file_open_while_running_switches_books_and_refuses_a_bad_file \
             a_page_key_turns_one_page_and_stops_at_the_ends \
             a_click_on_the_page_edge_turns_and_the_middle_does_not \
+            a_reopen_keeps_the_sentence_on_the_same_page \
+            a_stored_sentence_round_trips \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn
           do

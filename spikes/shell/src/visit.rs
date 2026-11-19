@@ -166,6 +166,81 @@ pub fn fresh_arrival(seq: u64, seen: u64) -> bool {
     seq != 0 && seq != seen
 }
 
+/// The sentence stored with a page. A new page replaces it. The same page
+/// keeps a stored sentence when the new sample is empty.
+pub fn next_sentence(stored_page: u32, stored_offset: u32, page: u32, offset: u32) -> (u32, u32) {
+    if page == 0 {
+        return (stored_page, stored_offset);
+    }
+    if page != stored_page {
+        return (page, offset);
+    }
+    if offset == 0 {
+        return (stored_page, stored_offset);
+    }
+    (page, offset)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Restore {
+    pub write: bool,
+    pub want: Option<u32>,
+    pub hold: Option<u32>,
+}
+
+/// A stored sentence stays until reveal reports that offset. An opening-page
+/// sample, including a nonzero one, is not that report. A missed target keeps
+/// the stored sentence until the reader leaves that page.
+pub fn step_restore(
+    pending: bool,
+    want: Option<u32>,
+    hold: Option<u32>,
+    shown: u32,
+    pinned: Option<u32>,
+    missed: bool,
+) -> Restore {
+    if pending {
+        return Restore {
+            write: false,
+            want,
+            hold,
+        };
+    }
+    if let Some(offset) = want {
+        if pinned != Some(offset) {
+            return Restore {
+                write: false,
+                want,
+                hold,
+            };
+        }
+        if missed {
+            return Restore {
+                write: false,
+                want: None,
+                hold: Some(shown),
+            };
+        }
+        return Restore {
+            write: true,
+            want: None,
+            hold: None,
+        };
+    }
+    if hold == Some(shown) {
+        return Restore {
+            write: false,
+            want: None,
+            hold,
+        };
+    }
+    Restore {
+        write: true,
+        want: None,
+        hold: None,
+    }
+}
+
 pub fn page_key_delta(shell: bool, surface: Surface, forward: bool) -> i32 {
     if show_library(shell, surface) {
         0
@@ -430,6 +505,31 @@ mod tests {
         assert_eq!(step_index(0, count, -1), 0);
         assert_eq!(step_index(9, count, 1), 9);
         assert_eq!(step_index(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn a_reopen_keeps_the_sentence_on_the_same_page() {
+        assert_eq!(next_sentence(4, 800, 4, 0), (4, 800));
+        assert_eq!(next_sentence(4, 800, 4, 860), (4, 860));
+        assert_eq!(next_sentence(4, 800, 5, 20), (5, 20));
+        assert_eq!(next_sentence(4, 800, 5, 0), (5, 0));
+        assert_eq!(next_sentence(4, 800, 0, 20), (4, 800));
+        let pending = step_restore(true, None, None, 1, None, false);
+        assert!(!pending.write);
+        let opening = step_restore(false, Some(800), None, 1, Some(12), false);
+        assert!(!opening.write);
+        assert_eq!(opening.want, Some(800));
+        let landed = step_restore(false, Some(800), None, 3, Some(800), false);
+        assert!(landed.write);
+        assert_eq!(landed.want, None);
+        let missed = step_restore(false, Some(800), None, 1, Some(800), true);
+        assert!(!missed.write);
+        assert_eq!(missed.hold, Some(1));
+        let still = step_restore(false, None, Some(1), 1, None, false);
+        assert!(!still.write);
+        let turned = step_restore(false, None, Some(1), 2, None, false);
+        assert!(turned.write);
+        assert_eq!(turned.hold, None);
     }
 
     #[test]
