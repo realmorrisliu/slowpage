@@ -1001,12 +1001,14 @@ pub struct Reader {
     /// One reveal `poll_web` may run. A later poll does not invent another.
     pub reveal: Option<u32>,
     /// The one column walk started by a page-only resume. It ends when the
-    /// shown column reaches it, or when a reader turn or a resize takes over.
+    /// shown column reaches it, or when a reader turn is saved. A resize does
+    /// not end it.
     pub walk: Option<u32>,
-    /// Restore commands still allowed to seek. A user post or a page cancel
-    /// advances it. The command carries the value from when it was issued.
-    pub restore_epoch: u64,
-    /// The loaded chapter document. A command from an older document does not run.
+    /// The next restore answers a user post this reader refused or accepted.
+    /// The page blocks an older restore until that answer arrives.
+    pub restore_ack: bool,
+    /// The loaded chapter document. A restore or a drop from an older document
+    /// does not run. A user key does not carry this.
     pub restore_load: u64,
 }
 
@@ -1027,7 +1029,7 @@ impl Default for Reader {
             hold: None,
             reveal: None,
             walk: None,
-            restore_epoch: 0,
+            restore_ack: false,
             restore_load: 0,
         }
     }
@@ -1044,14 +1046,16 @@ pub enum TurnSource {
     User,
 }
 
-/// The eval `web.turn` runs. Tests send this string; they do not pick a flag.
-pub fn turn_command(delta: i32, source: TurnSource, epoch: u64, load: u64) -> String {
+/// The eval `web.turn` runs. `target` is the walk goal. `ack` answers the
+/// user post the page already sent. Tests send this string.
+pub fn turn_command(delta: i32, source: TurnSource, target: u32, ack: bool, load: u64) -> String {
     let source = match source {
         TurnSource::Restore => "restore",
         TurnSource::User => "user",
     };
+    let ack = if ack { 1 } else { 0 };
     format!(
-        "(function(){{var answer=(window.spikeTurn&&window.spikeTurn({delta},\"{source}\",{epoch},{load}))||\"no\";return JSON.stringify({{answer:answer}});}})()"
+        "(function(){{var answer=(window.spikeTurn&&window.spikeTurn({delta},\"{source}\",{target},{ack},{load}))||\"no\";return JSON.stringify({{answer:answer}});}})()"
     )
 }
 
@@ -1174,8 +1178,35 @@ pub fn handle_page(
             go: None,
         };
     }
+    if report.kind == "anchor" {
+        let Some(page) = report.page.filter(|page| *page > 0) else {
+            return apply_idle(true);
+        };
+        let offset = report.pinned.unwrap_or(0);
+        let place = ReadingPlace {
+            href: reader.place.href.clone(),
+            page,
+            offset,
+        };
+        let changed = place != reader.place;
+        if changed && !store.write_place(&place) {
+            reader.restore_ack = true;
+            return apply_idle(false);
+        }
+        reader.place = place;
+        reader.walk = None;
+        reader.restore_ack = true;
+        return Apply {
+            accepted: true,
+            paint: true,
+            wrote: changed,
+            reveal: None,
+            go: None,
+        };
+    }
     if let Some(token) = report.token {
         if !reader.swipe.holds(token) {
+            reader.restore_ack = true;
             return apply_idle(false);
         }
     }
@@ -1200,6 +1231,7 @@ pub fn handle_page(
         let mut next = reader.clone();
         if let Some(token) = report.token {
             if !next.swipe.take_commit_post(token) {
+                reader.restore_ack = true;
                 return apply_idle(false);
             }
         }
@@ -1218,11 +1250,12 @@ pub fn handle_page(
         };
         let changed = place != reader.place;
         if changed && !store.write_place(&place) {
+            reader.restore_ack = true;
             return apply_idle(false);
         }
         next.place = place;
         clear_resume(&mut next);
-        next.restore_epoch = next.restore_epoch.saturating_add(1);
+        next.restore_ack = true;
         *reader = next;
         return Apply {
             accepted: true,
@@ -1370,8 +1403,8 @@ pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str) {
     reader.walk = resume_walk(page, offset);
 }
 
-/// A resize, or a shell key that has already taken the page, ends the walk.
-/// The saved row is not written here.
+/// A shell key that has already taken the page ends the walk.
+/// A resize does not. The saved row is not written here.
 pub fn stop_walk(reader: &mut Reader) {
     reader.walk = None;
 }
@@ -1379,20 +1412,17 @@ pub fn stop_walk(reader: &mut Reader) {
 /// The page dropped its gesture, or a new chapter document replaced it.
 /// Empty swipe slots still count: a restore slide is not one of those slots.
 pub fn retire_restore(reader: &mut Reader) -> bool {
-    let dropped = reader.swipe.cancel_release();
-    reader.restore_epoch = reader.restore_epoch.saturating_add(1);
-    dropped
+    reader.swipe.cancel_release()
 }
 
 pub fn reset_restore_epoch(reader: &mut Reader) {
-    reader.restore_epoch = 0;
     reader.restore_load = reader.restore_load.saturating_add(1);
+    reader.restore_ack = false;
 }
 
-/// `place_page` on a cancel. The returned eval is the one drop the page runs.
+/// `place_page` on a cancel. The drop stops an animation that has not posted.
+/// The walk and a commit that already posted stay.
 pub fn cancel_placed_page(reader: &mut Reader) -> String {
-    retire_restore(reader);
-    stop_walk(reader);
     drop_command(reader.restore_load)
 }
 
@@ -1430,7 +1460,7 @@ pub fn poll_resume(
     shown: u32,
     pages: u32,
     turning: bool,
-    epoch: u64,
+    ack: bool,
     load: u64,
 ) -> ResumePoll {
     let walk = match walk {
@@ -1438,7 +1468,8 @@ pub fn poll_resume(
         other => other,
     };
     let command = if resume_turn(walk, shown, pages, turning) {
-        Some(turn_command(1, TurnSource::Restore, epoch, load))
+        let target = walk.unwrap_or(0);
+        Some(turn_command(1, TurnSource::Restore, target, ack, load))
     } else {
         None
     };
@@ -2462,8 +2493,7 @@ mod tests {
         let step = place_step(true, true, false);
         assert_eq!(step, PlaceStep::Cancel { reflow: false });
         let command = cancel_placed_page(&mut reader);
-        assert!(reader.walk.is_none());
-        assert_eq!(reader.restore_epoch, 1);
+        assert_eq!(reader.walk, Some(10));
         assert!(command.contains("spikeFollowDrop"));
         assert!(!reader.swipe.release_open());
     }

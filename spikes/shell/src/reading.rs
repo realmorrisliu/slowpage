@@ -459,8 +459,10 @@ const SCRIPT: &str = r#"
   let queuedSource = "";
   let flying = "";
   let flyingDelta = 0;
-  let restoreEpoch = 0;
   let pageLoad = window.__spikeLoad | 0;
+  let pendingUser = false;
+  let commitToken = 0;
+  let holdGoal = 0;
   let settled = 1;
   let shift = 0;
   let followX = 0;
@@ -792,10 +794,21 @@ const SCRIPT: &str = r#"
     if (!node || node.nodeType !== 3) return 0;
     return offsetOf(node, caret.startOffset || 0);
   }
-  window.spikeHold = function () {
-    const offset = heldOffset();
+  function goalOffset(page) {
+    const stride = columnStride();
+    const saved = root.scrollLeft;
+    seek((page - 1) * stride);
+    const caret = heldOffset();
+    seek(saved);
+    if (caret) return caret;
+    return (page - 1) * stride;
+  }
+  window.spikeHold = function (page) {
+    const goal = page | 0;
+    holdGoal = goal;
+    const offset = goal > 0 ? goalOffset(goal) : heldOffset();
     window.spikeHeld = offset;
-    post({ hold: offset });
+    post({ hold: offset, goal: goal });
     return offset;
   };
   function snapSettled() {
@@ -835,6 +848,17 @@ const SCRIPT: &str = r#"
       requestAnimationFrame(function () {
         const found = locate(offset);
         if (!found) {
+          const w = columnStride();
+          if (holdGoal && offset > 0 && w > 0) {
+            seek(Math.floor(offset / w) * w);
+            settled = column().page;
+            const landed = { pinned: offset };
+            if (holdGoal) landed.kind = "anchor";
+            holdGoal = 0;
+            post(landed);
+            return;
+          }
+          holdGoal = 0;
           post({ pinned: offset, missed: true });
           return;
         }
@@ -851,7 +875,10 @@ const SCRIPT: &str = r#"
         seek(index * w);
         settled = column().page;
         measured = false;
-        post({ pinned: offset });
+        const landed = { pinned: offset };
+        if (holdGoal) landed.kind = "anchor";
+        holdGoal = 0;
+        post(landed);
       });
     });
     };
@@ -866,7 +893,7 @@ const SCRIPT: &str = r#"
     if (token) source = "user";
     if (source === "restore") extra.chase = true;
     else if (!token) extra.kind = "turn";
-    if (source !== "restore") restoreEpoch++;
+    if (source !== "restore") pendingUser = true;
     settled = column().page;
     post(extra);
     busy = false;
@@ -881,7 +908,7 @@ const SCRIPT: &str = r#"
     flyingDelta = 0;
     if (next) begin(next, nextToken, nextSource);
   }
-  window.spikeTurn = function (delta, source, issued, load) {
+  window.spikeTurn = function (delta, source, target, ack, load) {
     // A commit glide is the turn that was already decided. Bumping the
     // generation here kills the only callback that clears `busy` and runs
     // the queued key, so the page stops accepting turns. A return glide has
@@ -890,7 +917,10 @@ const SCRIPT: &str = r#"
     // takes that slot: the reader's turn already owns it. A reader turn
     // takes an unfinished restore's column instead of waiting for it.
     if (source !== "restore") source = "user";
-    if (source === "restore" && ((issued | 0) !== restoreEpoch || (load | 0) !== pageLoad)) return "no";
+    if (source === "restore" && (load | 0) !== pageLoad) return "no";
+    if (source === "restore" && pendingUser && (ack | 0) !== 1) return "no";
+    if ((ack | 0) === 1) pendingUser = false;
+    if (source === "restore" && !((target | 0) > column().page)) return "no";
     if (source !== "restore" && busy && !committing && flying === "restore") releaseFlying();
     if (!committing && source !== "restore") {
       followGen++;
@@ -922,7 +952,7 @@ const SCRIPT: &str = r#"
       flyingDelta = 0;
       if (source === "restore") post({ frames: [], chase: true });
       else {
-        restoreEpoch++;
+        pendingUser = true;
         post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
       }
       return;
@@ -1027,7 +1057,15 @@ const SCRIPT: &str = r#"
   }, true);
   window.spikeFollowDrop = function (load) {
     if ((load | 0) !== pageLoad) return;
-    restoreEpoch++;
+    if (committing || queuedToken) {
+      const token = commitToken;
+      const queued = queuedToken;
+      commitToken = 0;
+      endFollow();
+      if (token) post({ swipe: token, dropped: true });
+      if (queued) post({ swipe: queued, dropped: true });
+      return;
+    }
     endFollow();
   };
   window.spikeFollow = function (offset) {
@@ -1094,9 +1132,11 @@ const SCRIPT: &str = r#"
     }
     const step = delta > 0 ? 1 : -1;
     committing = true;
+    commitToken = token || 0;
     busy = true;
     glide(from, step > 0 ? w : -w, function () {
-      restoreEpoch++;
+      commitToken = 0;
+      pendingUser = true;
       committing = false;
       followX = 0;
       root.style.transform = "none";

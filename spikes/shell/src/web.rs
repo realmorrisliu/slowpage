@@ -854,9 +854,10 @@ impl WebChapter {
 
     pub fn hold(&self) {
         let (web, _, href) = self.shown();
+        let page = SESSION.with(|session| session.borrow().reader.walk.unwrap_or(0));
         eval(
             &web,
-            "window.spikeHold&&window.spikeHold()",
+            &format!("window.spikeHold&&window.spikeHold({page})"),
             self.inbox.clone(),
             href,
             false,
@@ -864,9 +865,9 @@ impl WebChapter {
     }
 
     pub fn reveal(&self, offset: u32) {
-        // Every reveal, including poll's delayed jump, retires the open swipe
-        // before the page moves. The call is not a separate cancel entry.
-        cancel_swipe();
+        // Stop an animation that has not posted. A commit that already posted
+        // keeps its token, and the walk keeps its goal.
+        self.drop_swipe();
         let (web, _, href) = self.shown();
         eval(
             &web,
@@ -880,13 +881,20 @@ impl WebChapter {
     pub fn turn(&self, delta: i32, source: crate::visit::TurnSource) {
         self.inbox.borrow_mut().turn_started = Some(Instant::now());
         let (web, _, href) = self.shown();
-        let (epoch, load) = SESSION.with(|session| {
-            let reader = &session.borrow().reader;
-            (reader.restore_epoch, reader.restore_load)
+        let (target, ack, load) = SESSION.with(|session| {
+            let reader = &mut session.borrow_mut().reader;
+            let ack = if source == crate::visit::TurnSource::Restore {
+                let ack = reader.restore_ack;
+                reader.restore_ack = false;
+                ack
+            } else {
+                false
+            };
+            (reader.walk.unwrap_or(0), ack, reader.restore_load)
         });
         eval(
             &web,
-            &crate::visit::turn_command(delta, source, epoch, load),
+            &crate::visit::turn_command(delta, source, target, ack, load),
             self.inbox.clone(),
             href,
             true,
@@ -1225,7 +1233,7 @@ pub fn poll_reader_walk(shown: u32, pages: u32, turning: bool) -> bool {
             shown,
             pages,
             turning,
-            session.reader.restore_epoch,
+            session.reader.restore_ack,
             session.reader.restore_load,
         );
         session.reader.walk = polled.walk;

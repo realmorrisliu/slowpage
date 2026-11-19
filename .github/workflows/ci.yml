@@ -113,7 +113,7 @@ jobs:
             a_page_resume_does_not_store_the_columns_it_crosses \
             a_resume_walk_ends_when_the_reader_moves \
             a_taken_turn_is_the_page_the_resume_stops_on \
-            a_cancelled_restore_stays_on_the_settled_column \
+            a_resize_keeps_the_saved_page_until_the_anchor_lands \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -151,7 +151,7 @@ jobs:
             a_page_resume_does_not_store_the_columns_it_crosses \
             a_resume_walk_ends_when_the_reader_moves \
             a_taken_turn_is_the_page_the_resume_stops_on \
-            a_cancelled_restore_stays_on_the_settled_column
+            a_resize_keeps_the_saved_page_until_the_anchor_lands
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done
