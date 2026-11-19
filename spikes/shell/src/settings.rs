@@ -3814,7 +3814,7 @@ mod tests {
         let (second_wait, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
-            "now window.spikeAlign&&window.spikeAlign(\"img#pic\")",
+            "now window.__images=[];window.spikeAlign&&window.spikeAlign(\"img#pic\")",
         );
         assert!(second_wait.is_empty(), "{second_wait:?}");
         let (second_miss, _, _) = read_frame(&mut stdin, &mut stdout, "void 0");
