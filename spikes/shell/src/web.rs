@@ -160,6 +160,7 @@ pub struct Inbox {
     pub did_reload: bool,
     pub turn_started: Option<Instant>,
     pub hold: Option<u32>,
+    pub sentence: Option<u32>,
     pub pinned: Option<u32>,
     pub sample: Option<serde_json::Value>,
     pub gap_ratio: Option<f64>,
@@ -269,6 +270,7 @@ define_class!(
                     let mut inbox = self.ivars().inbox.borrow_mut();
                     let previous = inbox.pages;
                     inbox.pages = Some((page as usize, pages as usize));
+                    inbox.sentence = value["sentence"].as_u64().map(|offset| offset as u32);
                     if let Some(tofu) = value["tofu"].as_u64() {
                         inbox.tofu = tofu as u32;
                     }
@@ -540,6 +542,7 @@ fn eval(web: &AnyObject, js: &str, inbox: Rc<RefCell<Inbox>>, href: String, turn
         let mut inbox = inbox.borrow_mut();
         if let (Some(page), Some(pages)) = (parsed["page"].as_u64(), parsed["pages"].as_u64()) {
             inbox.pages = Some((page as usize, pages as usize));
+            inbox.sentence = parsed["sentence"].as_u64().map(|offset| offset as u32);
         }
         if turn {
             if let Some(ms) = parsed["ms"].as_f64() {

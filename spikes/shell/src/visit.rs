@@ -166,6 +166,21 @@ pub fn fresh_arrival(seq: u64, seen: u64) -> bool {
     seq != 0 && seq != seen
 }
 
+/// The sentence stored with a page. A new page replaces it. The same page
+/// keeps a stored sentence when the new sample is empty.
+pub fn next_sentence(stored_page: u32, stored_offset: u32, page: u32, offset: u32) -> (u32, u32) {
+    if page == 0 {
+        return (stored_page, stored_offset);
+    }
+    if page != stored_page {
+        return (page, offset);
+    }
+    if offset == 0 {
+        return (stored_page, stored_offset);
+    }
+    (page, offset)
+}
+
 pub fn page_key_delta(shell: bool, surface: Surface, forward: bool) -> i32 {
     if show_library(shell, surface) {
         0
@@ -430,6 +445,15 @@ mod tests {
         assert_eq!(step_index(0, count, -1), 0);
         assert_eq!(step_index(9, count, 1), 9);
         assert_eq!(step_index(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn a_reopen_keeps_the_sentence_on_the_same_page() {
+        assert_eq!(next_sentence(4, 800, 4, 0), (4, 800));
+        assert_eq!(next_sentence(4, 800, 4, 860), (4, 860));
+        assert_eq!(next_sentence(4, 800, 5, 20), (5, 20));
+        assert_eq!(next_sentence(4, 800, 5, 0), (5, 0));
+        assert_eq!(next_sentence(4, 800, 0, 20), (4, 800));
     }
 
     #[test]
