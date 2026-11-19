@@ -103,6 +103,9 @@ jobs:
             a_direct_file_arms_the_wheel_without_the_shelf \
             a_release_stays_open_until_chapter_or_resize_cancels_it \
             a_reveal_during_the_release_does_not_post \
+            a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
+            a_second_finger_key_keeps_the_committed_page \
+            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -129,7 +132,10 @@ jobs:
             a_key_during_the_release_still_turns \
             a_direct_file_arms_the_wheel_without_the_shelf \
             a_release_stays_open_until_chapter_or_resize_cancels_it \
-            a_reveal_during_the_release_does_not_post
+            a_reveal_during_the_release_does_not_post \
+            a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
+            a_second_finger_key_keeps_the_committed_page \
+            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

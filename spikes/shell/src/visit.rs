@@ -675,8 +675,17 @@ pub struct Swipe {
     /// of this finger, including the lift, so that lift cannot turn again.
     ignore: bool,
     /// A commit or a return glide has been handed to the page and has not
-    /// been dropped. The finger is already up.
+    /// been dropped. The finger may already be up. A matching commit post
+    /// clears this. Navigation clears it. A new finger does not.
     release: bool,
+    next_id: u64,
+    /// Tokens at or below this were retired by navigation. A post of one
+    /// does not change the stored page.
+    floor: u64,
+    /// Bit `token - floor` is set while that commit's post may still apply.
+    outstanding: u64,
+    /// The commit just handed to the page. The wheel command reads it once.
+    last_commit: Option<u64>,
 }
 
 impl Default for Swipe {
@@ -687,6 +696,10 @@ impl Default for Swipe {
             notch: 0.0,
             ignore: false,
             release: false,
+            next_id: 0,
+            floor: 0,
+            outstanding: 0,
+            last_commit: None,
         }
     }
 }
@@ -696,13 +709,44 @@ impl Swipe {
     /// The next lift must not turn.
     pub fn abandon(&mut self) -> bool {
         let was = self.live;
+        // A finger that started during an open commit is not that commit.
+        // Dropping the page paint would cancel the page already handed over.
+        let drop_paint = was && self.outstanding == 0;
         self.travel = 0.0;
         self.notch = 0.0;
         self.live = false;
         if was {
             self.ignore = true;
         }
-        was
+        drop_paint
+    }
+
+    pub fn commit_token(&self) -> Option<u64> {
+        self.last_commit
+    }
+
+    /// The commit glide finished and reported `token`. This is the write-back.
+    /// A token navigation already cleared, or a token already applied, does
+    /// not change the stored page. An older commit still applies after a
+    /// newer one was issued.
+    pub fn take_commit_post(&mut self, token: u64) -> bool {
+        if token <= self.floor || token > self.next_id {
+            return false;
+        }
+        let bit = token - self.floor;
+        if bit >= 64 {
+            return false;
+        }
+        let mask = 1u64 << bit;
+        if self.outstanding & mask == 0 {
+            return false;
+        }
+        self.outstanding &= !mask;
+        if self.outstanding == 0 {
+            self.release = false;
+            self.last_commit = None;
+        }
+        true
     }
 
     /// The page is still painting the finger-up glide. A key does not use this.
@@ -713,12 +757,15 @@ impl Swipe {
     /// Drop a follow or the finger-up glide. A chapter, a reveal, a return,
     /// a resize, a reopen, or another book calls this. A key does not.
     pub fn cancel_release(&mut self) -> bool {
-        let drop = self.live || self.release;
+        let drop = self.live || self.release || self.outstanding != 0;
         let was = self.live;
         self.travel = 0.0;
         self.notch = 0.0;
         self.live = false;
         self.release = false;
+        self.floor = self.next_id;
+        self.outstanding = 0;
+        self.last_commit = None;
         if was {
             self.ignore = true;
         }
@@ -728,7 +775,17 @@ impl Swipe {
     pub fn offer(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
         if self.ignore {
             if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
+                let next_id = self.next_id;
+                let floor = self.floor;
+                let outstanding = self.outstanding;
+                let last_commit = self.last_commit;
+                let release = self.release;
                 *self = Self::default();
+                self.next_id = next_id;
+                self.floor = floor;
+                self.outstanding = outstanding;
+                self.last_commit = last_commit;
+                self.release = release;
             }
             return if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
                 WheelMove::Pass
@@ -779,7 +836,7 @@ impl Swipe {
                 WheelMove::Commit(delta)
             }
         };
-        self.release = true;
+        self.hand_glide(&effect);
         effect
     }
 
@@ -793,11 +850,42 @@ impl Swipe {
         }
         let delta = if self.notch > 0.0 { 1 } else { -1 };
         self.notch = 0.0;
-        self.release = true;
-        if end_blocks(delta, page, pages) {
-            return WheelMove::Cancel;
+        let effect = if end_blocks(delta, page, pages) {
+            WheelMove::Cancel
+        } else {
+            WheelMove::Commit(delta)
+        };
+        self.hand_glide(&effect);
+        effect
+    }
+
+    /// Each commit gets its own token. A later commit does not retire the
+    /// earlier one. The post of a token is what clears that commit.
+    fn hand_glide(&mut self, effect: &WheelMove) {
+        if matches!(effect, WheelMove::Commit(_)) {
+            self.next_id = self.next_id.saturating_add(1);
+            let bit = self.next_id - self.floor;
+            if bit < 64 {
+                self.outstanding |= 1u64 << bit;
+                self.last_commit = Some(self.next_id);
+            }
         }
-        WheelMove::Commit(delta)
+        self.release = true;
+    }
+}
+
+/// A page report from the commit glide. `token` is the value the glide posted.
+/// None means an ordinary report, including a reveal pin. A stale token does
+/// not change the stored page.
+pub fn swipe_progress(
+    swipe: &mut Swipe,
+    token: Option<u64>,
+    page: u32,
+    sentence: u32,
+) -> Option<(u32, u32)> {
+    match token {
+        Some(token) => swipe.take_commit_post(token).then_some((page, sentence)),
+        None => Some((page, sentence)),
     }
 }
 
@@ -1794,5 +1882,146 @@ mod tests {
             place_step(false, true, true),
             PlaceStep::Cancel { reflow: true }
         );
+    }
+
+    #[test]
+    fn a_delayed_reveal_does_not_let_the_lift_replace_the_pin() {
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        // The finger is down when poll reveals. Reveal retires that finger,
+        // so the lift is not a commit.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+
+        // The commit was already handed to the page. Reveal retires its token.
+        // The glide's post can still arrive after that, and it must not apply.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 50), None);
+        let kept = poll_chapter(ChapterPoll {
+            saved_href: "ch",
+            saved_page: 1,
+            saved_offset: 800,
+            jump_href: "",
+            jump_offset: None,
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: "ch",
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 800,
+            still_turning: false,
+        });
+        assert_eq!((kept.saved_page, kept.saved_offset), (1, 800));
+        // The same report, if the handler had applied it, replaces the pin.
+        let replaced = poll_chapter(ChapterPoll {
+            saved_href: "ch",
+            saved_page: 1,
+            saved_offset: 800,
+            jump_href: "",
+            jump_offset: None,
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 2,
+            href: "ch",
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 50,
+            still_turning: false,
+        });
+        assert_eq!((replaced.saved_page, replaced.saved_offset), (2, 50));
+        assert!(replaced.record);
+
+        // A pin report does not retire the commit. The reveal command does.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
+        assert_eq!(
+            swipe_progress(&mut swipe, Some(token), 2, 50),
+            Some((2, 50))
+        );
+
+        // Pin first, then the retired post.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 50), None);
+
+        // Post first, then the pin.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 50), None);
+        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
+    }
+
+    #[test]
+    fn a_second_finger_key_keeps_the_committed_page() {
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert_eq!(swipe.offer(down(40.0), 4, 10), WheelMove::Follow(40.0));
+        assert!(!swipe.abandon());
+        assert!(swipe.release_open());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 0), Some((2, 0)));
+        assert!(!swipe.release_open());
+        assert_eq!(swipe.commit_token(), None);
+
+        // A second commit does not retire the first post, and navigation retires both.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let first = swipe.commit_token().expect("first");
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let second = swipe.commit_token().expect("second");
+        assert_ne!(first, second);
+        assert_eq!(swipe_progress(&mut swipe, Some(first), 2, 0), Some((2, 0)));
+        assert!(swipe.release_open());
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, Some(second), 3, 0), None);
     }
 }

@@ -161,6 +161,10 @@ pub struct Inbox {
     pub turn_started: Option<Instant>,
     pub hold: Option<u32>,
     pub sentence: Option<u32>,
+    /// Commit posts waiting for the next poll. A reveal in that poll retires
+    /// their tokens first, so a post that already left the page does not
+    /// replace the pin. A post with no token is not queued here.
+    pub swipe_posts: Vec<(u64, usize, usize, Option<u32>)>,
     pub pinned: Option<u32>,
     pub pin_missed: bool,
     pub await_nav: bool,
@@ -270,10 +274,18 @@ define_class!(
                 }
                 if let (Some(page), Some(pages)) = (value["page"].as_u64(), value["pages"].as_u64())
                 {
+                    let sentence = value["sentence"].as_u64().map(|offset| offset as u32);
+                    let posted = value["swipe"].as_u64();
                     let mut inbox = self.ivars().inbox.borrow_mut();
                     let previous = inbox.pages;
-                    inbox.pages = Some((page as usize, pages as usize));
-                    inbox.sentence = value["sentence"].as_u64().map(|offset| offset as u32);
+                    if let Some(token) = posted {
+                        inbox.swipe_posts
+                            .push((token, page as usize, pages as usize, sentence));
+                    } else {
+                        settle_swipe_posts(&mut inbox);
+                        inbox.pages = Some((page as usize, pages as usize));
+                        inbox.sentence = sentence;
+                    }
                     if let Some(tofu) = value["tofu"].as_u64() {
                         inbox.tofu = tofu as u32;
                     }
@@ -478,6 +490,19 @@ define_class!(
         }
     }
 );
+
+/// A commit post names a token. It changes the stored page only while that
+/// token is still outstanding. Navigation clears the token before this runs.
+fn settle_swipe_posts(inbox: &mut Inbox) {
+    let pending = std::mem::take(&mut inbox.swipe_posts);
+    for (token, page, pages, sentence) in pending {
+        let ok = SWIPE.with(|swipe| swipe.borrow_mut().take_commit_post(token));
+        if ok {
+            inbox.pages = Some((page, pages));
+            inbox.sentence = sentence;
+        }
+    }
+}
 
 pub(crate) fn write_inbox(inbox: &Inbox, href: &str) {
     if inbox.open_ms.is_none() && inbox.pages.is_none() && inbox.anchor.is_none() {
@@ -827,6 +852,9 @@ impl WebChapter {
     }
 
     pub fn reveal(&self, offset: u32) {
+        // Every reveal, including poll's delayed jump, retires the open swipe
+        // before the page moves. The call is not a separate cancel entry.
+        cancel_swipe();
         let (web, _, href) = self.shown();
         eval(
             &web,
@@ -835,6 +863,19 @@ impl WebChapter {
             href,
             false,
         );
+    }
+
+    /// Poll calls this after a reveal. The reveal already retired the token,
+    /// so a commit post that the page emitted earlier is not stored.
+    pub fn apply_pending_swipe(&self) {
+        let mut inbox = self.inbox.borrow_mut();
+        let previous = inbox.pages;
+        settle_swipe_posts(&mut inbox);
+        if previous.is_some() && previous != inbox.pages {
+            if let Some(started) = inbox.turn_started.take() {
+                inbox.turn_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
     }
 
     pub fn turn(&self, delta: i32) {
@@ -871,14 +912,14 @@ impl WebChapter {
         );
     }
 
-    pub fn release_swipe(&self, delta: i32) {
+    pub fn release_swipe(&self, delta: i32, token: u64) {
         if delta != 0 {
             self.inbox.borrow_mut().turn_started = Some(Instant::now());
         }
         let (web, _, href) = self.shown();
         eval(
             &web,
-            &format!("window.spikeFollowEnd&&window.spikeFollowEnd({delta})"),
+            &format!("window.spikeFollowEnd&&window.spikeFollowEnd({delta},{token})"),
             self.inbox.clone(),
             href,
             delta != 0,
@@ -1159,11 +1200,12 @@ pub fn take_epub_wheel(phase: u64, momentum: u64, dx: f64, dy: f64) -> bool {
             true
         }
         crate::visit::WheelMove::Commit(delta) => {
-            web.release_swipe(delta);
+            let token = SWIPE.with(|swipe| swipe.borrow().commit_token().unwrap_or(0));
+            web.release_swipe(delta, token);
             true
         }
         crate::visit::WheelMove::Cancel => {
-            web.release_swipe(0);
+            web.release_swipe(0, 0);
             true
         }
     }

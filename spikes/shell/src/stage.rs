@@ -1155,6 +1155,7 @@ impl State {
             if let Some(offset) = polled.reveal_pending {
                 web.reveal(offset);
             }
+            web.apply_pending_swipe();
             if polled.record {
                 let path = self.book_path.clone();
                 self.saved_page = polled.saved_page;

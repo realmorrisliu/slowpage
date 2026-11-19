@@ -987,7 +987,7 @@ const SCRIPT: &str = r#"
     }
     requestAnimationFrame(frame);
   }
-  window.spikeFollowEnd = function (delta) {
+  window.spikeFollowEnd = function (delta, token) {
     if (busy) {
       // A key slide is not a commit. Drop the follow paint and let that slide
       // finish. A commit glide is the turn already decided: cancelling its
@@ -1020,7 +1020,7 @@ const SCRIPT: &str = r#"
       followX = 0;
       root.style.transform = "none";
       seek(box.w * (box.page + step - 1));
-      post();
+      post(token ? { swipe: token } : null);
       busy = false;
       const next = queued;
       queued = 0;
@@ -1154,6 +1154,42 @@ mod tests {
         assert_eq!(v["key"]["during"], serde_json::json!(["queued"]));
         assert_eq!(v["key"]["scroll"], 800);
         assert_eq!(v["key"]["after"], serde_json::json!(["ok"]));
+    }
+
+    #[test]
+    fn a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-commit-token.js");
+        let drive = dir.join("superreader-commit-token-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::COMMIT_TOKEN_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["space"]["during"], serde_json::json!(["queued"]));
+        assert_eq!(v["space"]["scroll"], 800);
+        assert_eq!(v["space"]["swipe"], 7);
+        assert_eq!(v["arrow"]["during"], serde_json::json!(["queued"]));
+        assert_eq!(v["arrow"]["scroll"], 800);
+        assert_eq!(v["other"]["scroll"], 400);
+        assert_eq!(v["other"]["swipe"], 7);
+        assert_eq!(v["late"]["swipe"], 7);
+        assert_eq!(v["late"]["page"], 2);
+        assert_eq!(v["reveal"]["scroll"], 0);
+        assert_eq!(v["reveal"]["unpinned"], serde_json::json!([]));
+        assert_eq!(v["reveal"]["pinned"], 800);
     }
 
     #[test]
@@ -1585,4 +1621,116 @@ fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
 key.after = take();
 
 console.log(JSON.stringify({ reveal, drop, key }));
+"#;
+
+const COMMIT_TOKEN_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  posts.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+  posts.length = 0;
+}
+const seen = [];
+function spy() {
+  const orig = window.spikeTurn;
+  window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+}
+function take() { const out = seen.slice(); seen.length = 0; return out; }
+function swipeOf() {
+  const named = posts.filter(function (p) { return p.swipe != null; });
+  return named.length ? named[named.length - 1].swipe : null;
+}
+
+function keyDuringSecondFinger(key, shift) {
+  boot(); spy();
+  window.spikeFollow(80);
+  window.spikeFollowEnd(1, 7);
+  window.spikeFollow(40);
+  fire('keydown', { key: key, shiftKey: !!shift, repeat: false, preventDefault(){} });
+  const during = take();
+  flush(); flush();
+  return { during, scroll: body.scrollLeft, swipe: swipeOf() };
+}
+
+const space = keyDuringSecondFinger(' ', false);
+const arrow = keyDuringSecondFinger('ArrowRight', false);
+const other = keyDuringSecondFinger('a', false);
+
+boot();
+window.spikeFollow(80);
+window.spikeFollowEnd(1, 7);
+flush(); flush(); flush();
+window.spikeFollowDrop();
+const latePost = posts.filter(function (p) { return p.swipe != null; }).pop() || {};
+const late = { swipe: latePost.swipe == null ? null : latePost.swipe, page: latePost.page == null ? null : latePost.page };
+
+boot();
+window.spikeFollow(80);
+window.spikeReveal(800);
+flush(); flush(); flush();
+const reveal = {
+  scroll: body.scrollLeft,
+  unpinned: posts.filter(function (p) { return p.pinned == null; }).map(function (p) { return p.page; }),
+  pinned: posts.length ? posts[posts.length - 1].pinned : null
+};
+
+console.log(JSON.stringify({ space, arrow, other, late, reveal }));
 "#;
