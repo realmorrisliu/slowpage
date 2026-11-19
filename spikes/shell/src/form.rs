@@ -555,9 +555,11 @@ pub fn mount(
     let menu_b = menu;
     let on_peer_b = on_peer;
     let on_open_b = on_open;
+    let query = signal(String::new());
     dynamic(move || {
         let current = form_b.get();
-        let library = library_b.get();
+        let query = query.clone();
+        let library = crate::shelf::searched(library_b.get(), &query.get());
         let placed = place(
             &PlaceIn {
                 form: current,
@@ -572,6 +574,7 @@ pub fn mount(
             form_b,
             selected_b,
             menu_b,
+            query,
             library,
             on_peer_b.clone(),
             on_open_b.clone(),
@@ -1667,6 +1670,7 @@ fn paint(
     form: Signal<Form>,
     selected: Signal<SelectId>,
     menu: Signal<bool>,
+    query: Signal<String>,
     library: LibraryIn,
     on_peer: impl Fn(Peer) + Clone + 'static,
     on_open: impl Fn(String) + Clone + 'static,
@@ -1708,6 +1712,7 @@ fn paint(
             form,
             selected,
             menu,
+            query.clone(),
             on_peer.clone(),
         ));
     }
@@ -1749,6 +1754,7 @@ fn sidebar_pane(
     form: Signal<Form>,
     selected: Signal<SelectId>,
     menu: Signal<bool>,
+    query: Signal<String>,
     on_peer: impl Fn(Peer) + Clone + 'static,
 ) -> AnyElement {
     let mut column = view().w(px(SIDEBAR_W as f32)).h_full().flex().flex_col();
@@ -1764,7 +1770,7 @@ fn sidebar_pane(
     column = column.child(
         view()
             .px(px(crate::tokens::SIDE_PAD_X))
-            .child(search_field()),
+            .child(search_field(query)),
     );
     let mut groups = scroll()
         .flex_1()
@@ -1917,8 +1923,11 @@ fn panel_toggle_button(
     button.into_element()
 }
 
-fn search_field() -> AnyElement {
+fn search_field(query: Signal<String>) -> AnyElement {
+    let write = query.clone();
     view()
+        .w_full()
+        .min_w(px(0.0))
         .mb(px(crate::tokens::SEARCH_MB))
         .h(px(crate::tokens::SEARCH_H))
         .rounded(px(crate::tokens::SEARCH_RADIUS))
@@ -1929,13 +1938,22 @@ fn search_field() -> AnyElement {
         .items_center()
         .gap(px(crate::tokens::SEARCH_GAP))
         .child(glyph_box("search", false, crate::tokens::ROW_ICON, None))
-        .child(view().flex_1().min_w(px(0.0)).child(fit_text(
-            "搜索书名、作者、笔记".to_string(),
-            crate::tokens::SEARCH_SIZE,
-            crate::tokens::BODY_WEIGHT,
-            quiet(),
-            crate::tokens::BODY_TRACK_EM,
-        )))
+        .child(
+            nsh_core::element::input()
+                .key("shelf-search")
+                .flex_1()
+                .min_w(px(0.0))
+                .font_family(SharedString::from(crate::tokens::FONT_STACK))
+                .text_size(px(crate::tokens::SEARCH_SIZE))
+                .font_weight(crate::tokens::BODY_WEIGHT)
+                .text_color(quiet())
+                .placeholder_color(quiet())
+                .placeholder("搜索书名、作者")
+                .auto_correct(false)
+                .bg(transparent_black())
+                .value(move || query.get())
+                .on_change(move |text: &str| write.set(text.to_string())),
+        )
         .into_element()
 }
 
