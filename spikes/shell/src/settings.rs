@@ -3097,7 +3097,7 @@ mod tests {
             panic!("an old page row is measured, {zero_measure:?}");
         };
         assert!(reopened.measured.is_none());
-        let _ = read_frame(&mut stdin, &mut stdout, COLUMN_CHARS);
+        let _ = read_frame(&mut stdin, &mut stdout, &one_line(COLUMN_CHARS));
         let _ = read_frame(
             &mut stdin,
             &mut stdout,
@@ -3219,6 +3219,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
     fn a_hold_reads_the_column_character() {
         let dir = std::env::temp_dir().join(format!("superreader-column-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -3238,7 +3239,7 @@ mod tests {
         let mut stdin = child.stdin.take().unwrap();
         let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
         let _opened = read_posts(&mut stdout);
-        let _ = read_frame(&mut stdin, &mut stdout, COLUMN_CHARS);
+        let _ = read_frame(&mut stdin, &mut stdout, &one_line(COLUMN_CHARS));
         let file = dir.join("settings.json");
         let book = dir.join("book.epub");
         let book = book.to_str().unwrap();
@@ -3692,6 +3693,10 @@ mod tests {
             .rev()
             .find_map(|post| post["page"].as_u64())
             .expect("screen") as u32
+    }
+
+    fn one_line(script: &str) -> String {
+        script.replace(['\n', '\r'], " ")
     }
 
     fn read_frame(
