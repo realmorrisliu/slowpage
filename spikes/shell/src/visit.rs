@@ -1,3 +1,7 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static ON_LIBRARY: AtomicBool = AtomicBool::new(true);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Surface {
     Library,
@@ -99,6 +103,14 @@ pub fn show_reader_chrome(shell: bool, bars: bool, surface: Surface) -> bool {
 
 pub fn paper_background(shell: bool, surface: Surface) -> bool {
     !shell || surface == Surface::Reading
+}
+
+pub fn publish_surface(surface: Surface) {
+    ON_LIBRARY.store(surface == Surface::Library, Ordering::Relaxed);
+}
+
+pub fn wheel_scrolls_shelf(shell: bool) -> bool {
+    shell && ON_LIBRARY.load(Ordering::Relaxed)
 }
 
 pub fn leave_key(key: LeaveKey, focus: Focus, immersion: Immersion, surface: Surface) -> KeyEffect {
@@ -210,5 +222,16 @@ mod tests {
         assert!(!paper_background(true, Surface::Library));
         assert!(paper_background(true, Surface::Reading));
         assert!(paper_background(false, Surface::Library));
+    }
+
+    #[test]
+    fn a_wheel_on_the_reader_reaches_the_page_and_returns_to_the_shelf() {
+        publish_surface(Surface::Library);
+        assert!(wheel_scrolls_shelf(true));
+        assert!(!wheel_scrolls_shelf(false));
+        publish_surface(Surface::Reading);
+        assert!(!wheel_scrolls_shelf(true));
+        publish_surface(Surface::Library);
+        assert!(wheel_scrolls_shelf(true));
     }
 }

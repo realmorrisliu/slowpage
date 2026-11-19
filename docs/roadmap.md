@@ -145,7 +145,7 @@ Scope. The visit is library or reading. The library form unmounts while reading,
 
 Non-goals. No margin layout, no new motion, no PDF page architecture, and no immersive enter path.
 
-Observable. The EPUB fixture Plain Essay and the PDF fixture Field Guide keep scroll and page across leave. **继续阅读** follows `opened_at`. Editing focus and immersive Escape do not leave the book.
+Observable. The EPUB fixture Plain Essay and the PDF fixture Field Guide keep scroll and page across leave. **继续阅读** follows `opened_at`. Editing focus and immersive Escape do not leave the book. A wheel on the open reader reaches the page. A wheel on the library moves the shelf.
 
 Evidence. `spikes/shell/src/visit.rs` tests. The headless `shell.test.tsx` case leaves the reader between the two opens. macOS CI runs the visit tests. `smoke-shell-click` stays pending because no window was driven.
 

@@ -1145,7 +1145,7 @@ fn install_shelf_wheel() {
     }
     let block = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
         let e = unsafe { event.as_ref() };
-        if !shell_on() {
+        if !crate::visit::wheel_scrolls_shelf(shell_on()) {
             return event.as_ptr();
         }
         let Some(mtm) = MainThreadMarker::new() else {

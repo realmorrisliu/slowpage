@@ -88,6 +88,7 @@ jobs:
             leave_keys_skip_editing_and_immersive \
             an_empty_path_and_a_bad_offset_do_not_move_the_shelf \
             the_shell_shows_the_library_or_the_existing_reader \
+            a_wheel_on_the_reader_reaches_the_page_and_returns_to_the_shelf \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -99,7 +100,8 @@ jobs:
             pdf_open_keeps_the_shelf_scroll_and_returns_the_page \
             leave_keys_skip_editing_and_immersive \
             an_empty_path_and_a_bad_offset_do_not_move_the_shelf \
-            the_shell_shows_the_library_or_the_existing_reader
+            the_shell_shows_the_library_or_the_existing_reader \
+            a_wheel_on_the_reader_reaches_the_page_and_returns_to_the_shelf
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

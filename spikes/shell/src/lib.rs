@@ -352,6 +352,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let catalog = signal(empty_catalog());
     let epoch = signal(0_u64);
     let visit = signal(visit::Visit::shelf());
+    visit::publish_surface(visit::Surface::Library);
     effect({
         let trim_id = trim_id.clone();
         let bold_on = bold_on.clone();
@@ -592,7 +593,7 @@ pub fn SpikeApp() -> impl IntoElement {
                     let page = settings::resume_page(&settings::path(), &path);
                     let mut current = drop_visit.get();
                     current.scroll = form::shelf_scroll();
-                    drop_visit.set(visit::open_cover(&current, &path, page));
+                    commit_visit(&drop_visit, visit::open_cover(&current, &path, page));
                 }
                 dropped.command("open", json!(path));
             }
@@ -782,7 +783,10 @@ pub fn SpikeApp() -> impl IntoElement {
                                     );
                                     let mut current = visit_open.get();
                                     current.scroll = form::shelf_scroll();
-                                    visit_open.set(visit::open_cover(&current, &path, page));
+                                    commit_visit(
+                                        &visit_open,
+                                        visit::open_cover(&current, &path, page),
+                                    );
                                     if let Some(name) = cover_title(&library_open.get(), &path) {
                                         title_open.set(name);
                                     }
@@ -843,6 +847,11 @@ fn listen_for_opens() {
     });
 }
 
+fn commit_visit(slot: &Signal<visit::Visit>, next: visit::Visit) {
+    visit::publish_surface(next.surface);
+    slot.set(next);
+}
+
 fn apply_leave(visit: &Signal<visit::Visit>, form: &Signal<form::Form>, key: visit::LeaveKey) {
     let immersion = if matches!(form.get(), form::Form::Immersive) {
         visit::Immersion::On
@@ -854,7 +863,7 @@ fn apply_leave(visit: &Signal<visit::Visit>, form: &Signal<form::Form>, key: vis
     {
         let next = visit::leave_to_library(&visit.get());
         form::restore_shelf_scroll(next.scroll);
-        visit.set(next);
+        commit_visit(visit, next);
     }
 }
 

@@ -156,7 +156,7 @@ define_class!(
 
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
-            if crate::chrome::shell_on() {
+            if crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on()) {
                 // Covers forward a wheel here. The shelf is the NSH scroll
                 // above this stage, so move that instead of the PDF offset.
                 let mut dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
