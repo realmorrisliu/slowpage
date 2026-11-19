@@ -1292,7 +1292,7 @@ impl State {
                 inbox.hold = None;
                 inbox.hold_probe = 0;
                 inbox.hold_missed = false;
-                crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
+                inbox.clear_figure();
             }
             self.await_hold = false;
             self.hold_since = None;
@@ -1327,7 +1327,7 @@ impl State {
                         inbox.hold = None;
                         inbox.hold_probe = 0;
                         inbox.hold_missed = false;
-                        crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
+                        inbox.clear_figure();
                     }
                     web.measure(page, probe);
                 }

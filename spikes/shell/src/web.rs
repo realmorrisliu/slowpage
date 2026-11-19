@@ -203,6 +203,27 @@ pub struct Inbox {
     pub measure_right: Option<f64>,
 }
 
+impl Inbox {
+    pub(crate) fn keep_figure(
+        &mut self,
+        value: &serde_json::Value,
+        probe: u64,
+        known: Option<&str>,
+    ) {
+        crate::visit::keep_message_figure(
+            &mut self.figure,
+            &mut self.figure_lost,
+            value,
+            probe,
+            known,
+        );
+    }
+
+    pub(crate) fn clear_figure(&mut self) {
+        crate::visit::drop_figure_mail(&mut self.figure, &mut self.figure_lost);
+    }
+}
+
 define_class!(
     #[unsafe(super(objc2::runtime::NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -288,13 +309,7 @@ define_class!(
                             (reader.probe, reader.figure.clone())
                         });
                         let mut inbox = self.ivars().inbox.borrow_mut();
-                        crate::visit::keep_message_figure(
-                            &mut inbox.figure,
-                            &mut inbox.figure_lost,
-                            &value,
-                            probe,
-                            known.as_deref(),
-                        );
+                        inbox.keep_figure(&value, probe, known.as_deref());
                     }
                     if !applied.paint {
                         return;
@@ -1018,7 +1033,7 @@ impl WebChapter {
             inbox.pin_missed = false;
             inbox.await_nav = true;
             inbox.nav_done = false;
-            crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
+            inbox.clear_figure();
             (slot.shown_web.clone(), href)
         };
         unsafe {
@@ -1073,7 +1088,7 @@ impl WebChapter {
     pub fn reload_source(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
-            crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
+            inbox.clear_figure();
         }
         let (web, _, href) = self.shown();
         unsafe {
@@ -1090,7 +1105,7 @@ impl WebChapter {
     pub fn reload(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
-            crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
+            inbox.clear_figure();
         }
         let (web, _, _) = self.shown();
         reset_restore_epoch();
@@ -1177,10 +1192,7 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                         {
                             let mut inbox = handler.ivars().inbox.borrow_mut();
                             inbox.chapter_ms = None;
-                            crate::visit::drop_figure_mail(
-                                &mut inbox.figure,
-                                &mut inbox.figure_lost,
-                            );
+                            inbox.clear_figure();
                         }
                         launch = Some((web, href));
                     }
