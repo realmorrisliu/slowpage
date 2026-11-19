@@ -163,6 +163,8 @@ pub struct Inbox {
     pub sentence: Option<u32>,
     pub pinned: Option<u32>,
     pub pin_missed: bool,
+    pub await_nav: bool,
+    pub nav_done: bool,
     pub sample: Option<serde_json::Value>,
     pub gap_ratio: Option<f64>,
     pub page_w: f64,
@@ -403,6 +405,13 @@ define_class!(
             }
             if !self.ivars().reports.get() {
                 return;
+            }
+            let waiting = self.ivars().inbox.borrow().await_nav;
+            if waiting {
+                let mut inbox = self.ivars().inbox.borrow_mut();
+                inbox.await_nav = false;
+                inbox.nav_done = true;
+                inbox.pages = None;
             }
             let open_ms = self.ivars().opened.elapsed().as_secs_f64() * 1000.0;
             {
@@ -850,6 +859,37 @@ impl WebChapter {
 
     pub fn href(&self) -> String {
         self.slot.borrow().shown_href.clone()
+    }
+
+    pub fn spine(&self) -> Vec<String> {
+        self.slot.borrow().spine.clone()
+    }
+
+    pub fn show_chapter(&self, index: usize) -> Option<String> {
+        let (web, href) = {
+            let mut slot = self.slot.borrow_mut();
+            let href = slot.spine.get(index)?.clone();
+            slot.shown_index = index;
+            slot.shown_href = href.clone();
+            let handler = slot.shown_handler.clone();
+            handler.ivars().href.replace(href.clone());
+            let mut inbox = slot.inbox.borrow_mut();
+            inbox.pages = None;
+            inbox.pinned = None;
+            inbox.pin_missed = false;
+            inbox.await_nav = true;
+            inbox.nav_done = false;
+            (slot.shown_web.clone(), href)
+        };
+        unsafe {
+            let url = NSString::from_str(&format!("epub://book{href}"));
+            if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
+                let request: Retained<AnyObject> =
+                    msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+                let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
+            }
+        }
+        Some(href)
     }
 
     pub fn set_page_target(&self, width: f64) {

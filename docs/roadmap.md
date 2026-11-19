@@ -206,3 +206,17 @@ Done. Page 4 with offset 800 stays 4 and 800 when the same page reports an empty
 Evidence. `spikes/shell/src/visit.rs` tests the sentence rule. `spikes/shell/src/settings.rs` writes the offset and reads it back. The CI `test` job runs those tests. The Release `macos` job compiles, packages, signs, and notarizes. It does not run these tests. The page script reports the offset. That report is script generation, not a quit and a reopen.
 
 Not run. A Mac window, `nsh test`, quitting the app, the reveal on screen, and pdfium.
+
+## S3 chapter
+
+Goal. While a book is open, the contents control lists that book's chapters. Choosing one lands on that chapter. **返回** goes back to the sentence the reader was on.
+
+Scope. The list is the spine the reader already opened. One chapter uses the book title. The jump uses the existing reveal. A different chapter loads that spine item, then reveals its start. The place before the jump is kept for one return. A row that is not in the book does not move.
+
+Non-goals. No new slide, no finger-following swipe, and no margin. A bookmark, a search result, an in-book link, and a footnote stay out. A PDF outline stays out. The blocked-turn bounce stays out.
+
+Done. Plain Essay is the fixture file. Choosing Netherfield in that chapter reveals that character and keeps page 4 offset 800. Return reveals 800. Choosing the second spine item loads that item at its start and keeps page 4. A missing row stays. A stored sentence of offset 0 is kept when the reveal asked for the chapter start. A pin from an earlier reveal does not replace it. An empty-href row for page 3 goes to page 3, and return goes to page 1. The shell shows the existing contents button while the book is open and hides it on the library.
+
+Evidence. `spikes/shell/src/visit.rs` tests the choice and the return. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test. The menu is AppKit. That wiring is not a delivered click.
+
+Not run. A Mac window, `nsh test`, the contents click itself, the reveal on screen, and pdfium.

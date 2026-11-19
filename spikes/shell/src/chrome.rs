@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use nsh_platform_macos::objc2::rc::Retained;
 use nsh_platform_macos::objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
 use nsh_platform_macos::objc2::{
-    define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly,
+    define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
@@ -94,6 +94,7 @@ pub struct Runtime {
     style_mask: Cell<usize>,
     pub bar_gen: Cell<u32>,
     pub immersive: Cell<bool>,
+    pub reading: Cell<bool>,
     bar_fullscreen_sent: Cell<bool>,
     pub laying_out: Cell<bool>,
     traffic: RefCell<Option<TrafficLights>>,
@@ -144,6 +145,7 @@ impl Default for Runtime {
             style_mask: Cell::new(usize::MAX),
             bar_gen: Cell::new(0),
             immersive: Cell::new(false),
+            reading: Cell::new(false),
             bar_fullscreen_sent: Cell::new(false),
             laying_out: Cell::new(false),
             traffic: RefCell::new(None),
@@ -376,12 +378,12 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     if fullscreen {
         let shown = hover_target(window);
         if shell_on() {
-            // The shell covers the screen, so AppKit's fullscreen title bar
-            // never receives the hover. Put the buttons on the content view
-            // while the pointer is at the top, and hide them otherwise.
             place_fullscreen_lights(window, shown > 0.5);
             rt.lights.set(shown);
             clear_shell_chrome(window);
+            if rt.reading.get() {
+                place_contents_button(window, rt, if shown > 0.5 { 1.0 } else { 0.0 });
+            }
         } else {
             paint_lights(window, 1.0);
             rt.lights.set(1.0);
@@ -467,6 +469,11 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     paint_lights(window, next);
     if shell_on() {
         clear_shell_chrome(window);
+        if rt.reading.get() {
+            place_contents_button(window, rt, 1.0);
+        } else if let Some(button) = rt.contents_button.borrow().clone() {
+            button.setHidden(true);
+        }
     } else {
         place_contents(window, rt, next);
         place_title(window, rt, next);
@@ -1377,6 +1384,16 @@ fn place_contents_button(window: &NSWindow, rt: &Runtime, alpha: f64) {
     button.setHidden(alpha < 0.02);
     button.setEnabled(alpha >= 0.9);
     content.addSubview(&button);
+}
+
+pub fn bind_contents(rt: &Runtime, target: &AnyObject) {
+    let Some(button) = rt.contents_button.borrow().clone() else {
+        return;
+    };
+    unsafe {
+        let _: () = msg_send![&*button, setTarget: target];
+        let _: () = msg_send![&*button, setAction: sel!(showContents:)];
+    }
 }
 
 /// The book title's frame in the content view. Width leaves the traffic lights

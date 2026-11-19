@@ -94,6 +94,7 @@ jobs:
             a_click_on_the_page_edge_turns_and_the_middle_does_not \
             a_reopen_keeps_the_sentence_on_the_same_page \
             a_stored_sentence_round_trips \
+            a_chapter_choice_lands_on_that_sentence_and_returns \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             | tee "$log"
@@ -114,6 +115,7 @@ jobs:
             a_click_on_the_page_edge_turns_and_the_middle_does_not \
             a_reopen_keeps_the_sentence_on_the_same_page \
             a_stored_sentence_round_trips \
+            a_chapter_choice_lands_on_that_sentence_and_returns \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn
           do
