@@ -4601,6 +4601,12 @@ def admission_status(problems):
     return "fail"
 
 
+def show_fault(name, status, detail):
+    if isinstance(detail, (list, tuple)):
+        detail = "; ".join(str(item) for item in detail)
+    print(f"fault {name}: {status}: {detail}", flush=True)
+
+
 def harness_self_test():
     copied = admit_reader_fullscreen(
         {"fullscreen": False, "pid": 7, "window_w": 582, "window_h": 781, "title": "Pride and Prejudice"},
@@ -4620,6 +4626,7 @@ def harness_self_test():
     assert "fullscreen flag was not set" in copied
     assert "fullscreen capture matches the windowed frame" in copied
     assert "fullscreen window is still the windowed size" in copied
+    show_fault("fullscreen-copied-frame", admission_status(copied), copied)
     entered = admit_reader_fullscreen(
         {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
         {
@@ -4635,6 +4642,7 @@ def harness_self_test():
         {"w": 582, "h": 781},
     )
     assert entered == [], entered
+    show_fault("fullscreen-entered", "pass", "flag, window, native size, and book")
     from_capture = fullscreen_evidence(
         {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
         7,
@@ -4646,6 +4654,7 @@ def harness_self_test():
         {"w": 582, "h": 781},
     )
     assert from_capture == [], from_capture
+    show_fault("fullscreen-from-capture", "pass", "window id and pixels came from the capture")
     copied_capture = fullscreen_evidence(
         {"fullscreen": False, "pid": 7, "window_w": 582, "window_h": 781, "title": "Pride and Prejudice"},
         7,
@@ -4657,6 +4666,7 @@ def harness_self_test():
         {"w": 582, "h": 781},
     )
     assert admission_status(copied_capture) == "pending", copied_capture
+    show_fault("fullscreen-copied-capture", admission_status(copied_capture), copied_capture)
     wrong_book = admit_reader_fullscreen(
         {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "全部书籍"},
         {
@@ -4672,14 +4682,24 @@ def harness_self_test():
         {"w": 582, "h": 781},
     )
     assert admission_status(wrong_book) == "fail", wrong_book
+    show_fault("fullscreen-wrong-book", admission_status(wrong_book), wrong_book)
     dark_same = appearance_problems("dark", "NSAppearanceNameAqua", b"abc", [b"abc"])
     assert admission_status(dark_same) != "pass"
     assert any("not dark" in item for item in dark_same)
     assert any("same file" in item for item in dark_same)
-    assert appearance_problems("dark", "NSAppearanceNameDarkAqua", b"abc", [b"def"]) == []
-    assert reading_surface(["打开", "取消", "pride-se.epub"], 1, None) == "open_panel"
-    assert reading_surface(["全部书籍"], None, None) == "empty_shelf"
-    assert reading_surface([], 2, None) == "book_loaded"
+    show_fault("dark-same-file", admission_status(dark_same), dark_same)
+    distinct = appearance_problems("dark", "NSAppearanceNameDarkAqua", b"abc", [b"def"])
+    assert distinct == []
+    show_fault("dark-distinct", "pass", "dark appearance and a different file")
+    panel = reading_surface(["打开", "取消", "pride-se.epub"], 1, None)
+    shelf = reading_surface(["全部书籍"], None, None)
+    loaded = reading_surface([], 2, None)
+    assert panel == "open_panel"
+    assert shelf == "empty_shelf"
+    assert loaded == "book_loaded"
+    show_fault("open-panel", "not-executed", panel)
+    show_fault("empty-shelf", "not-executed", shelf)
+    show_fault("book-loaded", "loaded", loaded)
     old = os.environ.get("SR_VERIFY_MAX_LOAD")
     os.environ["SR_VERIFY_MAX_LOAD"] = "999"
     try:
@@ -4691,6 +4711,12 @@ def harness_self_test():
             os.environ["SR_VERIFY_MAX_LOAD"] = old
     missing, detail = admit_recorded_fixture(Path("/tmp/does-not-exist-harness.epub"), {"sha256": ""})
     assert not missing and "sha256" in detail and "not executed" in detail
+    show_fault("sha-missing-record", "not-executed", detail)
+    absent, absent_detail = admit_recorded_fixture(
+        Path("/tmp/does-not-exist-harness.epub"), {"sha256": "ab" * 32}
+    )
+    assert not absent and "not on disk" in absent_detail
+    show_fault("sha-absent-file", "not-executed", absent_detail)
     import hashlib
     import zipfile
     from io import BytesIO
@@ -4706,6 +4732,7 @@ def harness_self_test():
         path.write_bytes(raw)
         bad, bad_detail = admit_recorded_fixture(path, {"sha256": "0" * 64, "chapter": "范愛農"})
         assert not bad and "not executed" in bad_detail
+        show_fault("sha-mismatch", "not-executed", bad_detail + "; fault-injection zip, not a loaded book")
         assert digest
     stored = BytesIO()
     with zipfile.ZipFile(stored, "w") as book:
@@ -4721,6 +4748,11 @@ def harness_self_test():
             path, {"sha256": stored_digest, "chapter": "不存在的章", "min_chars": 1500}
         )
         assert not short and short_detail.startswith("fail:"), short_detail
+        show_fault(
+            "sha-chapter-mismatch",
+            "fail",
+            short_detail + "; fault-injection zip, not a loaded book",
+        )
 
 
 def hold_verify_lock():

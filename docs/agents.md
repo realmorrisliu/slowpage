@@ -26,7 +26,7 @@ Keep one chain: product problem, root cause, change, and the evidence that the c
 | Not executed | The check did not reach the state. This is not a pass and not a product failure. |
 | Future scope | Named work that is outside the current task. It does not block the current task, and it is not a reason to drop a regression that was already delivered. |
 
-`failed`, `skipped`, and `not-run` are not `pass`. A green CI run is not product acceptance. Name the commit that was built and exercised. A pull-request number, or GitHub's merge ref, is not that commit.
+`failed`, `skipped`, and `not-run` are not `pass`. A green CI run is not product acceptance. On a pull request, the run's `headSha` is the branch head. `actions/checkout` checks out the merge commit, and that checkout is the tree the job ran.
 
 ## One run
 
@@ -74,7 +74,8 @@ What is known:
 
 - `54d3529` shows the reader title with the traffic lights. `60d0dcf` restores the contents control. Both are on #53, not on main.
 - The suite whose code head was `60d0dcf` scored fullscreen as pass from a windowed frame. That was a verifier fault. `c75397a` is the change on #53 that rejects an unentered fullscreen. The same injected case is rejected by `python3 scripts/verify --harness` on this branch. The product fullscreen entry on #53 is still not an accepted screenshot.
-- CI run [44286351544](https://github.com/realmorrisliu/slowpage/actions/runs/44286351544) on commit `9048bb9` ran five shell decision tests and `fixtures_open_on_chapter_text`, and they passed. That commit is not a product acceptance, and those tests are not on main.
+- CI run [44286351544](https://github.com/realmorrisliu/slowpage/actions/runs/44286351544) records head `9048bb9`. The job checked out `2898d25c2c67b731e375266ef64e668c2ad8cce5`, the merge of `9048bb9` into `3169a716`. That checkout ran five shell decision tests and `fixtures_open_on_chapter_text`, and they passed. That is not product acceptance, and those tests are not on main.
+- CI run [44433135069](https://github.com/realmorrisliu/slowpage/actions/runs/44433135069) records head `b3cce3f`. The job checked out `20d3b1464d5e74b2d3bd1508ce257e1368d670df`, the merge of `b3cce3f` into `3169a716`. `no-fast-models` ran `scripts/harness-check` (the four load lines, then `harness self-test passed`). `deny` failed on [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543): chrono 0.4.45 is unmaintained, reached through `nsh-base` 0.5.0 and `pdfium-render` 0.9.5, both already on main. This PR does not change a lockfile, and the advisory says no safe upgrade. Ignoring it would relax deny, so it stays a dependency blocker outside this harness. `test` failed in the existing "Fetch books the typesetter tests open" step, curl exit 56, before a test binary ran. This PR does not change that step. Neither failure was rerun.
 - The #53 worktree head at the last check was `c194bca`. The plain-zh derived fixture was written. The Bold baseline binary from `fdd8183c5d43e0fbf623c188eebf29551254ab03` was not built. `just verify` was not run.
 
 ### #53 resume

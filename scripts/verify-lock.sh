@@ -110,22 +110,6 @@ on_signal() {
   exit "$code"
 }
 
-if [[ "${SR_VERIFY_LOCK_SELF_TEST:-}" == "1" ]]; then
-  ceiling="$(prescribed_ceiling "${SR_VERIFY_MAX_LOAD:-$PRESCRIBED_LOAD}")"
-  load="${SR_VERIFY_LOCK_TEST_LOAD:-0}"
-  echo "ceiling ${ceiling}"
-  if awk -v l="$load" -v m="$ceiling" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
-    echo "admit"
-    exit 0
-  fi
-  echo "refuse: 1m loadavg=${load} is not under the prescribed ceiling ${ceiling}. SR_VERIFY_MAX_LOAD cannot raise it."
-  exit 75
-fi
-
-trap on_shell_exit EXIT
-trap 'on_signal INT 130' INT
-trap 'on_signal TERM 143' TERM
-
 acquire_lock() {
   clear_stale_lock || true
   if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -141,6 +125,80 @@ acquire_lock() {
   exit 75
 }
 
+refuse_running_shell() {
+  local listed
+  listed=$(pgrep -fl '/spike-shell$' || true)
+  if [[ -n "$listed" ]]; then
+    echo "not started: spike-shell is already running. No process was killed."
+    printf '%s\n' "$listed"
+    return 75
+  fi
+  return 0
+}
+
+if [[ "${SR_VERIFY_LOCK_SELF_TEST:-}" == "1" ]]; then
+  case "${SR_VERIFY_LOCK_TEST_CASE:-load}" in
+    load)
+      ceiling="$(prescribed_ceiling "${SR_VERIFY_MAX_LOAD:-$PRESCRIBED_LOAD}")"
+      load="${SR_VERIFY_LOCK_TEST_LOAD:-0}"
+      echo "ceiling ${ceiling}"
+      if awk -v l="$load" -v m="$ceiling" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
+        echo "admit"
+        exit 0
+      fi
+      echo "refuse: 1m loadavg=${load} is not under the prescribed ceiling ${ceiling}. SR_VERIFY_MAX_LOAD cannot raise it."
+      exit 75
+      ;;
+    held)
+      parent=$(mktemp -d "${TMPDIR:-/tmp}/harness-lock.XXXXXX")
+      set +e
+      (
+        LOCK_DIR="$parent/lock"
+        if [[ "$LOCK_DIR" == /tmp/superreader-verify.lock ]]; then
+          echo "self-test will not touch the shared lock" >&2
+          exit 1
+        fi
+        mkdir "$LOCK_DIR"
+        printf '%s\n' "$$" >"$LOCK_DIR/pid"
+        printf 'harness-self-test\n' >"$LOCK_DIR/branch"
+        date -u +%Y-%m-%dT%H:%M:%SZ >"$LOCK_DIR/started"
+        acquire_lock
+      )
+      status=$?
+      set -e
+      rm -rf "$parent"
+      exit "$status"
+      ;;
+    shell)
+      parent=$(mktemp -d "${TMPDIR:-/tmp}/harness-pgrep.XXXXXX")
+      cat >"$parent/pgrep" <<'EOF'
+#!/bin/sh
+echo "4242 /tmp/harness-not-a-process/spike-shell"
+exit 0
+EOF
+      chmod +x "$parent/pgrep"
+      set +e
+      (
+        PATH="$parent:$PATH"
+        hash -r
+        refuse_running_shell
+      )
+      status=$?
+      set -e
+      rm -rf "$parent"
+      exit "$status"
+      ;;
+    *)
+      echo "unknown lock self-test ${SR_VERIFY_LOCK_TEST_CASE}" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+trap on_shell_exit EXIT
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
+
 acquire_lock
 load=$(one_min_load)
 if ! awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
@@ -148,9 +206,7 @@ if ! awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; the
   release_lock
   exit 75
 fi
-if pgrep -fl '/spike-shell$' >/dev/null; then
-  echo "not started: spike-shell is already running. No process was killed."
-  pgrep -fl '/spike-shell$' || true
+if ! refuse_running_shell; then
   release_lock
   exit 75
 fi
