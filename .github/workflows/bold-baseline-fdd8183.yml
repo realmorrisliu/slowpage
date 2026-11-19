@@ -1,0 +1,117 @@
+# One release spike-shell from fdd8183. Not a product verify and not the PR head.
+# Push of this file is the trigger. workflow_dispatch is not used: this file is
+# not on the default branch, so that entry is not claimed.
+name: Bold baseline fdd8183
+
+on:
+  push:
+    branches:
+      - cursor/shell-form-tokens-d356
+    paths:
+      - .github/workflows/bold-baseline-fdd8183.yml
+
+concurrency:
+  group: bold-baseline-fdd8183
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fdd8183c5d43e0fbf623c188eebf29551254ab03
+          fetch-depth: 1
+
+      - name: Require the historical commit and an arm64 runner
+        run: |
+          set -euo pipefail
+          want=fdd8183c5d43e0fbf623c188eebf29551254ab03
+          got=$(git rev-parse HEAD)
+          echo "source_sha ${got}"
+          test "$got" = "$want"
+          test -z "$(git status --porcelain)"
+          echo "arch $(uname -m)"
+          uname -a
+          sw_vers
+          test "$(uname -m)" = "arm64"
+
+      - name: Install the toolchain pinned by that commit
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          rustc --version
+          rustc -vV
+          cargo --version
+          cargo -vV
+          test "$(rustc --version | awk '{print $2}')" = "1.98.1"
+
+      - name: Build release spike-shell without editing the tree
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/fdd8183-target
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path spikes/Cargo.toml -p spike-shell --release
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD)" = "fdd8183c5d43e0fbf623c188eebf29551254ab03"
+
+      - name: Record identity, architecture, and linked libraries
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/fdd8183-target
+        run: |
+          set -euo pipefail
+          bin="${CARGO_TARGET_DIR}/release/spike-shell"
+          test -f "$bin"
+          out="${RUNNER_TEMP}/baseline-provenance"
+          mkdir -p "$out"
+          cp "$bin" "$out/spike-shell"
+          {
+            echo "source_sha $(git rev-parse HEAD)"
+            echo "source_subject $(git log -1 --format=%s)"
+            echo "rustc $(rustc --version)"
+            rustc -vV
+            echo "cargo $(cargo --version)"
+            cargo -vV
+            echo "runner_arch $(uname -m)"
+            uname -a
+            sw_vers
+            echo "host_target $(rustc -vV | awk '/^host:/{print $2}')"
+            echo "binary_sha256 $(shasum -a 256 "$bin" | awk '{print $1}')"
+            file "$bin"
+            echo "--- otool -L ---"
+            otool -L "$bin"
+            echo "--- LC_BUILD_VERSION ---"
+            otool -l "$bin" | awk '
+              $1 == "cmd" && $2 == "LC_BUILD_VERSION" { show = 1 }
+              show && $1 == "cmd" && $2 != "LC_BUILD_VERSION" { show = 0 }
+              show { print }
+            '
+          } > "$out/provenance.txt"
+          # A usable Mac baseline links only system libraries. Anything else
+          # stays in the artifact, and the job fails so it is not called ready.
+          otool -L "$bin" | awk 'NR > 1 && $1 != "" { print $1 }' > "$out/libs.txt"
+          bad=0
+          while IFS= read -r lib; do
+            case "$lib" in
+              /usr/lib/*|/System/Library/*) ;;
+              *)
+                echo "not a system library: $lib"
+                bad=1
+                ;;
+            esac
+          done < "$out/libs.txt"
+          if [ "$bad" -ne 0 ]; then
+            echo "usable_on_mac no" | tee -a "$out/provenance.txt"
+            echo "The binary needs a library that is not in this artifact." | tee -a "$out/provenance.txt"
+            exit 1
+          fi
+          echo "usable_on_mac yes_if_os_at_least_minos_not_launched" | tee -a "$out/provenance.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-shell-fdd8183
+          path: ${{ runner.temp }}/baseline-provenance
+          if-no-files-found: warn

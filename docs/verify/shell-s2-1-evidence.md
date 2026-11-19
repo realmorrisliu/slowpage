@@ -85,7 +85,24 @@ The chapter check printed `opened OEBPS/3309323728932395831_25271-0-1.txt.html` 
 
 ## Bold off baseline
 
-`/tmp/spike-shell-main-fdd8183` is still absent. The compared commit is `fdd8183c5d43e0fbf623c188eebf29551254ab03` (`feat(bold-word-starts): paint the prefix in the page`, the main named by `00c8290`). The binary is a release `spike-shell` from that commit: `unset CARGO_TARGET_DIR` and `~/.local/bin/cargo build --manifest-path spikes/Cargo.toml -p spike-shell --release`, then copy `~/.cache/cargo-target/slowpage/release/spike-shell` to that path. It was not built. The 1-minute load at the single check was 8.96.
+`/tmp/spike-shell-main-fdd8183` is still absent. The compared commit is `fdd8183c5d43e0fbf623c188eebf29551254ab03` (`feat(bold-word-starts): paint the prefix in the page`, the main named by `00c8290`). A hosted macOS arm64 job checks out that commit and builds release `spike-shell` there. It does not change that commit's source, lockfile, or NSH pins. Until that job's artifact exists and its provenance names this sha, the binary is not built. A later candidate build of the #53 head is still required. This historical binary is not that candidate and is not product acceptance.
+
+No log in this file records how long a baseline build or a `just verify` took. The resource window for those two steps is unknown. The load figures above are not a duration.
+
+## Acceptance still open
+
+These eight are the product checks still required on a #53 candidate build. None is future scope. A CI unit test or a green run does not close one.
+
+| Check | Code on this branch | Evidence still missing | Done when |
+| --- | --- | --- | --- |
+| Restored page on open | Present | No product run of this head | Reopen stops on the stored page, not the cover or an empty shelf |
+| Bold on/off against the baseline | Timing code present | `fdd8183` binary absent | Same book, on and off, against that exact binary |
+| Fullscreen enter and leave | Enter and leave exist; an unentered frame is no longer a pass | No entered fullscreen | The window is fullscreen, then size and page return |
+| Contents control and chapter jump | Contents control restored in `60d0dcf` | No use of the control | The control opens, a chapter is chosen, the page changes |
+| Title kept | Title restored in `54d3529` | No window title from this head | The ordinary window title is the book |
+| 范愛農 across pages | Fixture and the chapter-open test exist | No multi-page render | Open on 范愛農 and turn; the essay is still the page |
+| Resize inside the current layout | Measurement exists | No size record from this head | Resizing keeps the text column; this is not an S3 change |
+| PDF regression | PDF path exists | No open in this run | The same run opens a PDF and turns a page |
 
 ## Next run, when load is under 8
 
