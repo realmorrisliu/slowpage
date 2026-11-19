@@ -521,11 +521,13 @@ pub fn SpikeApp() -> impl IntoElement {
         let title = title.clone();
         let variant = variant.clone();
         let history = history.clone();
+        let seen = std::cell::Cell::new(0_u64);
         move || {
             let (seq, path) = arrival.get();
-            if seq == 0 || path.is_empty() {
+            if path.is_empty() || !visit::fresh_arrival(seq, seen.get()) {
                 return;
             }
+            seen.set(seq);
             receive_file(&visit, &notice, &stage, &title, &variant, &history, &path);
         }
     });
@@ -881,7 +883,6 @@ fn deliver(arrival: &Signal<(u64, String)>, path: &Path) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let text = path.display().to_string();
-    crate::launch::accept_path(path);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
     arrival.set((seq, text));
 }
@@ -954,7 +955,11 @@ fn receive_file(
         next_opened_at(&settings_path),
     );
     commit_visit(visit, visit::apply_file_open(&current, &open));
-    stage.command("open", json!(path));
+    match visit::stage_open(&open, stage.node().is_some()) {
+        visit::StageOpen::Command => stage.command("open", json!(path)),
+        visit::StageOpen::Queue => crate::launch::accept_path(Path::new(path)),
+        visit::StageOpen::None => {}
+    }
     history.set(settings::load_history(&settings::path()));
 }
 

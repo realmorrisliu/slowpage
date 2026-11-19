@@ -147,6 +147,25 @@ pub fn apply_file_open(visit: &Visit, open: &FileOpen) -> Visit {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StageOpen {
+    Command,
+    Queue,
+    None,
+}
+
+pub fn stage_open(open: &FileOpen, stage_ready: bool) -> StageOpen {
+    match open {
+        FileOpen::Refuse => StageOpen::None,
+        FileOpen::Read { .. } if stage_ready => StageOpen::Command,
+        FileOpen::Read { .. } => StageOpen::Queue,
+    }
+}
+
+pub fn fresh_arrival(seq: u64, seen: u64) -> bool {
+    seq != 0 && seq != seen
+}
+
 pub fn leave_key(key: LeaveKey, focus: Focus, immersion: Immersion, surface: Surface) -> KeyEffect {
     if focus == Focus::Editing {
         return KeyEffect::None;
@@ -308,5 +327,16 @@ mod tests {
         assert_eq!(stayed, switched);
         assert_eq!(apply_file_open(&shelf, &file_open(false, "", 1)), shelf);
         assert_eq!(OPEN_REFUSAL, "打不开这个文件");
+
+        let refused = file_open(false, "/tmp/notes.pdf", 1);
+        let accepted = file_open(true, "/books/field-guide.pdf", 2);
+        assert_eq!(stage_open(&refused, true), StageOpen::None);
+        assert_eq!(stage_open(&refused, false), StageOpen::None);
+        assert_eq!(stage_open(&accepted, true), StageOpen::Command);
+        assert_eq!(stage_open(&accepted, false), StageOpen::Queue);
+        assert!(fresh_arrival(1, 0));
+        assert!(!fresh_arrival(1, 1));
+        assert!(!fresh_arrival(0, 0));
+        assert!(fresh_arrival(2, 1));
     }
 }

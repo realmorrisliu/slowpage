@@ -159,7 +159,7 @@ Scope. `next_open_files` and a drop on the window use one decision. An EPUB star
 
 Non-goals. No new animation, no margin, no new type, and no new PDF renderer. A file whose header matches and whose pages still fail to load is outside this slice.
 
-Done. Plain Essay and Field Guide switch the visit and keep the shelf offset. A bad file leaves the open book in place. The refusal is the sentence above.
+Done. Plain Essay and Field Guide switch the visit and keep the shelf offset. A bad file leaves the open book in place and is not queued for the stage. A handled arrival does not open again when the reader leaves the book. The refusal is the sentence above.
 
 Evidence. `spikes/shell/src/visit.rs` reads those two fixtures. macOS CI runs that test. `nsh test` does not deliver `openFiles` on this machine.
 
