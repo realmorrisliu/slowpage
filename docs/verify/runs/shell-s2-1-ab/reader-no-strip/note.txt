@@ -1,0 +1,3 @@
+The reader painted a gray rect the width of the traffic-light row down the left side, then shifted the page right to clear it. That rect is gone. The page origin is the symmetric side mat, not the light row. The shelf sidebar layout was not edited.
+
+Paperback 582x781: no gray pixels in the left band, text ink 119.0pt from the left and 120.5pt from the right, button centers 24.0pt. Widened to 760x833 in the same launch: ink 196.0 and 195.5, still no gray, buttons still 24.0. After fullscreen exit the window was still 760x833 with the same margins.

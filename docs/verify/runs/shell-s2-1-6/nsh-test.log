@@ -1,0 +1,14 @@
+
+✓ built the Rust crate spike-shell (55.6s, 40 warnings: -v shows them)
+warn spike-shell exports one item without a doc comment, which TSX sees in its declarations: SpikeApp
+✓ built the headless runner of spike-shell (1m 8s, 41 warnings: -v shows them)
+✓ shell.test.tsx › no spike title (199ms)
+✓ shell.test.tsx › no night mode (115ms)
+✓ shell.test.tsx › no theme switch (125ms)
+✓ shell.test.tsx › no spread (131ms)
+✓ shell.test.tsx › full form lists the sidebar groups and the chat field (135ms)
+✓ shell.test.tsx › an imported source appears under 来源 (332ms)
+✓ shell.test.tsx › 添加来源 adds a second source and PDF filters the grid (831ms)
+✓ shell.test.tsx › 继续阅读 lists opened books with the latest first (656ms)
+✓ shell.test.tsx › sidebar toggle hides and shows the sidebar (419ms)
+✓ 9 tests: 9 passed, 0 failed (1m 15s)

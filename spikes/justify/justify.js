@@ -369,6 +369,7 @@ function harvestCuts(p) {
       restore(p);
       p.removeAttribute("data-kp");
       p.removeAttribute("data-kp-key");
+      p.removeAttribute("data-kp-from");
       p.removeAttribute("data-kp-in");
       p.removeAttribute("data-kp-out");
       return null;
@@ -459,6 +460,12 @@ function harvestCuts(p) {
     const measure = lineMeasure(p);
     const key = measure.width.toFixed(1) + "|" + measure.font + "|" + measure.indent;
     if (p.getAttribute("data-kp-key") === key && (p.getAttribute("data-kp") === "owned" || p.getAttribute("data-kp") === "native")) {
+      // A later geometry pass keeps the plan already on the paragraph.
+      // Counting it again under the same origin stops that pass from
+      // publishing break_source null and live_calls 0.
+      const from = p.getAttribute("data-kp-from");
+      if (from === "live") cacheLive += 1;
+      else if (from === "cached") cacheHits += 1;
       if (p.getAttribute("data-kp") === "owned") {
         const out = p.getAttribute("data-kp-out");
         if (out !== null && out !== "") hyphenTail = Number(out) || 0;
@@ -470,6 +477,7 @@ function harvestCuts(p) {
     if (reason) {
       p.removeAttribute("data-kp");
       p.removeAttribute("data-kp-key");
+      p.removeAttribute("data-kp-from");
       p.removeAttribute("data-kp-in");
       p.removeAttribute("data-kp-out");
       return "skip";
@@ -480,12 +488,14 @@ function harvestCuts(p) {
     if (applied === "native") {
       p.setAttribute("data-kp", "native");
       p.setAttribute("data-kp-key", key);
+      p.setAttribute("data-kp-from", "cached");
       cacheHits += 1;
       return "native";
     }
     if (typeof applied === "number") {
       p.setAttribute("data-kp", "owned");
       p.setAttribute("data-kp-key", key);
+      p.setAttribute("data-kp-from", "cached");
       p.setAttribute("data-kp-in", String(incoming));
       p.setAttribute("data-kp-out", String(applied));
       hyphenTail = applied;
@@ -528,6 +538,7 @@ function harvestCuts(p) {
       const past = inkPast(p, groups);
       if (past) throw new Error(past);
       p.setAttribute("data-kp", "owned");
+      p.setAttribute("data-kp-from", "live");
       p.setAttribute("data-kp-in", String(incoming));
       hyphenTail = trailingFrom(groups);
       p.setAttribute("data-kp-out", String(hyphenTail));
@@ -537,6 +548,7 @@ function harvestCuts(p) {
       restore(p);
       p.setAttribute("data-kp", "native");
       p.setAttribute("data-kp-key", key);
+      p.setAttribute("data-kp-from", "live");
       p.removeAttribute("data-kp-in");
       p.removeAttribute("data-kp-out");
       cacheLive += 1;

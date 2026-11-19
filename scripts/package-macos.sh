@@ -60,15 +60,18 @@ if [ ! -f "$pdfium_lib" ]; then
 fi
 
 cargo build --manifest-path "$root/spikes/Cargo.toml" -p spike-shell -p spike-icon --release
-reader="$root/spikes/target/release/spike-shell"
+target_dir="$("$root/scripts/cargo-target-dir.sh")"
+reader="$target_dir/release/spike-shell"
 if [ ! -x "$reader" ]; then
   echo "missing reader binary $reader" >&2
   exit 1
 fi
 
-icns="$("$root/scripts/make-icns.sh" "$icon" "$root/dist/AppIcon.icns")"
+dest="${SR_APP_DIR:-$root/dist}"
+mkdir -p "$dest"
+icns="$("$root/scripts/make-icns.sh" "$icon" "$dest/AppIcon.icns")"
 
-app="$root/dist/${name}.app"
+app="$dest/${name}.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/pdfium"
 cp "$reader" "$app/Contents/MacOS/$name"
@@ -85,6 +88,19 @@ if [ -d "$license_root/licenses" ]; then
 fi
 
 cp "$icns" "$app/Contents/Resources/AppIcon.icns"
+
+support_plist=""
+if [ -n "${SR_SUPPORT_DIR:-}" ]; then
+  escaped="$(printf '%s' "$SR_SUPPORT_DIR" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')"
+  support_plist="$(cat << EOF
+  <key>LSEnvironment</key>
+  <dict>
+    <key>SUPERREADER_SUPPORT_DIR</key>
+    <string>${escaped}</string>
+  </dict>
+EOF
+)"
+fi
 
 plist="$app/Contents/Info.plist"
 cat > "$plist" << EOF
@@ -182,6 +198,7 @@ cat > "$plist" << EOF
       </dict>
     </dict>
   </array>
+${support_plist}
 </dict>
 </plist>
 EOF

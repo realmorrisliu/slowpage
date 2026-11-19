@@ -119,8 +119,12 @@ if grep -q 'nsh package' "$pkg" "$root/.github/workflows/release.yml"; then
   echo "the release still calls nsh package" >&2
   exit 1
 fi
-if ! grep -q 'target/release/spike-shell' "$pkg"; then
-  echo "the bundle does not copy the spike-shell reader" >&2
+if ! grep -q 'cargo-target-dir.sh' "$pkg" || ! grep -q 'release/spike-shell' "$pkg"; then
+  echo "the bundle does not copy the spike-shell reader from cargo metadata" >&2
+  exit 1
+fi
+if grep -q 'spikes/target/release/spike-shell' "$pkg"; then
+  echo "the bundle still hardcodes spikes/target/release/spike-shell" >&2
   exit 1
 fi
 dylib_line="$(line "$sign" 'Contents/Frameworks')"

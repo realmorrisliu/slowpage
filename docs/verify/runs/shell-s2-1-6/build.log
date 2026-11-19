@@ -1,0 +1,839 @@
+
+ Downloading crates ...
+  Downloaded nsh-platform-apple v0.5.1
+  Downloaded nsh-platform-macos v0.5.1
+  Downloaded nsh-engine v0.5.1
+  Downloaded nsh-core v0.5.1
+  Downloaded nsh-base v0.5.1
+warning: failed to auto-clean cache data
+
+failed to clean entries from the global cache
+
+Caused by:
+  failed to remove file `/Users/morris/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.13.4/Cargo.toml`
+
+Caused by:
+  Permission denied (os error 13)
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling libc v0.2.191
+   Compiling cfg-if v1.0.5
+   Compiling bitflags v2.13.2
+   Compiling smallvec v1.16.4
+   Compiling simd-adler32 v0.3.10
+   Compiling crc32fast v1.5.4
+   Compiling adler2 v2.0.1
+   Compiling serde v1.0.229
+   Compiling log v0.4.35
+   Compiling memchr v2.8.3
+   Compiling miniz_oxide v0.9.1
+   Compiling zlib-rs v0.6.8
+   Compiling find-msvc-tools v0.1.15
+   Compiling shlex v2.0.1
+   Compiling autocfg v1.5.1
+   Compiling cc v1.11.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling siphasher v1.0.4
+   Compiling num-traits v0.2.19
+   Compiling serde_core v1.0.229
+   Compiling version_check v0.9.5
+   Compiling foldhash v0.2.0
+   Compiling arrayvec v0.7.8
+   Compiling objc2 v0.6.5
+   Compiling objc2-encode v4.1.0
+   Compiling once_cell v1.21.4
+   Compiling rustversion v1.0.23
+   Compiling zmij v1.0.23
+   Compiling thiserror v2.0.21
+   Compiling crossbeam-utils v0.8.23
+   Compiling polycool v0.4.0
+   Compiling flate2 v1.1.10
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling fdeflate v0.3.7
+   Compiling miniz_oxide v0.8.9
+   Compiling block2 v0.6.2
+   Compiling dispatch2 v0.3.1
+   Compiling kurbo v0.13.1
+   Compiling generic-array v0.14.7
+   Compiling zeroize v1.9.1
+   Compiling serde_json v1.0.154
+   Compiling objc2-core-foundation v0.3.2
+   Compiling hashbrown v0.17.1
+   Compiling typenum v1.20.1
+   Compiling aho-corasick v1.1.5
+   Compiling regex-syntax v0.8.11
+   Compiling crossbeam-epoch v0.9.21
+   Compiling ring v0.17.14
+   Compiling itoa v1.0.18
+   Compiling float-cmp v0.9.0
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling crossbeam-deque v0.8.8
+   Compiling zune-core v0.5.3
+   Compiling alloc-stdlib v0.2.4
+   Compiling strict-num v0.1.1
+   Compiling synstructure v0.14.0
+   Compiling regex-automata v0.4.18
+   Compiling zune-jpeg v0.5.15
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling rustls-pki-types v1.15.1
+   Compiling bstr v1.13.1
+   Compiling bytes v1.12.1
+   Compiling libm v0.2.16
+   Compiling same-file v1.0.6
+   Compiling subtle v2.6.1
+   Compiling core-foundation-sys v0.8.7
+   Compiling pkg-config v0.3.34
+   Compiling arrayref v0.3.9
+   Compiling cfg_aliases v0.2.2
+   Compiling nix v0.31.3
+   Compiling walkdir v2.5.0
+   Compiling serde_derive v1.0.229
+   Compiling bytemuck_derive v1.12.1
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.4
+   Compiling thiserror-impl v2.0.21
+   Compiling zerovec-derive v0.11.7
+   Compiling displaydoc v0.2.7
+   Compiling globset v0.4.21
+   Compiling bytemuck v1.25.2
+   Compiling digest v0.10.7
+   Compiling brotli-decompressor v5.0.3
+   Compiling zerofrom v0.1.8
+   Compiling getrandom v0.2.17
+   Compiling encoding_rs v0.8.44
+   Compiling utf-8 v0.7.6
+   Compiling getrandom v0.4.3
+   Compiling rand_core v0.6.4
+   Compiling litemap v0.8.3
+   Compiling untrusted v0.9.0
+   Compiling getrandom v0.3.4
+   Compiling utf_types v1.0.0
+   Compiling zerocopy v0.8.63
+   Compiling writeable v0.6.4
+   Compiling yoke v0.8.4
+   Compiling utf8_iter v1.1.0
+   Compiling rand v0.8.8
+   Compiling ignore v0.4.34
+   Compiling zerovec v0.11.9
+   Compiling zerotrie v0.2.5
+   Compiling objc2-foundation v0.3.2
+   Compiling cpufeatures v0.2.17
+   Compiling phf_shared v0.11.3
+   Compiling equivalent v1.0.3
+   Compiling scopeguard v1.2.0
+   Compiling icu_normalizer_data v2.4.0
+   Compiling icu_properties_data v2.4.0
+   Compiling byteorder-lite v0.1.0
+   Compiling tinystr v0.8.5
+   Compiling potential_utf v0.1.6
+   Compiling icu_locale_core v2.4.0
+   Compiling multiversion_no_op v1.0.0
+   Compiling bumpalo v3.20.3
+   Compiling semver v1.0.28
+   Compiling bitflags v1.3.2
+   Compiling simdutf8 v0.1.5
+   Compiling rustls v0.23.46
+   Compiling globwalk v0.8.1
+   Compiling rustc_version v0.4.1
+   Compiling indexmap v2.14.2
+   Compiling zopfli v0.8.4
+   Compiling rustls-webpki v0.103.16
+   Compiling icu_provider v2.4.0
+   Compiling icu_collections v2.4.0
+   Compiling phf_generator v0.11.3
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling core_maths v0.1.1
+   Compiling slotmap v1.1.1
+   Compiling arraydeque v0.5.1
+   Compiling anstyle v1.0.14
+   Compiling winnow v0.7.15
+   Compiling io-lifetimes v3.0.1
+   Compiling toml_write v0.1.2
+   Compiling rustix v1.1.6
+   Compiling parking_lot_core v0.9.12
+   Compiling unicode-width v0.2.3
+   Compiling io-lifetimes v2.0.4
+   Compiling rustc-hash v2.1.3
+   Compiling typed-path v0.13.0
+   Compiling percent-encoding v2.3.2
+   Compiling granit-parser v1.3.0
+   Compiling annotate-snippets v0.12.17
+   Compiling toml_edit v0.22.27
+   Compiling zip v9.3.0
+   Compiling rand_core v0.9.5
+   Compiling ttf-parser v0.25.1
+   Compiling encoding_rs_io v0.1.8
+   Compiling curve25519-dalek v4.1.3
+   Compiling svgtypes v0.16.1
+   Compiling png v0.18.1
+   Compiling errno v0.3.14
+   Compiling arc-swap v1.9.5
+   Compiling ppv-lite86 v0.2.21
+   Compiling roxmltree v0.21.2
+   Compiling simplecss v0.2.2
+   Compiling io-extras v0.19.0
+   Compiling httparse v1.10.1
+   Compiling maybe-owned v0.3.4
+   Compiling base64 v0.23.1
+   Compiling either v1.19.0
+   Compiling pico-args v0.5.0
+   Compiling pin-project-lite v0.2.17
+   Compiling nohash-hasher v0.2.0
+   Compiling data-url v0.3.2
+   Compiling new_debug_unreachable v1.0.6
+   Compiling serde-saphyr v1.3.0
+   Compiling lock_api v0.4.14
+   Compiling itertools v0.11.0
+   Compiling triomphe v0.1.17
+   Compiling rand_chacha v0.9.0
+   Compiling toml v0.8.23
+   Compiling icu_properties v2.4.0
+   Compiling icu_normalizer v2.4.0
+   Compiling string_cache_codegen v0.5.4
+   Compiling phf_codegen v0.11.3
+   Compiling tiny-skia-path v0.11.4
+   Compiling regex v1.13.1
+   Compiling tokio-macros v2.7.2
+   Compiling socket2 v0.6.5
+   Compiling memmap2 v0.9.12
+   Compiling mio v1.2.4
+   Compiling unicode-script v0.5.9
+   Compiling unicode-properties v0.1.5
+   Compiling cap-primitives v4.0.3
+   Compiling unicode-bidi-mirroring v0.4.0
+   Compiling base64 v0.22.1
+   Compiling tinyvec v1.13.3
+   Compiling unicode-ccc v0.4.0
+   Compiling mac v0.1.1
+   Compiling normpath v1.5.2
+   Compiling base62 v2.2.6
+   Compiling signature v2.2.0
+   Compiling png v0.17.16
+   Compiling ed25519 v2.2.3
+   Compiling rust-i18n-support v4.2.4
+   Compiling fontdb v0.23.0
+   Compiling objc2-metal v0.3.2
+   Compiling futf v0.1.5
+   Compiling rustybuzz v0.20.1
+   Compiling tokio v1.54.1
+   Compiling rust-i18n v4.2.4
+   Compiling fs-set-times v0.20.3
+   Compiling markup5ever v0.12.1
+   Compiling parking_lot v0.12.5
+   Compiling idna_adapter v1.2.2
+   Compiling rand v0.9.5
+   Compiling sha1 v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling rgb v0.8.53
+   Compiling onig_sys v69.9.3
+   Compiling futures-macro v0.3.34
+   Compiling http v1.5.0
+   Compiling security-framework-sys v2.17.0
+   Compiling core-foundation v0.10.1
+   Compiling webpki-roots v1.0.11
+   Compiling filetime v0.2.29
+   Compiling phf_shared v0.13.1
+   Compiling xmlwriter v0.1.0
+   Compiling glob v0.3.4
+   Compiling futures-sink v0.3.34
+   Compiling fearless_simd v1.2.0
+   Compiling unicode-vo v0.1.0
+   Compiling futures-task v0.3.34
+   Compiling imagesize v0.14.0
+   Compiling weezl v0.1.12
+   Compiling pxfm v0.1.30
+   Compiling imagesize v0.15.0
+   Compiling color_quant v1.1.0
+   Compiling unicode-bidi v0.3.18
+   Compiling precomputed-hash v0.1.1
+   Compiling slab v0.4.12
+   Compiling cap-std v4.0.3
+   Compiling futures-core v0.3.34
+   Compiling data-encoding v2.11.1
+   Compiling fastrand v2.5.0
+   Compiling quick-error v2.0.1
+   Compiling ipnet v2.12.2
+   Compiling ambient-authority v0.0.2
+   Compiling image-webp v0.2.4
+   Compiling tungstenite v0.28.0
+   Compiling phf_generator v0.13.1
+   Compiling futures-util v0.3.34
+   Compiling string_cache v0.8.9
+   Compiling usvg v0.46.0
+   Compiling gif v0.14.2
+   Compiling tokio-rustls v0.26.6
+   Compiling wuff v0.2.9
+   Compiling rust-i18n-macro v4.2.4
+   Compiling tar v0.4.46
+   Compiling security-framework v3.7.0
+   Compiling webpki-roots v0.26.11
+   Compiling ed25519-dalek v2.2.0
+   Compiling idna v1.1.0
+   Compiling tiny-skia v0.11.4
+   Compiling objc2-core-graphics v0.3.2
+   Compiling tendril v0.4.3
+   Compiling phf v0.11.3
+   Compiling form_urlencoded v1.2.2
+   Compiling font-types v0.12.7
+   Compiling bit-vec v0.8.0
+   Compiling hayro-ccitt v0.5.0
+   Compiling resvg v0.46.0
+   Compiling bit-set v0.8.0
+   Compiling nsh-updater v0.5.1
+   Compiling hayro-jbig2 v0.4.0
+   Compiling read-fonts v0.46.0
+   Compiling url v2.5.8
+   Compiling nsh-macros v0.5.1
+   Compiling rustls-platform-verifier v0.7.1
+   Compiling tokio-tungstenite v0.28.0
+   Compiling phf_macros v0.13.1
+   Compiling hayro-jpeg2000 v0.5.0
+   Compiling moxcms v0.8.1
+   Compiling color v0.3.3
+   Compiling brotli v8.0.4
+   Compiling iana-time-zone v0.1.65
+   Compiling html5ever v0.27.0
+   Compiling ordered-float v5.5.1
+   Compiling euclid v0.22.14
+   Compiling taffy v0.15.0
+   Compiling hayro-postscript v0.2.0
+   Compiling httpdate v1.0.3
+   Compiling vcpkg v0.2.15
+   Compiling linebender_resource_handle v0.1.1
+   Compiling unicode-linebreak v0.1.5
+   Compiling peniko v0.6.1
+   Compiling hayro-cmap v0.1.1
+   Compiling libsqlite3-sys v0.39.1
+   Compiling guillotiere v0.7.0
+   Compiling nsh-core v0.5.1
+   Compiling phf v0.13.1
+   Compiling chrono v0.4.45
+   Compiling hayro-syntax v0.9.0
+   Compiling onig v6.5.3
+   Compiling fancy-regex v0.16.2
+   Compiling bincode v1.3.3
+   Compiling fnv v1.0.7
+   Compiling foldhash v0.1.5
+   Compiling fearless_simd v0.7.0
+   Compiling hashbrown v0.15.5
+   Compiling skrifa v0.49.0
+   Compiling syntect v5.3.0
+   Compiling crossbeam-channel v0.5.17
+   Compiling vello_common v0.3.0
+   Compiling image v0.25.10
+   Compiling xml5ever v0.18.1
+   Compiling hayro-font v0.5.0
+   Compiling objc2-core-text v0.3.2
+   Compiling objc2-quartz-core v0.3.2
+   Compiling objc2-cloud-kit v0.3.2
+   Compiling objc2-core-image v0.3.2
+   Compiling objc2-core-data v0.3.2
+   Compiling spike-report v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/report)
+   Compiling tiny-skia-path v0.12.0
+   Compiling objc2-io-surface v0.3.2
+   Compiling objc2-core-video v0.3.2
+   Compiling nsh-platform-apple v0.5.1
+   Compiling quick-xml v0.42.0
+   Compiling unicode-id v0.3.7
+   Compiling pdfium-render v0.9.5
+   Compiling byteorder v1.5.0
+   Compiling str_indices v0.4.4
+   Compiling piston-float v1.0.1
+   Compiling ropey v1.6.1
+   Compiling vecmath v1.0.0
+   Compiling itertools v0.15.0
+   Compiling rbook v0.7.12
+   Compiling utf16string v0.2.0
+   Compiling markdown v1.0.0
+   Compiling objc2-app-kit v0.3.2
+   Compiling hayro-interpret v0.9.0
+   Compiling vello_cpu v0.3.0
+   Compiling markup5ever_rcdom v0.3.0
+   Compiling two-face v0.4.5
+   Compiling imara-diff v0.2.0
+   Compiling nsh-engine v0.5.1
+   Compiling pic-scale v0.7.12
+   Compiling hashlink v0.12.2
+   Compiling vte v0.15.0
+   Compiling libloading v0.9.0
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling ab_glyph_rasterizer v0.1.10
+   Compiling fallible-iterator v0.3.0
+   Compiling unicode-segmentation v1.13.3
+   Compiling nsh-base v0.5.1
+   Compiling hayro v0.9.0
+   Compiling spike-epub v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/epub)
+   Compiling rusqlite v0.41.1
+   Compiling tiny-skia v0.12.0
+   Compiling usvg v0.49.0
+   Compiling objc2-image-io v0.3.2
+   Compiling objc2-io-kit v0.3.2
+   Compiling spike-library v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/library)
+   Compiling spike-bold-word-starts v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/bold-word-starts)
+   Compiling resvg v0.49.0
+   Compiling spike-pdf v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/pdf)
+warning: field `pdfium` is never read
+  --> pdf/src/lib.rs:53:5
+   |
+52 | pub struct PdfiumDoc {
+   |            --------- field in this struct
+53 |     pdfium: &'static Pdfium,
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `spike-pdf` (lib) generated 1 warning
+   Compiling nsh-platform-macos v0.5.1
+   Compiling spike-shell v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/shell)
+warning: use of deprecated associated constant `objc2_core_graphics::CGBitmapInfo::ByteOrder32Big`
+  --> shell/src/bitmap.rs:43:55
+   |
+43 |     let bitmap = CGBitmapInfo(alpha.0 | CGBitmapInfo::ByteOrder32Big.0);
+   |                                                       ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: unnecessary `unsafe` block
+   --> shell/src/stage.rs:298:9
+    |
+298 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+   --> shell/src/stage.rs:462:25
+    |
+462 | ...   unsafe { CGContext::draw_image(Some(&ctx), rect, Some(&cg)) };
+    |       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> shell/src/stage.rs:716:13
+    |
+716 |             unsafe { CGContext::draw_image(Some(ctx), rect, Some(&cg)) };
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: function `prefix_of` is never used
+  --> shell/src/bold_word.rs:48:8
+   |
+48 | pub fn prefix_of(word: &str) -> String {
+   |        ^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variants `PageAndPanel` and `Immersive` are never constructed
+  --> shell/src/form.rs:38:5
+   |
+36 | pub enum Form {
+   |          ---- variants in this enum
+37 |     Full { sidebar: Presence, chat: Presence },
+38 |     PageAndPanel { sidebar: Presence, margin: Presence },
+   |     ^^^^^^^^^^^^
+39 |     Immersive,
+   |     ^^^^^^^^^
+   |
+   = note: `Form` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `remember_source` is never used
+   --> shell/src/form.rs:452:8
+    |
+452 | pub fn remember_source(rows: &mut Vec<SourceIn>, label: &str, count: u3...
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `glyph_file` is never used
+  --> shell/src/icons.rs:64:8
+   |
+64 | pub fn glyph_file(name: &str) -> Option<String> {
+   |        ^^^^^^^^^^
+
+warning: constant `PAGE_OVERRIDES` is never used
+  --> shell/src/reading.rs:50:11
+   |
+50 | pub const PAGE_OVERRIDES: &[(&str, &str)] = &[
+   |           ^^^^^^^^^^^^^^
+
+warning: function `ratio_within` is never used
+   --> shell/src/reading.rs:110:8
+    |
+110 | pub fn ratio_within(width: f64, height: f64, want_w: f64, want_h: f64) ...
+    |        ^^^^^^^^^^^^
+
+warning: function `glyph_cache_dir` is never used
+  --> shell/src/settings.rs:31:8
+   |
+31 | pub fn glyph_cache_dir() -> PathBuf {
+   |        ^^^^^^^^^^^^^^^
+
+warning: function `store_place` is never used
+   --> shell/src/settings.rs:110:8
+    |
+110 | pub fn store_place(path: &Path, book: &str, page: u32) -> Result<(), St...
+    |        ^^^^^^^^^^^
+
+warning: function `library_folder` is never used
+   --> shell/src/settings.rs:373:8
+    |
+373 | pub fn library_folder(path: &Path) -> Option<PathBuf> {
+    |        ^^^^^^^^^^^^^^
+
+warning: constant `CITE` is never used
+  --> shell/src/tokens.rs:16:11
+   |
+16 | pub const CITE: u32 = 0x0055_555B;
+   |           ^^^^
+
+warning: constant `LIST_WANT` is never used
+  --> shell/src/tokens.rs:29:11
+   |
+29 | pub const LIST_WANT: u32 = 0x00E0_773A;
+   |           ^^^^^^^^^
+
+warning: constant `LIST_LU` is never used
+  --> shell/src/tokens.rs:30:11
+   |
+30 | pub const LIST_LU: u32 = 0x005B_8DEF;
+   |           ^^^^^^^
+
+warning: constant `LIST_EN` is never used
+  --> shell/src/tokens.rs:31:11
+   |
+31 | pub const LIST_EN: u32 = 0x007D_8C6A;
+   |           ^^^^^^^
+
+warning: constant `CITE_SIZE` is never used
+  --> shell/src/tokens.rs:71:11
+   |
+71 | pub const CITE_SIZE: f32 = 11.5;
+   |           ^^^^^^^^^
+
+warning: constant `WINDOW_W` is never used
+  --> shell/src/tokens.rs:80:11
+   |
+80 | pub const WINDOW_W: f64 = 1440.0;
+   |           ^^^^^^^^
+
+warning: constant `WINDOW_H` is never used
+  --> shell/src/tokens.rs:81:11
+   |
+81 | pub const WINDOW_H: f64 = 900.0;
+   |           ^^^^^^^^
+
+warning: constant `SIDE_PAD_TOP` is never used
+  --> shell/src/tokens.rs:84:11
+   |
+84 | pub const SIDE_PAD_TOP: f32 = 52.0;
+   |           ^^^^^^^^^^^^
+
+warning: constant `TOP_ROW_H` is never used
+  --> shell/src/tokens.rs:90:11
+   |
+90 | pub const TOP_ROW_H: f32 = CHROME_H;
+   |           ^^^^^^^^^
+
+warning: constant `LABEL_H` is never used
+  --> shell/src/tokens.rs:99:11
+   |
+99 | pub const LABEL_H: f32 = 16.0;
+   |           ^^^^^^^
+
+warning: constant `LABEL_PX` is never used
+   --> shell/src/tokens.rs:102:11
+    |
+102 | pub const LABEL_PX: f32 = 10.0;
+    |           ^^^^^^^^
+
+warning: constant `FOOT_H` is never used
+   --> shell/src/tokens.rs:115:11
+    |
+115 | pub const FOOT_H: f32 = 28.0;
+    |           ^^^^^^
+
+warning: constant `FOOT_GAP` is never used
+   --> shell/src/tokens.rs:116:11
+    |
+116 | pub const FOOT_GAP: f32 = 8.0;
+    |           ^^^^^^^^
+
+warning: constant `FOOT_PX` is never used
+   --> shell/src/tokens.rs:117:11
+    |
+117 | pub const FOOT_PX: f32 = 8.0;
+    |           ^^^^^^^
+
+warning: constant `SHELF_COVER_W` is never used
+   --> shell/src/tokens.rs:160:11
+    |
+160 | pub const SHELF_COVER_W: f32 = 128.0;
+    |           ^^^^^^^^^^^^^
+
+warning: constant `SHELF_COVER_H` is never used
+   --> shell/src/tokens.rs:161:11
+    |
+161 | pub const SHELF_COVER_H: f32 = 192.0;
+    |           ^^^^^^^^^^^^^
+
+warning: constant `SHELF_ROW_GAP` is never used
+   --> shell/src/tokens.rs:164:11
+    |
+164 | pub const SHELF_ROW_GAP: f32 = 28.0;
+    |           ^^^^^^^^^^^^^
+
+warning: constant `CHAT_BREAKPOINT` is never used
+   --> shell/src/tokens.rs:170:11
+    |
+170 | pub const CHAT_BREAKPOINT: f64 = 898.0;
+    |           ^^^^^^^^^^^^^^^
+
+warning: constant `BUBBLE_TAIL` is never used
+   --> shell/src/tokens.rs:188:11
+    |
+188 | pub const BUBBLE_TAIL: f32 = 4.0;
+    |           ^^^^^^^^^^^
+
+warning: constant `COMPOSER_PT` is never used
+   --> shell/src/tokens.rs:198:11
+    |
+198 | pub const COMPOSER_PT: f32 = COMPOSER_PAD;
+    |           ^^^^^^^^^^^
+
+warning: constant `COMPOSER_PR` is never used
+   --> shell/src/tokens.rs:199:11
+    |
+199 | pub const COMPOSER_PR: f32 = COMPOSER_PAD;
+    |           ^^^^^^^^^^^
+
+warning: constant `COMPOSER_PB` is never used
+   --> shell/src/tokens.rs:200:11
+    |
+200 | pub const COMPOSER_PB: f32 = COMPOSER_PAD;
+    |           ^^^^^^^^^^^
+
+warning: constant `COMPOSER_PL` is never used
+   --> shell/src/tokens.rs:201:11
+    |
+201 | pub const COMPOSER_PL: f32 = COMPOSER_PAD;
+    |           ^^^^^^^^^^^
+
+warning: constant `PLACEHOLDER_H` is never used
+   --> shell/src/tokens.rs:202:11
+    |
+202 | pub const PLACEHOLDER_H: f32 = 20.0;
+    |           ^^^^^^^^^^^^^
+
+warning: constant `ATTACH` is never used
+   --> shell/src/tokens.rs:205:11
+    |
+205 | pub const ATTACH: f32 = 24.0;
+    |           ^^^^^^
+
+warning: constant `SCOPE_H` is never used
+   --> shell/src/tokens.rs:210:11
+    |
+210 | pub const SCOPE_H: f32 = COMPOSER_CONTROL;
+    |           ^^^^^^^
+
+warning: `spike-shell` (lib) generated 39 warnings
+    Finished `release` profile [optimized] target(s) in 3m 43s
+
+
+warning: failed to auto-clean cache data
+
+failed to clean entries from the global cache
+
+Caused by:
+  failed to remove file `/Users/morris/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.13.4/Cargo.toml`
+
+Caused by:
+  Permission denied (os error 13)
+   Compiling proc-macro2 v1.0.107
+   Compiling stable_deref_trait v1.2.1
+   Compiling phf_shared v0.14.0
+   Compiling num-traits v0.2.19
+   Compiling writeable v0.6.4
+   Compiling foldhash v0.2.0
+   Compiling arrayvec v0.7.8
+   Compiling litemap v0.8.3
+   Compiling linebender_resource_handle v0.1.1
+   Compiling ident_case v1.0.1
+   Compiling fnv v1.0.7
+   Compiling hashbrown v0.17.1
+   Compiling phf_generator v0.14.0
+   Compiling polycool v0.4.0
+   Compiling serde_core v1.0.229
+   Compiling dtoa v1.0.11
+   Compiling icu_locale_fallback_data v2.4.0
+   Compiling dtoa-short v0.3.5
+   Compiling phf_codegen v0.14.0
+   Compiling crossbeam-utils v0.8.23
+   Compiling kurbo v0.13.1
+   Compiling icu_segmenter_data v2.4.0
+   Compiling winnow v1.0.4
+   Compiling thin-vec v0.2.21
+   Compiling smallbitvec v2.6.1
+   Compiling crossbeam-epoch v0.9.21
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling rayon-core v1.13.0
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling objc2 v0.6.5
+   Compiling slotmap v1.1.1
+   Compiling crossbeam-deque v0.8.8
+   Compiling void v1.0.2
+   Compiling indexmap v2.14.2
+   Compiling objc2-core-foundation v0.3.2
+   Compiling log v0.4.35
+   Compiling stylo v0.22.0
+   Compiling quote v1.0.47
+   Compiling objc2-core-text v0.3.2
+   Compiling encoding_rs v0.8.44
+   Compiling tendril v0.5.1
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling string_cache_codegen v0.11.2
+   Compiling web_atoms v0.3.0
+   Compiling stylo_atoms v0.22.0
+   Compiling objc2-foundation v0.3.2
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling serde_spanned v1.1.2
+   Compiling toml v1.1.8+spec-1.1.0
+   Compiling darling_core v0.20.11
+   Compiling synstructure v0.14.0
+   Compiling synstructure v0.13.2
+   Compiling moxcms v0.8.1
+   Compiling simdutf8 v0.1.5
+   Compiling stylo_static_prefs v0.22.0
+   Compiling atomic_refcell v0.1.14
+   Compiling icu_casemap_data v2.4.0
+   Compiling heck v0.5.0
+   Compiling raw-window-handle v0.6.2
+   Compiling fontdb v0.24.0
+   Compiling phf_macros v0.14.0
+   Compiling derive_more-impl v2.1.1
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.4
+   Compiling serde_derive v1.0.229
+   Compiling bytemuck_derive v1.12.1
+   Compiling zerovec-derive v0.11.7
+   Compiling displaydoc v0.2.7
+   Compiling zerofrom v0.1.8
+   Compiling phf v0.14.0
+   Compiling darling_macro v0.20.11
+   Compiling cssparser-macros v0.7.1
+   Compiling darling v0.20.11
+   Compiling derive_more v2.1.1
+   Compiling thiserror-impl v2.0.21
+   Compiling bytemuck v1.25.2
+   Compiling malloc_size_of_derive v0.1.3
+   Compiling rayon v1.12.0
+   Compiling num-derive v0.4.2
+   Compiling to_shmem_derive v0.2.0
+   Compiling stylo_derive v0.22.0
+   Compiling thiserror v2.0.21
+   Compiling yoke v0.8.4
+   Compiling font-types v0.12.7
+   Compiling color v0.3.3
+   Compiling image v0.25.10
+   Compiling serde v1.0.229
+   Compiling read-fonts v0.41.0
+   Compiling peniko v0.6.1
+   Compiling zerovec v0.11.9
+   Compiling zerotrie v0.2.5
+   Compiling parlance v0.1.1
+   Compiling anyrender v0.14.0
+   Compiling tiny-skia-path v0.12.0
+   Compiling strum_macros v0.28.0
+   Compiling euclid v0.22.14
+   Compiling string_cache v0.11.0
+   Compiling cssparser v0.38.0
+   Compiling servo_arc v0.5.0
+   Compiling tinystr v0.8.5
+   Compiling icu_locale_core v2.4.0
+   Compiling potential_utf v0.1.6
+   Compiling app_units v0.7.8
+   Compiling icu_collections v2.4.0
+   Compiling guillotiere v0.7.0
+   Compiling vello_common v0.3.0
+   Compiling markup5ever v0.40.0
+   Compiling to_shmem v0.6.0
+   Compiling selectors v0.41.0
+   Compiling num-integer v0.1.47
+   Compiling icu_provider v2.4.0
+   Compiling svgtypes v0.16.1
+   Compiling icu_properties v2.4.0
+   Compiling icu_normalizer v2.4.0
+   Compiling icu_locale_fallback v2.4.0
+   Compiling icu_segmenter v2.4.0
+   Compiling stylo_malloc_size_of v0.22.0
+   Compiling stylo_dom v0.22.0
+   Compiling itertools v0.14.0
+   Compiling skrifa v0.44.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling harfrust v0.12.0
+   Compiling stylo_traits v0.22.0
+   Compiling fontique v0.12.0
+   Compiling parley_data v0.12.0
+   Compiling uluru v3.1.0
+   Compiling num_cpus v1.17.0
+   Compiling parley_emoji v0.12.0
+   Compiling static_assertions v1.1.0
+   Compiling mime v0.3.17
+   Compiling strum v0.28.0
+   Compiling base64 v0.23.1
+   Compiling glifo v0.4.0
+   Compiling phf_macros v0.13.1
+   Compiling read-fonts v0.46.0
+   Compiling taffy v0.15.0
+   Compiling usvg v0.48.1
+   Compiling parley_engine v0.12.0
+   Compiling keyboard-types v0.8.3
+   Compiling uuid v1.29.0
+   Compiling cursor-icon v1.2.0
+   Compiling debug_timer v0.1.3
+   Compiling smol_str v0.3.7
+   Compiling accesskit v0.25.2
+   Compiling blitz-traits v0.3.0-beta.4
+   Compiling parley v0.12.0
+   Compiling phf v0.13.1
+   Compiling icu_casemap v2.4.0
+   Compiling vello_cpu v0.3.0
+   Compiling thread_local v1.1.10
+   Compiling html-escape v0.2.15
+   Compiling web-time v1.1.0
+   Compiling zip v9.3.0
+   Compiling spike-report v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/report)
+   Compiling chrono v0.4.45
+   Compiling anyrender_svg v0.15.0
+   Compiling skrifa v0.49.0
+   Compiling xml5ever v0.40.0
+   Compiling html5ever v0.40.1
+   Compiling pic-scale v0.7.12
+   Compiling rbook v0.7.12
+   Compiling anyrender_vello_cpu v0.18.0
+   Compiling hayro-font v0.5.0
+   Compiling pdfium-render v0.9.5
+   Compiling hayro-interpret v0.9.0
+   Compiling hayro v0.9.0
+   Compiling spike-pdf v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/pdf)
+warning: field `pdfium` is never read
+  --> pdf/src/lib.rs:53:5
+   |
+52 | pub struct PdfiumDoc {
+   |            --------- field in this struct
+53 |     pdfium: &'static Pdfium,
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `spike-pdf` (lib) generated 1 warning
+   Compiling stylo_taffy v0.3.0-beta.4
+   Compiling blitz-dom v0.3.0-beta.4
+   Compiling blitz-paint v0.3.0-beta.4
+   Compiling blitz-html v0.3.0-beta.4
+   Compiling spike-epub v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/epub)
+   Compiling spike-measure v0.1.0 (/Users/morris/Developer/github.com/realmorrisliu/SuperReader/.worktrees/shell-s2-1/spikes/measure)
+    Finished `release` profile [optimized] target(s) in 1m 12s

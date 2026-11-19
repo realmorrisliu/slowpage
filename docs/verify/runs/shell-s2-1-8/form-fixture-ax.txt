@@ -1,0 +1,1010 @@
+WIN 0.0 0.0 0.0 0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0
+AXMenuBarItem	Apple	0.0	33.0	0.0	0.0
+AXMenuItem	关于本机	0.0	982.0	0.0	0.0
+AXMenuItem	系统信息	0.0	982.0	0.0	0.0
+AXMenuItem	系统设置…, 1项更新	0.0	982.0	0.0	0.0
+AXMenuItem	App Store	0.0	982.0	0.0	0.0
+AXMenuItem	最近使用的项目	0.0	982.0	0.0	0.0
+AXMenuItem	应用程序	0.0	982.0	0.0	0.0
+AXMenuItem	播客	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“播客”	0.0	982.0	0.0	0.0
+AXMenuItem	慢卷	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“慢卷”	0.0	982.0	0.0	0.0
+AXMenuItem	企业微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“企业微信”	0.0	982.0	0.0	0.0
+AXMenuItem	图书	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“图书”	0.0	982.0	0.0	0.0
+AXMenuItem	微信	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“微信”	0.0	982.0	0.0	0.0
+AXMenuItem	信息	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“信息”	0.0	982.0	0.0	0.0
+AXMenuItem	Antigravity	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Antigravity”	0.0	982.0	0.0	0.0
+AXMenuItem	Gemini	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Gemini”	0.0	982.0	0.0	0.0
+AXMenuItem	Grok Bot	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Grok Bot”	0.0	982.0	0.0	0.0
+AXMenuItem	Rex Beta	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Rex Beta”	0.0	982.0	0.0	0.0
+AXMenuItem	文稿	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件_1.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.1-5_高压上夹件加强板_20x80x2360_1件.dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“5.070.1126.3-1_低压上夹件腹板_δ20_1件(1).dwg”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	剖切问题录屏.wmv	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“剖切问题录屏.wmv”	0.0	982.0	0.0	0.0
+AXMenuItem	candidate.step	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“candidate.step”	0.0	982.0	0.0	0.0
+AXMenuItem	Direct GLB 256MiB plus.glb	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“Direct GLB 256MiB plus.glb”	0.0	982.0	0.0	0.0
+AXMenuItem	dock-drop.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“dock-drop.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	gpt3.pdf	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“gpt3.pdf”	0.0	982.0	0.0	0.0
+AXMenuItem	pride-se.epub	0.0	982.0	0.0	0.0
+AXMenuItem	在访达中显示“pride-se.epub”	0.0	982.0	0.0	0.0
+AXMenuItem	服务器	0.0	982.0	0.0	0.0
+AXMenuItem	homes	0.0	982.0	0.0	0.0
+AXMenuItem	Macintosh HD	0.0	982.0	0.0	0.0
+AXMenuItem	morris	0.0	982.0	0.0	0.0
+AXMenuItem	morrisliu	0.0	982.0	0.0	0.0
+AXMenuItem	OrbStack	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	samba@thelovebox.app	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	TimeMachine	0.0	982.0	0.0	0.0
+AXMenuItem	清除菜单	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出…	0.0	982.0	0.0	0.0
+AXMenuItem	强制退出“Slowpage”	0.0	982.0	0.0	0.0
+AXMenuItem	睡眠	0.0	982.0	0.0	0.0
+AXMenuItem	重启…	0.0	982.0	0.0	0.0
+AXMenuItem	重启	0.0	982.0	0.0	0.0
+AXMenuItem	关机…	0.0	982.0	0.0	0.0
+AXMenuItem	关机	0.0	982.0	0.0	0.0
+AXMenuItem	锁屏	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”…	0.0	982.0	0.0	0.0
+AXMenuItem	退出登录“刘义盟”	0.0	982.0	0.0	0.0
+AXMenuBarItem	Slowpage	0.0	33.0	0.0	0.0
+AXMenuItem	About Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Slowpage	0.0	982.0	0.0	0.0
+AXMenuItem	Hide Others	0.0	982.0	0.0	0.0
+AXMenuItem	Quit Slowpage	0.0	982.0	0.0	0.0
+AXMenuBarItem	File	0.0	33.0	0.0	0.0
+AXMenuItem	Open…	0.0	982.0	0.0	0.0
+AXMenuBarItem	Edit	0.0	33.0	0.0	0.0
+AXMenuItem	Undo	0.0	982.0	0.0	0.0
+AXMenuItem	Redo	0.0	982.0	0.0	0.0
+AXMenuItem	Cut	0.0	982.0	0.0	0.0
+AXMenuItem	Copy	0.0	982.0	0.0	0.0
+AXMenuItem	Paste	0.0	982.0	0.0	0.0
+AXMenuItem	Select All	0.0	982.0	0.0	0.0
+AXMenuItem	AutoFill	0.0	982.0	0.0	0.0
+AXMenuItem	Contact…	0.0	982.0	0.0	0.0
+AXMenuItem	Passwords…	0.0	982.0	0.0	0.0
+AXMenuItem	Credit Card…	0.0	982.0	0.0	0.0
+AXMenuItem	Start Dictation…	0.0	982.0	0.0	0.0
+AXMenuItem	Emoji & Symbols	0.0	982.0	0.0	0.0
+AXMenuBarItem	Window	0.0	33.0	0.0	0.0
+AXMenuItem	Minimize	0.0	982.0	0.0	0.0
+AXMenuItem	Zoom	0.0	982.0	0.0	0.0
+AXMenuItem	Enter Full Screen	0.0	982.0	0.0	0.0
+AXMenuItem	Close	0.0	982.0	0.0	0.0
+AXMenuItem	Close All	0.0	982.0	0.0	0.0
+AXMenuBarItem	View	0.0	33.0	0.0	0.0
+AXMenuItem	32开	0.0	982.0	0.0	0.0
+AXMenuItem	Paperback	0.0	982.0	0.0	0.0
+AXMenuItem	US Trade	0.0	982.0	0.0	0.0
+AXMenuItem	Bold Word Starts · 词首加粗	0.0	982.0	0.0	0.0

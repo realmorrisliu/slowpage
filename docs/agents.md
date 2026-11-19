@@ -42,8 +42,6 @@ Collect every check that can run in the same session. One failed row does not st
 - A missing fixture, an empty sha, or a mismatched sha is not a pass. A file that does not contain the named chapter is a failure of that check, not a silent success.
 - A workflow must not run `cargo test -p spike-shell` for tests this tree does not contain.
 
-Main does not contain the shell unit tests or the chapter-open CI step that pull request **#53** added. Those stay on `#53`. This branch does not cherry-pick that product branch and does not claim main already has its guards.
-
 ## Blocked work
 
 When a task stops, record the blocker in three lines:
@@ -58,31 +56,14 @@ If nothing else in the task can move, stop. Report what was delivered, the evide
 
 Morris approves what the screen should look like and whether an interaction is acceptable. The harness can show that a capture is the wrong window or the same file. It cannot approve the picture.
 
-## Example: #53 contents, title, and a false fullscreen
+## Merge
 
-This is a record of what happened. It is not a successful product acceptance.
+For an established route, the necessary cloud checks and an independent review are enough to merge. Record a GUI run or a machine run that did not happen as not run. That record does not block the merge, and it is not a pass. Do not wait for a separate approval on each pull request. A new scope, a new visual design, or an architecture tradeoff still waits for Morris. Do not weaken an assertion to make a check green.
 
-**Goal.** The ordinary reader shows its contents control and its book title, and a fullscreen row is scored only when the window actually entered fullscreen.
+## History
 
-**Scope.** The shell changes on `cursor/shell-form-tokens-d356`, plus the verifier change that stopped treating a request as the state.
+Pull request #53 merged to main as `aa1f2e0`. Its shell tests are on main. The earlier resume that named `.worktrees/shell-s2-1`, head `c194bca`, and a baseline build of `fdd8183c5d43e0fbf623c188eebf29551254ab03` is retired. Those steps are not a current action.
 
-**Non-goals.** S3 reading form, S4 immersive mode, and merging #53.
+A suite whose code head was `60d0dcf` scored fullscreen as pass from a windowed frame. That was a verifier fault. `python3 scripts/verify --harness` rejects the injected copy. A screenshot that was not taken is not an accepted picture.
 
-**Done when.** A run of the built commit shows the contents control and the title, and the fullscreen row is tied to a fullscreen window of the loaded book. That run has not happened.
-
-What is known:
-
-- `54d3529` shows the reader title with the traffic lights. `60d0dcf` restores the contents control. Both are on #53, not on main.
-- The suite whose code head was `60d0dcf` scored fullscreen as pass from a windowed frame. That was a verifier fault. `c75397a` is the change on #53 that rejects an unentered fullscreen. The same injected case is rejected by `python3 scripts/verify --harness` on this branch. The product fullscreen entry on #53 is still not an accepted screenshot.
-- CI run [44286351544](https://github.com/realmorrisliu/slowpage/actions/runs/44286351544) records head `9048bb9`. The job checked out `2898d25c2c67b731e375266ef64e668c2ad8cce5`, the merge of `9048bb9` into `3169a716`. That checkout ran five shell decision tests and `fixtures_open_on_chapter_text`, and they passed. That is not product acceptance, and those tests are not on main.
-- CI run [44433135069](https://github.com/realmorrisliu/slowpage/actions/runs/44433135069) records head `b3cce3f`. The job checked out `20d3b1464d5e74b2d3bd1508ce257e1368d670df`, the merge of `b3cce3f` into `3169a716`. `no-fast-models` ran `scripts/harness-check` (the four load lines, then `harness self-test passed`). `deny` failed on [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543): chrono 0.4.45 is unmaintained, reached through `nsh-base` 0.5.0 and `pdfium-render` 0.9.5, both already on main. This PR does not change a lockfile, and the advisory says no safe upgrade. Ignoring it would relax deny, so it stays a dependency blocker outside this harness. `test` failed in the existing "Fetch books the typesetter tests open" step, curl exit 56, before a test binary ran. This PR does not change that step. Neither failure was rerun.
-- The #53 worktree head at the last check was `c194bca`. The plain-zh derived fixture was written. The Bold baseline binary from `fdd8183c5d43e0fbf623c188eebf29551254ab03` was not built. `just verify` was not run.
-
-### #53 resume
-
-- **Resume when.** One check shows the 1-minute load under 8, `/tmp/superreader-verify.lock` absent, and no `spike-shell` or Slowpage process. The admitted 朝花 file still hashes to `91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293`, and the derived plain-zh fixture is the one in `spikes/epub/fixtures/plain-zh-manifest.json` on that branch. Support uses a fresh temp directory, not `~/Library/Application Support/app.slowpage.reader`.
-- **Owner.** Morris coordinates the run. The worktree is `.worktrees/shell-s2-1` on `cursor/shell-form-tokens-d356`. Do not stash, reset, or switch that worktree to do other work.
-- **Then.** In an isolated worktree at exactly `fdd8183c5d43e0fbf623c188eebf29551254ab03`, build with `~/.local/bin/cargo` and do not set `CARGO_TARGET_DIR`. Copy the release `spike-shell` to `/tmp/spike-shell-main-fdd8183` only if that path is not a running binary. Then one `just verify` of `c194bca` or a later #53 head, if a new load check is still under 8. If it is not, stop. Do not set `SR_VERIFY_MAX_LOAD` above 8, do not wait in a loop, and do not kill another project.
-- **Can continue.** Harness work on a branch from main. Not the #53 suite.
-
-Checked once at `2026-11-19T00:48:25Z`: 1-minute load **27.56**, lock absent, no `spike-shell`. That does not mean the load is still 27.56, and it does not mean the suite can start.
+On head `b3cce3f` against `3169a716`, `deny` failed on [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543) and the book-download step exited with curl status 56. Those results belong to that head. Judge a later head by the checks that run on it.

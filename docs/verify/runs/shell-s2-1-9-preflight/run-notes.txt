@@ -1,0 +1,22 @@
+command: SR_VERIFY_MAX_LOAD=999 SR_VERIFY_LOAD_START=999 just verify --subset preflight --out <temp>/superreader-preflight-s2-1-9
+start: 2026-11-18 02:32:40 CST
+end: 2026-11-18 02:37:42 CST
+exit: 1
+head: a1481ae78817aa94471d87aee3fb2cac0de8bfd8
+lock pid: 45962, branch cursor/shell-form-tokens-d356, started 2026-11-17T18:32:40Z, released with rmdir
+nsh: nsh 0.5.1 (224d9a7)
+cargo: ~/.local/bin/cargo 1.98.1
+summary head: a1481ae78817aa94471d87aee3fb2cac0de8bfd8
+ok: false
+This diagnostic subset is not full acceptance. The full suite was not run.
+
+shell-form-fixture fail. Inset is 6 points at 1440x855. The accessibility dump is a blank line, and the twelve fixture titles are missing. Continue order is false.
+shell-shelf-scroll fail. scrolls true, last title is not in the tree.
+shell-clip fail. Wheel before and after are the same bytes as form-fixture.png, sha256 prefix 8ed99605abf476a9, 0 pixels. All three sizes report an accessibility walk with no frames.
+
+1440 chrome: fullscreen false, lights_visible true, 1440x855. PNG 2880x1710.
+minimum chrome: fullscreen false, lights_visible true, 578x528. PNG 1156x1056. Chat width recorded as 0.
+fullscreen-enter, fullscreen-settled, and fullscreen-exit chrome: fullscreen false, lights_visible true, 1440x855.
+form-fullscreen.png and form-restored.png match form-fixture.png byte for byte. Fullscreen did not exit because it never entered.
+
+Real support stayed 51 files, inode 900769011, sha256 509c53b00275d1310bcb764d87e4c3aed563ae58aeea46cf46ea25921a7b0391. The temporary app was not installed under /Applications. Home and temp paths were removed from the archived text.
