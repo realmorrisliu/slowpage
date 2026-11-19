@@ -553,6 +553,192 @@ pub fn changed_chapter(stored_href: &str, href: &str) -> bool {
     !href.is_empty() && href != stored_href
 }
 
+/// Horizontal travel, in points, that commits one EPUB page.
+/// This is the page script's old `SWIPE` value. The finger path uses it once.
+pub const SWIPE_POINTS: f64 = 48.0;
+
+/// AppKit `NSEventPhase` bits. `phase` and `momentumPhase` are separate.
+const PHASE_BEGAN: u64 = 1;
+const PHASE_STATIONARY: u64 = 2;
+const PHASE_CHANGED: u64 = 4;
+const PHASE_ENDED: u64 = 8;
+const PHASE_CANCELLED: u64 = 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Finger {
+    None,
+    Down,
+    Up,
+    Cancelled,
+}
+
+/// `phase` while the fingers are down. Momentum is not a finger.
+pub fn finger_bits(phase: u64) -> Finger {
+    if phase & PHASE_CANCELLED != 0 {
+        Finger::Cancelled
+    } else if phase & PHASE_ENDED != 0 {
+        Finger::Up
+    } else if phase & (PHASE_BEGAN | PHASE_STATIONARY | PHASE_CHANGED) != 0 {
+        Finger::Down
+    } else {
+        Finger::None
+    }
+}
+
+/// Precise trackpad deltas are already in points. A line-mode wheel uses the
+/// same 16 point step the shelf uses when `scrollingDeltaY` is empty.
+pub fn wheel_points(precise: bool, scrolling: f64, lines: f64) -> f64 {
+    if precise || scrolling.abs() >= 0.01 {
+        scrolling
+    } else {
+        lines * 16.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WheelTick {
+    pub finger: Finger,
+    pub momentum: bool,
+    /// Positive moves toward the next page. That is AppKit `scrollingDeltaX`:
+    /// positive is to the right, which is the sign the old wheel handler used.
+    pub dx: f64,
+    pub dy: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WheelMove {
+    /// Not an EPUB page gesture. The caller lets the event through.
+    Pass,
+    /// Eat the event. Do not turn and do not write progress.
+    Swallow,
+    /// Still accumulating a mouse-wheel notch. Do not write progress.
+    Hold,
+    /// Paint this offset. Do not write progress.
+    Follow(f64),
+    /// Seek exactly one page. This is the only effect that changes progress.
+    Commit(i32),
+    /// Return to the page the gesture started on. Do not write progress.
+    Cancel,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Swipe {
+    travel: f64,
+    live: bool,
+    notch: f64,
+    /// A key, chapter, resize, or new book took the gesture. Ignore the rest
+    /// of this finger, including the lift, so that lift cannot turn again.
+    ignore: bool,
+}
+
+impl Default for Swipe {
+    fn default() -> Self {
+        Self {
+            travel: 0.0,
+            live: false,
+            notch: 0.0,
+            ignore: false,
+        }
+    }
+}
+
+impl Swipe {
+    /// Drop a gesture that resize, a new book, a chapter, or a key interrupted.
+    /// The next lift must not turn.
+    pub fn abandon(&mut self) -> bool {
+        let was = self.live;
+        self.travel = 0.0;
+        self.notch = 0.0;
+        self.live = false;
+        if was {
+            self.ignore = true;
+        }
+        was
+    }
+
+    pub fn offer(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
+        if self.ignore {
+            if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
+                *self = Self::default();
+            }
+            return if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
+                WheelMove::Pass
+            } else {
+                WheelMove::Swallow
+            };
+        }
+        if tick.momentum {
+            if !self.live {
+                return WheelMove::Swallow;
+            }
+            return self.settle(false, page, pages);
+        }
+        match tick.finger {
+            Finger::Up => self.settle(false, page, pages),
+            Finger::Cancelled => self.settle(true, page, pages),
+            Finger::Down => self.track(tick, page, pages),
+            Finger::None => self.notch(tick, page, pages),
+        }
+    }
+
+    fn track(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
+        if !self.live && tick.dx.abs() <= tick.dy.abs() {
+            return WheelMove::Pass;
+        }
+        self.live = true;
+        self.notch = 0.0;
+        self.travel += tick.dx;
+        WheelMove::Follow(shown_travel(self.travel, page, pages))
+    }
+
+    fn settle(&mut self, cancelled: bool, page: u32, pages: u32) -> WheelMove {
+        if !self.live {
+            return WheelMove::Pass;
+        }
+        let travel = self.travel;
+        *self = Self::default();
+        if cancelled || travel.abs() < SWIPE_POINTS {
+            return WheelMove::Cancel;
+        }
+        let delta = if travel > 0.0 { 1 } else { -1 };
+        if end_blocks(delta, page, pages) {
+            return WheelMove::Cancel;
+        }
+        WheelMove::Commit(delta)
+    }
+
+    fn notch(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
+        if self.live || tick.dx.abs() <= tick.dy.abs() {
+            return WheelMove::Pass;
+        }
+        self.notch += tick.dx;
+        if self.notch.abs() < SWIPE_POINTS {
+            return WheelMove::Hold;
+        }
+        let delta = if self.notch > 0.0 { 1 } else { -1 };
+        self.notch = 0.0;
+        if end_blocks(delta, page, pages) {
+            return WheelMove::Cancel;
+        }
+        WheelMove::Commit(delta)
+    }
+}
+
+fn shown_travel(travel: f64, page: u32, pages: u32) -> f64 {
+    if end_blocks(if travel > 0.0 { 1 } else { -1 }, page, pages) {
+        0.0
+    } else {
+        travel
+    }
+}
+
+fn end_blocks(delta: i32, page: u32, pages: u32) -> bool {
+    if pages == 0 {
+        return false;
+    }
+    (delta < 0 && page <= 1) || (delta > 0 && page >= pages)
+}
+
 /// Page and offset stored with `href` before that chapter reports its own pin.
 /// A different chapter stores the jump aimed at it. A stored row with no href,
 /// and the same href, keep their place.
@@ -1327,5 +1513,133 @@ mod tests {
         assert!(!on_library());
         publish_surface(Surface::Library);
         assert!(on_library());
+    }
+
+    #[test]
+    fn a_trackpad_swipe_follows_cancels_and_commits_once() {
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mom = |dx: f64| WheelTick {
+            finger: Finger::None,
+            momentum: true,
+            dx,
+            dy: 0.0,
+        };
+        let writes = |effect: WheelMove| matches!(effect, WheelMove::Commit(_));
+
+        let mut swipe = Swipe::default();
+        let small = swipe.offer(down(10.0), 4, 10);
+        assert_eq!(small, WheelMove::Follow(10.0));
+        assert!(!writes(small));
+        let cancelled = swipe.offer(up, 4, 10);
+        assert_eq!(cancelled, WheelMove::Cancel);
+        assert!(!writes(cancelled));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(40.0), 4, 10), WheelMove::Follow(40.0));
+        assert_eq!(swipe.offer(down(-30.0), 4, 10), WheelMove::Follow(10.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Cancel);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(60.0), 4, 10), WheelMove::Follow(60.0));
+        assert_eq!(swipe.offer(down(-120.0), 4, 10), WheelMove::Follow(-60.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(-1));
+        assert_eq!(swipe.offer(mom(200.0), 5, 10), WheelMove::Swallow);
+        assert_eq!(swipe.offer(mom(200.0), 5, 10), WheelMove::Swallow);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(30.0), 4, 10), WheelMove::Follow(30.0));
+        assert_eq!(swipe.offer(down(18.0), 4, 10), WheelMove::Follow(48.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        assert_eq!(
+            swipe.offer(down(SWIPE_POINTS), 5, 10),
+            WheelMove::Follow(SWIPE_POINTS)
+        );
+        assert_eq!(swipe.offer(up, 5, 10), WheelMove::Commit(1));
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert!(swipe.abandon());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+        assert_eq!(swipe.offer(down(80.0), 2, 10), WheelMove::Follow(80.0));
+        assert!(swipe.abandon());
+        assert_eq!(swipe.offer(mom(80.0), 2, 10), WheelMove::Swallow);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(-80.0), 1, 10), WheelMove::Follow(0.0));
+        assert_eq!(swipe.offer(up, 1, 10), WheelMove::Cancel);
+        assert_eq!(swipe.offer(down(80.0), 10, 10), WheelMove::Follow(0.0));
+        assert_eq!(swipe.offer(up, 10, 10), WheelMove::Cancel);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::Down,
+                    momentum: false,
+                    dx: 4.0,
+                    dy: 20.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Pass
+        );
+        let held = swipe.offer(
+            WheelTick {
+                finger: Finger::None,
+                momentum: false,
+                dx: 20.0,
+                dy: 0.0,
+            },
+            4,
+            10,
+        );
+        assert_eq!(held, WheelMove::Hold);
+        assert!(!writes(held));
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: 28.0,
+                    dy: 0.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Commit(1)
+        );
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: -SWIPE_POINTS,
+                    dy: 0.0,
+                },
+                1,
+                10,
+            ),
+            WheelMove::Cancel
+        );
+
+        assert_eq!(finger_bits(4), Finger::Down);
+        assert_eq!(finger_bits(8), Finger::Up);
+        assert_eq!(finger_bits(16), Finger::Cancelled);
+        assert_eq!(finger_bits(0), Finger::None);
+        assert_eq!(wheel_points(true, 12.0, 1.0), 12.0);
+        assert_eq!(wheel_points(false, 0.0, 1.0), 16.0);
     }
 }

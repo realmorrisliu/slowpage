@@ -14,8 +14,8 @@ The shell comes first. Morris decided on 2026-11-11 to finish the app shell befo
 
 Each slice below is a thin cut of that one form.
 
-- S1. The gray base, the 220 point version B sidebar, the white card, and the library chat panel frame, including empty states. Replace the bare shelf window. Remove the Open button flow and the `open -a` and Open With checks. Do not repair them. `spikes/library` stays.
-- S2. The cover grid and **继续阅读** in the card, filled from `Catalog`.
+- S1. The gray base, the 220 point version B sidebar, the white card, and the library chat panel are in the library form. The bare shelf window is gone. The GUI is not verified.
+- S2. The cover grid and **继续阅读** are in that card. The GUI is not verified.
 - S3. The reading form, using the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits until Morris approves a mockup of the exact gap, the horizontal position, the margin width, and the toggle placement. The margin's contents are the 2026-11-10 hard requirement in `docs/design/north-star.md`. Interaction detail for S3, S4, and every slice after them is `docs/design/reading-interactions.md`. One checklist item, or a small group, is one pull request. It merges on the necessary cloud checks and an independent review.
 
 The checklist document records the rule. It does not build an item, the margin mockup, or S4, and it does not start the alan embed. The document merges on the necessary cloud checks and an independent review. A green run does not pass the ten items. Not executed, and not a blocker for this document: the ten items, their `nsh test` runs, their Mac recordings, the real Apple Books round, and the shell GUI, performance, image, and animation checks. `deny.toml` still ignores RUSTSEC-2026-0543 (chrono 0.4.45 via nsh-base 0.5.1 and pdfium-render 0.9.5). That ignore is not a clearance.
@@ -33,7 +33,7 @@ These wait until S1 through S5 have landed. Do not start them ahead of the shell
 - Repo cleanup, including worktree cleanup in `scripts/cleanup-worktrees.sh`.
 - Calibre compatibility beyond the catalog `spikes/library` already reads. Writes, schema user_version 28, search, and the rest of the Library checklist below.
 - [Pull request 14](https://github.com/realmorrisliu/slowpage/pull/14). The shell spec replaces its split into A1, A2, A3, B1, and B2. The margin mockup replaces B1 and B2 as the annotation next step, and that mockup is an approval, not a code start.
-- Reading chrome leftovers from [pull request 8](https://github.com/realmorrisliu/slowpage/pull/8). Still missing: hover fade and the full Apple Books toolbar item set. The 朝花夕拾 narrow-window two-column bug and the page scrubber stay here too.
+- Reading chrome leftovers from [pull request 8](https://github.com/realmorrisliu/slowpage/pull/8). The hover fade is still the dev spike. The old full toolbar item set is checklist item 8: traffic lights and the book title. Do not put the AppKit toolbar back. The 朝花夕拾 narrow-window two-column bug and the page scrubber stay here too.
 - Owned typesetter follow-ups from [pull request 13](https://github.com/realmorrisliu/slowpage/pull/13). Still missing: passing gate B, CJK, and switching the default off WKWebView.
 - The rest of the Books toolbar icons. S1 uses the list glyph the contents control already ships.
 - Bold Word Starts, [pull request 21](https://github.com/realmorrisliu/slowpage/pull/21). Still missing: the WebKit rendering, the breaker and its cache key, and the owned typesetter.
@@ -210,8 +210,22 @@ Scope. The list is the spine the reader already opened. One chapter uses the boo
 
 Non-goals. No new slide, no finger-following swipe, and no margin. A bookmark, a search result, an in-book link, and a footnote stay out. A PDF outline stays out. The blocked-turn bounce stays out.
 
-Done. Plain Essay is the fixture file. Choosing Netherfield in that chapter reveals that character and keeps page 4 offset 800. Return reveals 800. Choosing the second spine item loads that item at its start and keeps page 4. A missing row stays. A stored sentence of offset 0 is kept when the reveal asked for the chapter start. A pin from an earlier reveal does not replace it. An empty-href row for page 3 goes to page 3, and return goes to page 1. The same page and offset in a different spine item is a new place. An unknown spine item opens the first one. A chapter choice clears an opening target of page 4, and a choice that stays keeps it. A stored file keeps `/OEBPS/next.xhtml` across an open, and a later progress write replaces it. The shell shows the existing contents button while the book is open and hides it on the library.
+Done. Plain Essay is the fixture file. Choosing Netherfield in that chapter reveals that character and keeps page 4 offset 800. Return reveals 800. Choosing the second spine item loads that item at its start and keeps page 4. A missing row stays. A stored sentence of offset 0 is kept when the reveal asked for the chapter start. A pin from an earlier reveal does not replace it. An empty-href row for page 3 goes to page 3, and return goes to page 1. The same page and offset in a different spine item is a new place. An unknown spine item opens the first one. A chapter choice clears an opening target of page 4, and a choice that stays keeps it. A chapter command clears a leftover resume offset. A second choice before the first poll stores the return at that chapter's jump offset. A stored file keeps `/OEBPS/next.xhtml` across an open, and a later progress write replaces it. The shell shows the existing contents button while the book is open and hides it on the library.
 
 Evidence. `spikes/shell/src/visit.rs` tests the choice and the return. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test. The menu is AppKit. That wiring is not a delivered click.
 
 Not run. A Mac window, `nsh test`, the contents click itself, the reveal on screen, and pdfium.
+
+## S3 swipe
+
+Goal. On an EPUB page, a horizontal trackpad swipe follows the finger. Letting go before the page commits returns to the same page. Letting go after it commits turns one page. Progress changes only for that committed page.
+
+Scope. The finger and its inertia are AppKit `phase` and `momentumPhase` on the scroll-wheel monitor the shelf already uses. The page script paints the offset. A commit seeks one column. The commit distance is the existing 48 points. The return and the rest of the slide use the existing 160 ms. Keys, Space, Shift-Space, and an edge click keep that slide. A key, a contents choice, a return, a resize, a reopen, or another book drops the gesture that was in progress.
+
+Non-goals. A PDF keeps its scroll offset. No fit-page paging. No bounce drawing at the first or last page. The page does not move past that edge, and the stored place does not change. No margin, no S4, and no toolbar.
+
+Done. Ten points returns to page 4. A reversal back under 48 points returns. A reversal past 48 points turns back one page. Forty-eight points turns one page, and the inertia after that lift does not turn another. A second gesture turns one more page. Dropping the gesture for a key, a chapter, or a resize makes the lift a no-op. Page 1 does not move backward. Page 10 does not move forward. A vertical wheel is not this gesture. A mouse-wheel notch under 48 points does not turn, and 48 points turns once. A backward notch on page 1 does not turn.
+
+Evidence. `spikes/shell/src/visit.rs` runs that sequence on the gesture the monitor calls. The CI `test` job names `a_trackpad_swipe_follows_cancels_and_commits_once`. The page script paints `spikeFollow` and still sends keys through `spikeTurn`. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test.
+
+Not run. A Mac window, the trackpad, WebKit painting the follow, `nsh test`, the real library, frames, and animation.

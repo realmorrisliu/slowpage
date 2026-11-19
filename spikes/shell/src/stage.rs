@@ -419,6 +419,7 @@ impl State {
 
     fn draw(&mut self, view: &StageView) {
         self.poll_web();
+        self.bind_swipe();
         self.note_probe(view);
         let bounds: NSRect = unsafe { msg_send![view, bounds] };
         self.paint_shell(bounds);
@@ -628,6 +629,7 @@ impl State {
                 self.publish();
             }
             "page" => {
+                crate::web::abandon_swipe();
                 let delta = args.as_i64().unwrap_or(0);
                 if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
@@ -647,6 +649,7 @@ impl State {
     }
 
     fn apply_chapter(&mut self, tag: isize) {
+        crate::web::abandon_swipe();
         let next = {
             let Some(web) = self.web.as_ref() else {
                 return;
@@ -1016,8 +1019,18 @@ impl State {
     }
 
     fn dismiss_web(&mut self) {
+        crate::web::abandon_swipe();
+        crate::web::show_swipe_target(None);
         if let Some(web) = self.web.take() {
             web.dismiss();
+        }
+    }
+
+    fn bind_swipe(&self) {
+        if self.mode == Mode::WebKit {
+            crate::web::show_swipe_target(self.web.clone());
+        } else {
+            crate::web::show_swipe_target(None);
         }
     }
 
@@ -1369,6 +1382,7 @@ impl State {
         if self.placed.as_ref() == Some(&key) && (self.placed_zoom - zoom).abs() < 0.01 {
             return;
         }
+        crate::web::abandon_swipe();
         let reflowable = self.declared.is_none();
         if self.settled && reflowable && !self.hold_ready {
             self.await_hold = true;

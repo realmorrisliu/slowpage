@@ -663,6 +663,7 @@ struct Slot {
     scripted: bool,
 }
 
+#[derive(Clone)]
 pub struct WebChapter {
     slot: Rc<RefCell<Slot>>,
     pub inbox: Rc<RefCell<Inbox>>,
@@ -845,6 +846,42 @@ impl WebChapter {
             self.inbox.clone(),
             href,
             true,
+        );
+    }
+
+    pub fn drop_swipe(&self) {
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            "window.spikeFollowDrop&&window.spikeFollowDrop()",
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    pub fn follow(&self, offset: f64) {
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeFollow&&window.spikeFollow({offset})"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    pub fn release_swipe(&self, delta: i32) {
+        if delta != 0 {
+            self.inbox.borrow_mut().turn_started = Some(Instant::now());
+        }
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeFollowEnd&&window.spikeFollowEnd({delta})"),
+            self.inbox.clone(),
+            href,
+            delta != 0,
         );
     }
 
@@ -1043,6 +1080,79 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
+        }
+    }
+}
+
+thread_local! {
+    static SWIPE_SHOWN: RefCell<Option<WebChapter>> = RefCell::new(None);
+    static SWIPE: RefCell<crate::visit::Swipe> = RefCell::new(crate::visit::Swipe::default());
+}
+
+/// The EPUB chapter the scroll monitor may move. A different chapter or no
+/// chapter drops a gesture that was still on the previous page.
+pub fn show_swipe_target(next: Option<WebChapter>) {
+    let changed = SWIPE_SHOWN.with(|shown| match (shown.borrow().as_ref(), next.as_ref()) {
+        (None, None) => false,
+        (Some(old), Some(new)) => !Rc::ptr_eq(&old.slot, &new.slot) || old.href() != new.href(),
+        _ => true,
+    });
+    if changed {
+        abandon_swipe();
+    }
+    SWIPE_SHOWN.with(|shown| *shown.borrow_mut() = next);
+}
+
+/// Clear a live follow so a later finger-up cannot turn. Returns whether a
+/// finger was actually down.
+pub fn abandon_swipe() -> bool {
+    let live = SWIPE.with(|swipe| swipe.borrow_mut().abandon());
+    if live {
+        if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
+            web.drop_swipe();
+        }
+    }
+    live
+}
+
+/// Handle one scroll-wheel sample while an EPUB page is showing.
+/// True means the event was the page gesture and must not also reach the view.
+pub fn take_epub_wheel(phase: u64, momentum: u64, dx: f64, dy: f64) -> bool {
+    let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) else {
+        return false;
+    };
+    let (page, pages) = web
+        .inbox
+        .borrow()
+        .pages
+        .map(|(page, pages)| (page as u32, pages as u32))
+        .unwrap_or((0, 0));
+    let effect = SWIPE.with(|swipe| {
+        swipe.borrow_mut().offer(
+            crate::visit::WheelTick {
+                finger: crate::visit::finger_bits(phase),
+                momentum: momentum != 0,
+                dx,
+                dy,
+            },
+            page,
+            pages,
+        )
+    });
+    match effect {
+        crate::visit::WheelMove::Pass => false,
+        crate::visit::WheelMove::Swallow | crate::visit::WheelMove::Hold => true,
+        crate::visit::WheelMove::Follow(offset) => {
+            web.follow(offset);
+            true
+        }
+        crate::visit::WheelMove::Commit(delta) => {
+            web.release_swipe(delta);
+            true
+        }
+        crate::visit::WheelMove::Cancel => {
+            web.release_swipe(0);
+            true
         }
     }
 }

@@ -452,13 +452,12 @@ const SCRIPT: &str = r#"
   window.spikeOwnsBox = true;
   const DURATION = __MS__;
   const PAPER = "__PAPER__";
-  const SWIPE = 48;
   const root = document.body;
   let busy = false;
   let queued = 0;
-  let acc = 0;
-  let armed = true;
   let shift = 0;
+  let followX = 0;
+  let followGen = 0;
   let measured = false;
   let layoutReport = null;
   let justifyReady = false;
@@ -829,6 +828,9 @@ const SCRIPT: &str = r#"
     if (next) begin(next);
   }
   window.spikeTurn = function (delta) {
+    followGen++;
+    followX = 0;
+    root.style.transform = "none";
     delta = delta < 0 ? -1 : 1;
     if (busy) {
       queued = delta;
@@ -936,24 +938,74 @@ const SCRIPT: &str = r#"
     event.preventDefault();
     window.spikeTurn(delta);
   }, true);
-  window.addEventListener("wheel", function (event) {
-    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
-    event.preventDefault();
+  window.spikeFollowDrop = function () {
+    followGen++;
+    followX = 0;
+    queued = 0;
+    busy = false;
+    root.style.transform = "none";
+  };
+  window.spikeFollow = function (offset) {
     if (busy) return;
-    acc += event.deltaX;
-    if (!armed) {
-      if (Math.abs(event.deltaX) < 1.5) {
-        armed = true;
-        acc = 0;
+    followGen++;
+    const w = pageWidth();
+    const box = column();
+    let x = offset;
+    if (box.page <= 1 && x < 0) x = 0;
+    if (box.page >= box.pages && x > 0) x = 0;
+    if (w > 0 && x > w) x = w;
+    if (w > 0 && x < -w) x = -w;
+    followX = x;
+    root.style.transform = x ? "translate3d(" + (-x) + "px,0,0)" : "none";
+  };
+  function glide(from, to, done) {
+    const gen = followGen;
+    const t0 = performance.now();
+    function frame(t) {
+      if (gen !== followGen) return;
+      const u = Math.min(1, (t - t0) / DURATION);
+      const eased = (1 - Math.cos(Math.PI * u)) / 2;
+      const x = from + (to - from) * eased;
+      root.style.transform = "translate3d(" + (-x) + "px,0,0)";
+      if (u < 1) {
+        requestAnimationFrame(frame);
+        return;
       }
+      if (gen === followGen) done();
+    }
+    requestAnimationFrame(frame);
+  }
+  window.spikeFollowEnd = function (delta) {
+    if (busy) {
+      followGen++;
+      followX = 0;
+      root.style.transform = "none";
       return;
     }
-    if (Math.abs(acc) < SWIPE) return;
-    const delta = acc > 0 ? 1 : -1;
-    acc = 0;
-    armed = false;
-    window.spikeTurn(delta);
-  }, { passive: false, capture: true });
+    const from = followX;
+    const w = pageWidth();
+    const box = column();
+    const blocked = !delta || (delta > 0 && box.page >= box.pages) || (delta < 0 && box.page <= 1);
+    if (blocked) {
+      glide(from, 0, function () {
+        followX = 0;
+        root.style.transform = "none";
+      });
+      return;
+    }
+    const step = delta > 0 ? 1 : -1;
+    busy = true;
+    glide(from, step > 0 ? w : -w, function () {
+      followX = 0;
+      root.style.transform = "none";
+      seek(box.w * (box.page + step - 1));
+      post();
+      busy = false;
+      const next = queued;
+      queued = 0;
+      if (next) begin(next);
+    });
+  };
   if (window.spikeJustify) {
     window.spikeJustify.install({
       onReport: function (report) {
@@ -1001,6 +1053,11 @@ mod tests {
         assert!(script.contains("event.shiftKey"));
         assert!(script.contains("window.spikeTurn(delta)"));
         assert!(script.contains("target > box.pages"));
+        assert!(script.contains("window.spikeFollow"));
+        assert!(script.contains("window.spikeFollowDrop"));
+        assert!(script.contains("window.spikeFollowEnd"));
+        assert!(script.contains("DURATION"));
+        assert!(!script.contains("addEventListener(\"wheel\""));
     }
 
     #[test]
