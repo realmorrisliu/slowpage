@@ -113,6 +113,10 @@ pub fn wheel_scrolls_shelf(shell: bool) -> bool {
     shell && ON_LIBRARY.load(Ordering::Relaxed)
 }
 
+pub fn on_library() -> bool {
+    ON_LIBRARY.load(Ordering::Relaxed)
+}
+
 pub const OPEN_REFUSAL: &str = "打不开这个文件";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -239,6 +243,495 @@ pub fn step_restore(
         want: None,
         hold: None,
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadingPlace {
+    pub href: String,
+    pub page: u32,
+    pub offset: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChapterMark {
+    pub title: String,
+    pub href: String,
+    pub offset: u32,
+    pub page: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChapterMove {
+    Stay,
+    Reveal { offset: u32 },
+    Chapter { index: usize, offset: u32 },
+    Page { page: u32 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChapterStep {
+    pub go: ChapterMove,
+    pub back: Option<ReadingPlace>,
+}
+
+pub fn contents_marks(title: &str, spine: &[String]) -> Vec<ChapterMark> {
+    spine
+        .iter()
+        .map(|href| ChapterMark {
+            title: chapter_title(title, spine.len(), href),
+            href: href.clone(),
+            offset: 0,
+            page: 0,
+        })
+        .collect()
+}
+
+fn chapter_title(title: &str, count: usize, href: &str) -> String {
+    if count == 1 && !title.is_empty() {
+        return title.to_string();
+    }
+    href.rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(href)
+        .to_string()
+}
+
+fn move_toward(here: &ReadingPlace, mark: &ChapterMark, spine: &[String]) -> ChapterMove {
+    if mark.href.is_empty() {
+        if mark.page >= 1 && mark.page != here.page {
+            ChapterMove::Page { page: mark.page }
+        } else {
+            ChapterMove::Stay
+        }
+    } else if mark.href == here.href {
+        if mark.offset == here.offset {
+            ChapterMove::Stay
+        } else {
+            ChapterMove::Reveal {
+                offset: mark.offset,
+            }
+        }
+    } else if let Some(index) = spine.iter().position(|href| href == &mark.href) {
+        ChapterMove::Chapter {
+            index,
+            offset: mark.offset,
+        }
+    } else {
+        ChapterMove::Stay
+    }
+}
+
+pub fn chapter_jump(
+    here: &ReadingPlace,
+    marks: &[ChapterMark],
+    index: usize,
+    spine: &[String],
+    back: Option<ReadingPlace>,
+) -> ChapterStep {
+    let Some(mark) = marks.get(index) else {
+        return ChapterStep {
+            go: ChapterMove::Stay,
+            back,
+        };
+    };
+    let go = move_toward(here, mark, spine);
+    if matches!(go, ChapterMove::Stay) {
+        return ChapterStep { go, back };
+    }
+    ChapterStep {
+        go,
+        back: Some(here.clone()),
+    }
+}
+
+pub fn chapter_return(
+    here: &ReadingPlace,
+    back: Option<ReadingPlace>,
+    spine: &[String],
+) -> ChapterStep {
+    let Some(place) = back else {
+        return ChapterStep {
+            go: ChapterMove::Stay,
+            back: None,
+        };
+    };
+    let mark = ChapterMark {
+        title: String::new(),
+        href: place.href.clone(),
+        offset: place.offset,
+        page: place.page,
+    };
+    let go = move_toward(here, &mark, spine);
+    let already = place.href == here.href && place.offset == here.offset
+        || place.href.is_empty() && place.page == here.page;
+    let keep_missing = matches!(go, ChapterMove::Stay) && !already;
+    let back = if keep_missing { Some(place) } else { None };
+    ChapterStep { go, back }
+}
+
+/// The place that belongs to the href on screen. A jump aimed at that href
+/// wins. A saved offset from a different href does not.
+fn shown_place(
+    shown_href: &str,
+    shown_page: u32,
+    saved_href: &str,
+    saved_page: u32,
+    saved_offset: u32,
+    jump_href: &str,
+    jump_offset: Option<u32>,
+    awaiting: Option<u32>,
+) -> ReadingPlace {
+    if jump_href == shown_href {
+        if let Some(offset) = jump_offset {
+            return ReadingPlace {
+                href: shown_href.to_string(),
+                page: 1,
+                offset,
+            };
+        }
+    }
+    if saved_href == shown_href {
+        return ReadingPlace {
+            href: shown_href.to_string(),
+            page: saved_page.max(1),
+            offset: awaiting.unwrap_or(saved_offset),
+        };
+    }
+    ReadingPlace {
+        href: shown_href.to_string(),
+        page: shown_page.max(1),
+        offset: 0,
+    }
+}
+
+pub struct NavIn<'a> {
+    pub shown_href: &'a str,
+    pub shown_page: u32,
+    pub saved_href: &'a str,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub jump_href: &'a str,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub back: Option<ReadingPlace>,
+    pub marks: &'a [ChapterMark],
+    pub spine: &'a [String],
+    pub pick: isize,
+}
+
+pub struct NavOut {
+    pub go: ChapterMove,
+    pub back: Option<ReadingPlace>,
+    pub pending: u32,
+    pub jump_href: String,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub saved_href: String,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub record: bool,
+}
+
+/// `pickChapter` runs this before reveal or `show_chapter`. A move replaces
+/// the open resume. The saved row becomes the place that move requested.
+pub fn navigate(nav: NavIn<'_>) -> NavOut {
+    let here = shown_place(
+        nav.shown_href,
+        nav.shown_page,
+        nav.saved_href,
+        nav.saved_page,
+        nav.saved_offset,
+        nav.jump_href,
+        nav.jump_offset,
+        nav.awaiting,
+    );
+    let step = if nav.pick < 0 {
+        chapter_return(&here, nav.back, nav.spine)
+    } else {
+        chapter_jump(&here, nav.marks, nav.pick as usize, nav.spine, nav.back)
+    };
+    let pending = if matches!(step.go, ChapterMove::Stay) {
+        nav.pending
+    } else {
+        0
+    };
+    let saved_href = nav.saved_href.to_string();
+    let mut saved_page = nav.saved_page;
+    let mut saved_offset = nav.saved_offset;
+    let mut jump_href = nav.jump_href.to_string();
+    let mut jump_offset = nav.jump_offset;
+    let mut awaiting = nav.awaiting;
+    let mut record = false;
+    match &step.go {
+        ChapterMove::Stay => {}
+        ChapterMove::Reveal { offset } => {
+            let offset = *offset;
+            jump_href.clear();
+            jump_offset = None;
+            awaiting = Some(offset);
+            if saved_href != nav.shown_href || saved_offset != offset {
+                saved_page = if saved_href == nav.shown_href {
+                    saved_page.max(1)
+                } else {
+                    1
+                };
+                saved_offset = offset;
+                record = true;
+            }
+        }
+        ChapterMove::Chapter { index, offset } => {
+            let offset = *offset;
+            if let Some(href) = nav.spine.get(*index) {
+                jump_href = href.clone();
+                jump_offset = Some(offset);
+                awaiting = None;
+                if saved_href != *href || saved_page != 1 || saved_offset != offset {
+                    saved_page = 1;
+                    saved_offset = offset;
+                    record = true;
+                }
+            }
+        }
+        ChapterMove::Page { .. } => {}
+    }
+    let saved_href = match &step.go {
+        ChapterMove::Chapter { index, .. } => nav.spine.get(*index).cloned().unwrap_or(saved_href),
+        ChapterMove::Reveal { .. } => nav.shown_href.to_string(),
+        _ => saved_href,
+    };
+    NavOut {
+        go: step.go,
+        back: step.back,
+        pending,
+        jump_href,
+        jump_offset,
+        awaiting,
+        saved_href,
+        saved_page,
+        saved_offset,
+        record,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenedPlace {
+    pub index: usize,
+    pub page: u32,
+    pub offset: u32,
+}
+
+pub fn opened_place(spine: &[String], href: &str, page: u32, offset: u32) -> OpenedPlace {
+    let page = page.max(1);
+    if href.is_empty() {
+        return OpenedPlace {
+            index: 0,
+            page,
+            offset,
+        };
+    }
+    if let Some(index) = spine.iter().position(|item| item == href) {
+        return OpenedPlace {
+            index,
+            page,
+            offset,
+        };
+    }
+    OpenedPlace {
+        index: 0,
+        page: 1,
+        offset: 0,
+    }
+}
+
+pub fn spine_index(spine: &[String], href: &str) -> usize {
+    opened_place(spine, href, 1, 0).index
+}
+
+pub fn changed_chapter(stored_href: &str, href: &str) -> bool {
+    !href.is_empty() && href != stored_href
+}
+
+/// Page and offset stored with `href` before that chapter reports its own pin.
+/// A different chapter stores the jump aimed at it. A stored row with no href,
+/// and the same href, keep their place.
+pub fn chapter_target(
+    stored_href: &str,
+    href: &str,
+    page: u32,
+    offset: u32,
+    jump_href: &str,
+    jump_offset: Option<u32>,
+) -> (u32, u32) {
+    if stored_href.is_empty() || !changed_chapter(stored_href, href) {
+        return (page, offset);
+    }
+    let aimed = if jump_href == href {
+        jump_offset.unwrap_or(0)
+    } else {
+        0
+    };
+    (1, aimed)
+}
+
+/// One poll of an open chapter. `poll_web` applies this and then reveals or records.
+pub struct ChapterPoll<'a> {
+    pub saved_href: &'a str,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub jump_href: &'a str,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub hold: Option<u32>,
+    pub shown: u32,
+    pub href: &'a str,
+    pub ready: bool,
+    pub reported: bool,
+    pub pinned: Option<u32>,
+    pub missed: bool,
+    pub sentence: u32,
+    pub still_turning: bool,
+}
+
+/// Fields after `poll_chapter`. `pin_write` is a pin that replaced the stored place.
+pub struct PolledChapter {
+    pub saved_href: String,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub hold: Option<u32>,
+    pub reveal_jump: Option<u32>,
+    pub reveal_pending: Option<u32>,
+    pub pin_write: bool,
+    pub record: bool,
+}
+
+/// The place stored for a new href is the jump this poll started with.
+/// Handing that jump to reveal clears the field and does not clear the place.
+pub fn poll_chapter(poll: ChapterPoll<'_>) -> PolledChapter {
+    let aim = poll.jump_offset;
+    let mut jump_offset = poll.jump_offset;
+    let mut awaiting = poll.awaiting;
+    let mut pending = poll.pending;
+    if jump_offset.is_some() && poll.href == poll.jump_href {
+        pending = 0;
+    }
+    let mut reveal_jump = None;
+    let mut reveal_pending = None;
+    if let Some(offset) = jump_offset {
+        if poll.ready && poll.href == poll.jump_href {
+            jump_offset = None;
+            awaiting = Some(offset);
+            reveal_jump = Some(offset);
+        }
+    }
+    if pending > 0 && poll.reported {
+        let offset = pending;
+        pending = 0;
+        awaiting = Some(offset);
+        reveal_pending = Some(offset);
+    }
+    let wanted = awaiting;
+    let step = step_restore(
+        pending > 0 || jump_offset.is_some(),
+        awaiting,
+        poll.hold,
+        poll.shown,
+        poll.pinned,
+        poll.missed,
+    );
+    awaiting = step.want;
+    let hold = step.hold;
+    let mut saved_page = poll.saved_page;
+    let mut saved_offset = poll.saved_offset;
+    let mut saved_href = poll.saved_href.to_string();
+    let mut record = false;
+    let pin_write = step.write && !poll.still_turning;
+    if pin_write {
+        let (page, offset) = place_after_pin(
+            poll.saved_page,
+            poll.saved_offset,
+            poll.shown,
+            poll.sentence,
+            wanted,
+            poll.pinned,
+        );
+        if place_changed(
+            poll.saved_page,
+            poll.saved_offset,
+            poll.saved_href,
+            page,
+            offset,
+            poll.href,
+        ) {
+            saved_page = page;
+            saved_offset = offset;
+            saved_href = poll.href.to_string();
+            record = true;
+        }
+    } else if changed_chapter(poll.saved_href, poll.href) {
+        let (page, offset) = chapter_target(
+            poll.saved_href,
+            poll.href,
+            poll.saved_page,
+            poll.saved_offset,
+            poll.jump_href,
+            aim,
+        );
+        saved_page = page;
+        saved_offset = offset;
+        saved_href = poll.href.to_string();
+        record = true;
+    }
+    PolledChapter {
+        saved_href,
+        saved_page,
+        saved_offset,
+        jump_offset,
+        awaiting,
+        pending,
+        hold,
+        reveal_jump,
+        reveal_pending,
+        pin_write,
+        record,
+    }
+}
+
+pub fn place_changed(
+    stored_page: u32,
+    stored_offset: u32,
+    stored_href: &str,
+    page: u32,
+    offset: u32,
+    href: &str,
+) -> bool {
+    page != stored_page || offset != stored_offset || (!href.is_empty() && href != stored_href)
+}
+
+pub fn opening_page(go: &ChapterMove, page: Option<usize>) -> Option<usize> {
+    match go {
+        ChapterMove::Stay => page,
+        _ => None,
+    }
+}
+
+pub fn place_after_pin(
+    stored_page: u32,
+    stored_offset: u32,
+    shown: u32,
+    sample: u32,
+    wanted: Option<u32>,
+    pinned: Option<u32>,
+) -> (u32, u32) {
+    if wanted.is_some() && pinned == wanted {
+        return (shown.max(1), wanted.unwrap_or(0));
+    }
+    next_sentence(stored_page, stored_offset, shown, sample)
 }
 
 pub fn page_key_delta(shell: bool, surface: Surface, forward: bool) -> i32 {
@@ -592,5 +1085,247 @@ mod tests {
             PageEdge::Forward
         );
         assert!(click_is_drag(3.0, 0.0));
+    }
+
+    #[test]
+    fn a_chapter_choice_lands_on_that_sentence_and_returns() {
+        let essay = fixture("Plain Essay.epub");
+        assert!(essay.starts_with(b"PK"));
+        let chapter = "/OEBPS/chapter.xhtml";
+        let next = "/OEBPS/next.xhtml";
+        let spine = [chapter.to_string(), next.to_string()];
+        let marks = contents_marks("Plain Essay", &spine);
+        assert_eq!(marks[0].title, "chapter.xhtml");
+        assert_eq!(marks[1].title, "next.xhtml");
+        assert_eq!(marks[0].offset, 0);
+        let one = contents_marks("Plain Essay", &[chapter.to_string()]);
+        assert_eq!(one[0].title, "Plain Essay");
+        assert_eq!(one[0].href, chapter);
+
+        let text = "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.";
+        let netherfield = "Netherfield Park is let at last";
+        let phrase = format!("{text} {netherfield}");
+        let at = phrase.find("Netherfield").unwrap() as u32;
+        let mut rows = one.clone();
+        rows[0].offset = at;
+
+        let here = ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let jumped = chapter_jump(&here, &rows, 0, &[chapter.to_string()], None);
+        assert_eq!(jumped.go, ChapterMove::Reveal { offset: at });
+        assert_eq!(jumped.back.as_ref().map(|place| place.offset), Some(800));
+        let back = chapter_return(
+            &ReadingPlace {
+                href: chapter.to_string(),
+                page: 1,
+                offset: at,
+            },
+            jumped.back,
+            &[chapter.to_string()],
+        );
+        assert_eq!(back.go, ChapterMove::Reveal { offset: 800 });
+        assert_eq!(back.back, None);
+        let stored = place_after_pin(4, 800, 4, 0, Some(0), Some(0));
+        assert_eq!(stored, (4, 0));
+        assert_eq!(place_after_pin(4, 800, 4, 0, None, Some(0)), (4, 800));
+        assert_eq!(spine_index(&spine, next), 1);
+        assert_eq!(spine_index(&spine, ""), 0);
+        assert_eq!(spine_index(&spine, "/missing.xhtml"), 0);
+        assert_eq!(
+            opened_place(&spine, "/missing.xhtml", 4, 800),
+            OpenedPlace {
+                index: 0,
+                page: 1,
+                offset: 0,
+            }
+        );
+        assert_eq!(
+            opened_place(&spine, next, 4, 800),
+            OpenedPlace {
+                index: 1,
+                page: 4,
+                offset: 800,
+            }
+        );
+        assert_eq!(
+            opened_place(&spine, "", 4, 800),
+            OpenedPlace {
+                index: 0,
+                page: 4,
+                offset: 800,
+            }
+        );
+        let empty = "/OEBPS/empty.xhtml";
+        let missed_chapter = step_restore(false, Some(0), None, 1, Some(0), true);
+        assert!(!missed_chapter.write);
+        assert_eq!(missed_chapter.hold, Some(1));
+        assert!(changed_chapter(chapter, empty));
+        assert!(!changed_chapter(empty, empty));
+        assert!(!changed_chapter(chapter, ""));
+        let origin = ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let chosen = chapter_jump(&origin, &marks, 1, &spine, None);
+        let ChapterMove::Chapter { index, offset } = chosen.go else {
+            panic!("a different chapter is a chapter move");
+        };
+        assert_eq!(offset, 0);
+        assert_eq!(
+            chapter_target(chapter, &spine[index], 4, 800, &spine[index], Some(offset)),
+            (1, 0)
+        );
+        let returned = chapter_return(
+            &ReadingPlace {
+                href: next.to_string(),
+                page: 1,
+                offset: 0,
+            },
+            Some(origin.clone()),
+            &spine,
+        );
+        let ChapterMove::Chapter {
+            index: back_index,
+            offset: back_offset,
+        } = returned.go
+        else {
+            panic!("returning across chapters is a chapter move");
+        };
+        assert_eq!(back_offset, 800);
+        let ready_first = poll_chapter(ChapterPoll {
+            saved_href: next,
+            saved_page: 1,
+            saved_offset: 0,
+            jump_href: &spine[back_index],
+            jump_offset: Some(back_offset),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: &spine[back_index],
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!(ready_first.reveal_jump, Some(800));
+        assert_eq!(ready_first.jump_offset, None);
+        assert_eq!(ready_first.saved_offset, 800);
+        let again = chapter_jump(
+            &ReadingPlace {
+                href: ready_first.saved_href,
+                page: ready_first.saved_page,
+                offset: ready_first.saved_offset,
+            },
+            &marks,
+            1,
+            &spine,
+            None,
+        );
+        assert_eq!(again.back.as_ref().map(|place| place.offset), Some(800));
+        assert_eq!(
+            chapter_target(chapter, next, 4, 800, chapter, Some(800)),
+            (1, 0)
+        );
+        assert_eq!(
+            chapter_target(chapter, empty, 4, 800, empty, Some(0)),
+            (1, 0)
+        );
+        assert_eq!(
+            chapter_target(chapter, chapter, 4, 800, chapter, Some(at)),
+            (4, 800)
+        );
+        assert_eq!(chapter_target(chapter, "", 4, 800, "", None), (4, 800));
+        assert_eq!(
+            chapter_target("", chapter, 4, 800, chapter, Some(0)),
+            (4, 800)
+        );
+        let waiting = step_restore(true, None, None, 4, None, false);
+        assert!(!waiting.write);
+        assert!(place_changed(1, 0, chapter, 1, 0, next));
+        assert!(!place_changed(1, 0, next, 1, 0, next));
+        assert!(!place_changed(4, 800, chapter, 4, 800, ""));
+        assert_eq!(
+            opening_page(
+                &ChapterMove::Chapter {
+                    index: 1,
+                    offset: 0
+                },
+                Some(4)
+            ),
+            None
+        );
+        assert_eq!(opening_page(&ChapterMove::Stay, Some(4)), Some(4));
+
+        let other = chapter_jump(&here, &marks, 1, &spine, None);
+        assert_eq!(
+            other.go,
+            ChapterMove::Chapter {
+                index: 1,
+                offset: 0
+            }
+        );
+        assert_eq!(other.back.as_ref().map(|place| place.page), Some(4));
+        let missing = chapter_jump(&here, &marks, 9, &spine, other.back.clone());
+        assert_eq!(missing.go, ChapterMove::Stay);
+        assert_eq!(missing.back, other.back);
+        let lost = ChapterMark {
+            title: "gone".into(),
+            href: "/missing.xhtml".into(),
+            offset: 0,
+            page: 0,
+        };
+        let stayed = chapter_jump(&here, &[lost], 0, &spine, None);
+        assert_eq!(stayed.go, ChapterMove::Stay);
+        assert_eq!(stayed.back, None);
+
+        let pdf_here = ReadingPlace {
+            href: String::new(),
+            page: 1,
+            offset: 0,
+        };
+        let pdf = ChapterMark {
+            title: "Field".into(),
+            href: String::new(),
+            offset: 0,
+            page: 3,
+        };
+        let turned = chapter_jump(&pdf_here, &[pdf], 0, &[], None);
+        assert_eq!(turned.go, ChapterMove::Page { page: 3 });
+        let same = chapter_return(
+            &ReadingPlace {
+                href: String::new(),
+                page: 3,
+                offset: 0,
+            },
+            turned.back,
+            &[],
+        );
+        assert_eq!(same.go, ChapterMove::Page { page: 1 });
+        assert_eq!(same.back, None);
+        assert_eq!(chapter_return(&here, None, &spine).go, ChapterMove::Stay);
+        let kept = chapter_return(
+            &here,
+            Some(ReadingPlace {
+                href: "/missing.xhtml".into(),
+                page: 1,
+                offset: 3,
+            }),
+            &spine,
+        );
+        assert_eq!(kept.go, ChapterMove::Stay);
+        assert_eq!(kept.back.unwrap().offset, 3);
+        publish_surface(Surface::Library);
+        assert!(on_library());
+        publish_surface(Surface::Reading);
+        assert!(!on_library());
+        publish_surface(Surface::Library);
+        assert!(on_library());
     }
 }
