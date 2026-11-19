@@ -582,6 +582,72 @@ mod tests {
         assert_eq!(resume_page(&file, path), 5);
         assert_eq!(resume_offset(&file, path), 20);
         assert_eq!(resume_href(&file, path), "/OEBPS/chapter.xhtml");
+
+        let legacy = serde_json::json!({
+            "history": [{
+                "path": path,
+                "page": 4,
+                "offset": 800,
+                "openedAt": 3
+            }]
+        });
+        std::fs::write(&file, legacy.to_string()).unwrap();
+        assert_eq!(resume_href(&file, path), "");
+        assert_eq!(resume_page(&file, path), 4);
+        assert_eq!(resume_offset(&file, path), 800);
+        let spine = [
+            "/OEBPS/chapter.xhtml".to_string(),
+            "/OEBPS/empty.xhtml".to_string(),
+        ];
+        let kept = crate::visit::opened_place(&spine, &resume_href(&file, path), 4, 800);
+        assert_eq!(kept.page, 4);
+        assert_eq!(kept.offset, 800);
+        assert_eq!(kept.index, 0);
+
+        record_progress(&file, path, 4, Some(10), 800, "/gone.xhtml").unwrap();
+        let dropped = crate::visit::opened_place(&spine, &resume_href(&file, path), 4, 800);
+        assert_eq!(dropped.index, 0);
+        assert_eq!(dropped.page, 1);
+        assert_eq!(dropped.offset, 0);
+        record_progress(
+            &file,
+            path,
+            dropped.page,
+            Some(10),
+            dropped.offset,
+            &spine[dropped.index],
+        )
+        .unwrap();
+        assert_eq!(resume_page(&file, path), 1);
+        assert_eq!(resume_offset(&file, path), 0);
+        assert_eq!(resume_href(&file, path), "/OEBPS/chapter.xhtml");
+
+        let valid = crate::visit::opened_place(&spine, "/OEBPS/empty.xhtml", 2, 20);
+        assert_eq!(valid.index, 1);
+        assert_eq!(valid.page, 2);
+        assert_eq!(valid.offset, 20);
+
+        record_progress(&file, path, 4, Some(10), 800, "/OEBPS/chapter.xhtml").unwrap();
+        let missed = crate::visit::step_restore(false, Some(0), None, 1, Some(0), true);
+        assert!(!missed.write);
+        let empty = "/OEBPS/empty.xhtml";
+        assert!(crate::visit::changed_chapter(
+            &resume_href(&file, path),
+            empty
+        ));
+        record_progress(&file, path, 4, Some(10), 800, empty).unwrap();
+        assert_eq!(resume_href(&file, path), empty);
+        assert_eq!(resume_page(&file, path), 4);
+        assert_eq!(resume_offset(&file, path), 800);
+        let back = crate::visit::opened_place(
+            &spine,
+            &resume_href(&file, path),
+            resume_page(&file, path),
+            resume_offset(&file, path),
+        );
+        assert_eq!(back.index, 1);
+        assert_eq!(back.page, 4);
+        assert_eq!(back.offset, 800);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

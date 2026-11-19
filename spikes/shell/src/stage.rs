@@ -911,7 +911,7 @@ impl State {
             }
             crate::books::BookKind::Epub => spike_library::OpenKind::EpubFile,
         };
-        let page = page.max(1);
+        let mut page = page.max(1);
         self.page_total = None;
         self.saved_sentence = 0;
         self.saved_href.clear();
@@ -926,6 +926,7 @@ impl State {
         self.pdf = None;
         self.anchor = None;
         self.book_path = book.path.clone();
+        let mut replaced_href = String::new();
         let opened = if plan.pdf {
             let engine = match std::env::var("SPIKE_ENGINE").as_deref() {
                 Ok("hayro") => PdfEngine::Hayro,
@@ -952,6 +953,21 @@ impl State {
             self.shown_at = None;
             self.placed = None;
             self.open_web(view);
+            if let Some(web) = &self.web {
+                let open =
+                    crate::visit::opened_place(&web.spine(), &self.saved_href, page, sentence);
+                if open.page != page || open.offset != sentence {
+                    page = open.page;
+                    self.saved_sentence = open.offset;
+                    self.pending_sentence = open.offset;
+                    self.goto = None;
+                    let href = web.href();
+                    if !href.is_empty() {
+                        self.saved_href = href.clone();
+                        replaced_href = href;
+                    }
+                }
+            }
             self.web.is_some()
         } else {
             false
@@ -970,6 +986,16 @@ impl State {
             self.page_total,
             opened_at_ms(),
         );
+        if !replaced_href.is_empty() {
+            let _ = crate::settings::record_progress(
+                &crate::settings::path(),
+                &book.path,
+                page,
+                self.page_total,
+                self.saved_sentence,
+                &replaced_href,
+            );
+        }
         self.publish();
         true
     }
@@ -1125,6 +1151,20 @@ impl State {
                         page,
                         self.page_total,
                         offset,
+                        &href,
+                    );
+                }
+            } else {
+                let href = web.href();
+                if crate::visit::changed_chapter(&self.saved_href, &href) {
+                    let path = self.book_path.clone();
+                    self.saved_href = href.clone();
+                    let _ = crate::settings::record_progress(
+                        &crate::settings::path(),
+                        &path,
+                        self.saved_page,
+                        self.page_total,
+                        self.saved_sentence,
                         &href,
                     );
                 }

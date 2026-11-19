@@ -370,11 +370,42 @@ pub fn chapter_return(
     ChapterStep { go, back }
 }
 
-pub fn spine_index(spine: &[String], href: &str) -> usize {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenedPlace {
+    pub index: usize,
+    pub page: u32,
+    pub offset: u32,
+}
+
+pub fn opened_place(spine: &[String], href: &str, page: u32, offset: u32) -> OpenedPlace {
+    let page = page.max(1);
     if href.is_empty() {
-        return 0;
+        return OpenedPlace {
+            index: 0,
+            page,
+            offset,
+        };
     }
-    spine.iter().position(|item| item == href).unwrap_or(0)
+    if let Some(index) = spine.iter().position(|item| item == href) {
+        return OpenedPlace {
+            index,
+            page,
+            offset,
+        };
+    }
+    OpenedPlace {
+        index: 0,
+        page: 1,
+        offset: 0,
+    }
+}
+
+pub fn spine_index(spine: &[String], href: &str) -> usize {
+    opened_place(spine, href, 1, 0).index
+}
+
+pub fn changed_chapter(stored_href: &str, href: &str) -> bool {
+    !href.is_empty() && href != stored_href
 }
 
 pub fn place_changed(
@@ -809,6 +840,37 @@ mod tests {
         assert_eq!(spine_index(&spine, next), 1);
         assert_eq!(spine_index(&spine, ""), 0);
         assert_eq!(spine_index(&spine, "/missing.xhtml"), 0);
+        assert_eq!(
+            opened_place(&spine, "/missing.xhtml", 4, 800),
+            OpenedPlace {
+                index: 0,
+                page: 1,
+                offset: 0,
+            }
+        );
+        assert_eq!(
+            opened_place(&spine, next, 4, 800),
+            OpenedPlace {
+                index: 1,
+                page: 4,
+                offset: 800,
+            }
+        );
+        assert_eq!(
+            opened_place(&spine, "", 4, 800),
+            OpenedPlace {
+                index: 0,
+                page: 4,
+                offset: 800,
+            }
+        );
+        let empty = "/OEBPS/empty.xhtml";
+        let missed_chapter = step_restore(false, Some(0), None, 1, Some(0), true);
+        assert!(!missed_chapter.write);
+        assert_eq!(missed_chapter.hold, Some(1));
+        assert!(changed_chapter(chapter, empty));
+        assert!(!changed_chapter(empty, empty));
+        assert!(!changed_chapter(chapter, ""));
         assert!(place_changed(1, 0, chapter, 1, 0, next));
         assert!(!place_changed(1, 0, next, 1, 0, next));
         assert!(!place_changed(4, 800, chapter, 4, 800, ""));
