@@ -91,3 +91,17 @@ Dalibre at `aff3eb5` is still GPL-3.0 or later. No source is copied. It has one 
 This branch owns `spikes/library/src/apple.rs`, `spikes/library/src/tests.rs`, and `docs/harness/parallel-readiness.md`. Pull request 65 does not edit those paths. Either line can merge to `main` first.
 
 It is done when `a_local_copy_opens_when_icloud_only_has_the_placeholder` passes on a fixture home. That home is not a user Mac.
+
+## Shelf title and author search
+
+Recorded against main `5805eb2525e6a568bb4c84340ee7de2e11d8929b`, the squash of pull request 67. Open pull request 65 still owns `spikes/shell/src/chrome.rs`, `settings.rs`, `stage.rs`, `visit.rs`, `web.rs`, `docs/roadmap.md`, `.cursor/skills/verify-superreader/features/shell.md`, `.github/workflows/ci.yml`, `Cargo.lock`, and the root `Cargo.toml`. This slice does not edit those paths. `spikes/shell/src/lib.rs` is not in that list and is not edited here. The shelf projection already runs there. The query is a `Signal<String>` created in `form::mount`, and `shelf::searched` filters the `LibraryIn` that projection already built.
+
+The shelf field finds an imported book whose title or author contains the text. Blank text, including spaces, shows the same shelf again. A miss leaves the grid empty, keeps the library counts and sources, and does not switch the card to the empty import state. The matching card keeps its open path. The check is a Unicode lowercase substring. It is not a search service and not an index. Notes, reading position, and source files stay as they are.
+
+Dalibre at `aff3eb5` is still GPL-3.0 or later. No source is copied. Its catalog filters books already loaded. This slice does the same kind of filter on the shelf cards, for title and author only.
+
+This branch owns `spikes/shell/src/shelf.rs`, `spikes/shell/src/form.rs`, and `docs/harness/parallel-readiness.md`.
+
+Morris stated this for Slowpage on 2026-11-19 18:41 Asia/Shanghai. An established slice is implemented, reviewed on its own, checked with the cloud checks that apply, merged in the normal way, and the next slice starts. It does not wait for a separate approval on every pull request. A new scope, a new visual design, or an architecture tradeoff still waits for Morris. Security controls stay in place. A check that did not run on a Mac is not a pass. This note does not apply to another project.
+
+It is done when `a_title_or_author_query_filters_the_shelf_and_clears` passes on the form fixture. That fixture is not a user Mac. The shell release build is the macOS compile of `spike-shell`. A passing compile is not a GUI pass.
