@@ -77,3 +77,17 @@ Dalibre at `aff3eb5e66b1bd0287bfc42b46e93b6fcc2d7151` remains GPL-3.0 or later. 
 This branch owns `spikes/library/src/apple.rs`, `spikes/library/src/tests.rs`, and `docs/harness/parallel-readiness.md`. Pull request 65 does not edit those paths. Either line can merge to `main` first.
 
 It is done when `cloud_and_series_rows_do_not_look_like_missing_files` passes on a fixture folder and the public catalog API is unchanged. That fixture is not Apple Books on a Mac.
+
+## Local copy over an iCloud placeholder
+
+Recorded against main `576195310bf90d6e20c5c730121d9dfce017b83c`, the squash of pull request 66. Open pull request 65 still owns the shell, the roadmap, the shell verify feature, workflows, the lockfile, and the root manifest. This slice is based on `5761953`, not on that pull request.
+
+A relative name that exists as a real file in the Books folder was labeled not downloaded when the iCloud Documents folder held only `.{name}.icloud`. The first root was returned as soon as a placeholder existed. A real file in the iCloud folder still wins when it is there. A name that is only a placeholder stays not downloaded. A store id still returns before any disk read. The source sqlite bytes do not change.
+
+`open`, `Scope`, `Import`, and `Book` stay as they are. This slice does not download placeholders, decrypt FairPlay, play audiobooks, search, or open a shelf row in the reader.
+
+Dalibre at `aff3eb5` is still GPL-3.0 or later. No source is copied. It has one library root, so it does not choose between a placeholder and a second folder. The rule kept from that check is the same. The openable book is the file on disk.
+
+This branch owns `spikes/library/src/apple.rs`, `spikes/library/src/tests.rs`, and `docs/harness/parallel-readiness.md`. Pull request 65 does not edit those paths. Either line can merge to `main` first.
+
+It is done when `a_local_copy_opens_when_icloud_only_has_the_placeholder` passes on a fixture home. That home is not a user Mac.
