@@ -4100,10 +4100,18 @@ def run_chrome(out, window_tool, ocr_tool):
     ]
     try:
         write_trim("paperback")
+        windowed_frame = None
         for name, env, book, fullscreen, lights, measure in shots:
             state, metrics, lines, body = chrome_shot(out, window_tool, ocr_tool, mouse, name, env, book, fullscreen, lights)
             try:
                 png = out / f"{name}.png"
+                if (
+                    windowed_frame is None
+                    and not fullscreen
+                    and book == "pride"
+                    and isinstance(metrics, dict)
+                ):
+                    windowed_frame = {"w": metrics.get("w") or 0, "h": metrics.get("h") or 0}
                 if png.exists():
                     shutil.copyfile(png, proto / f"{name}.png")
                 if measure:
@@ -4234,19 +4242,20 @@ def run_chrome(out, window_tool, ocr_tool):
                     same_bytes = (
                         windowed_png.is_file() and png.read_bytes() == windowed_png.read_bytes()
                     )
-                    problems = admit_reader_fullscreen(
+                    px_w = px_h = 0
+                    try:
+                        px_w, px_h, _pixels = decode_png_rows(png)
+                    except (OSError, ValueError):
+                        px_w = px_h = 0
+                    problems = fullscreen_evidence(
                         body,
-                        {
-                            "pid": body.get("pid"),
-                            "window_id": body.get("window_id"),
-                            "reader_window_id": body.get("reader_window_id"),
-                            "book": book,
-                            "scale": body.get("scale") or 0,
-                            "px_w": body.get("px_w") or 0,
-                            "px_h": body.get("px_h") or 0,
-                            "same_bytes": same_bytes,
-                        },
-                        {"w": body.get("windowed_w") or 0, "h": body.get("windowed_h") or 0},
+                        state.get("pid") if isinstance(state, dict) else None,
+                        metrics,
+                        px_w,
+                        px_h,
+                        book,
+                        same_bytes,
+                        windowed_frame,
                     )
                     if problems:
                         detail = "not executed: " + "; ".join(problems)
@@ -4494,6 +4503,30 @@ def admit_reader_fullscreen(chrome, capture, windowed):
     return problems
 
 
+def fullscreen_evidence(body, pid, metrics, px_w, px_h, book, same_bytes, windowed):
+    """Build the admission record from the capture, not from fields the shell does not write.
+
+    chrome.json has the flag, pid, title, and point size. The window id and scale
+    come from the window tool. The pixel size comes from the PNG.
+    """
+    metrics = metrics if isinstance(metrics, dict) else {}
+    window = metrics.get("id")
+    return admit_reader_fullscreen(
+        body if isinstance(body, dict) else {},
+        {
+            "pid": pid,
+            "window_id": window,
+            "reader_window_id": window,
+            "book": book,
+            "scale": metrics.get("scale") or 0,
+            "px_w": px_w or 0,
+            "px_h": px_h or 0,
+            "same_bytes": same_bytes,
+        },
+        windowed if isinstance(windowed, dict) else {"w": 0, "h": 0},
+    )
+
+
 def appearance_problems(requested, appearance, this_bytes, blocked):
     problems = []
     name = str(appearance or "")
@@ -4602,6 +4635,28 @@ def harness_self_test():
         {"w": 582, "h": 781},
     )
     assert entered == [], entered
+    from_capture = fullscreen_evidence(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
+        7,
+        {"id": 9, "w": 1512, "h": 949, "scale": 2},
+        3024,
+        1898,
+        "pride",
+        False,
+        {"w": 582, "h": 781},
+    )
+    assert from_capture == [], from_capture
+    copied_capture = fullscreen_evidence(
+        {"fullscreen": False, "pid": 7, "window_w": 582, "window_h": 781, "title": "Pride and Prejudice"},
+        7,
+        {"id": 4, "w": 582, "h": 781, "scale": 2},
+        1164,
+        1562,
+        "pride",
+        True,
+        {"w": 582, "h": 781},
+    )
+    assert admission_status(copied_capture) == "pending", copied_capture
     wrong_book = admit_reader_fullscreen(
         {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "全部书籍"},
         {
