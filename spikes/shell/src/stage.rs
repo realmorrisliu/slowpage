@@ -211,10 +211,22 @@ define_class!(
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
             let point = point_in(self, event);
+            let bounds: NSRect = unsafe { msg_send![self, bounds] };
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
-                state.finish_drag(start, point);
+                let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
+                let edge = if click && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
+                {
+                    state.page_edge_at(point.0, point.1, bounds.size.width, bounds.size.height)
+                } else {
+                    crate::visit::PageEdge::None
+                };
+                match edge {
+                    crate::visit::PageEdge::Back => state.command("page", &json!(-1)),
+                    crate::visit::PageEdge::Forward => state.command("page", &json!(1)),
+                    crate::visit::PageEdge::None => state.finish_drag(start, point),
+                }
             }
             drop(state);
             unsafe { msg_send![self, setNeedsDisplay: true] }
@@ -1345,6 +1357,44 @@ fn pdf_origin_of(product: bool) -> (f64, f64) {
 impl State {
     fn pdf_origin(&self) -> (f64, f64) {
         pdf_origin_of(self.product)
+    }
+
+    fn page_edge_at(&self, x: f64, y: f64, stage_w: f64, stage_h: f64) -> crate::visit::PageEdge {
+        if !matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            return crate::visit::PageEdge::None;
+        }
+        let Some(pdf) = self.pdf.as_ref() else {
+            return crate::visit::PageEdge::None;
+        };
+        if pdf.sizes.is_empty() {
+            return crate::visit::PageEdge::None;
+        }
+        if self.product {
+            let index = self.current_page().min(pdf.sizes.len() - 1);
+            let (pw, ph) = pdf.sizes[index];
+            let (box_w, box_h, left, top) = crate::chrome::content_box(stage_w, stage_h);
+            let (rx, ry, rw, rh) = spike_report::fitted_pdf_page(
+                left,
+                top,
+                box_w,
+                box_h,
+                f64::from(pw),
+                f64::from(ph),
+            );
+            return crate::visit::page_edge(x, y, rx, ry, rw, rh);
+        }
+        let display = self.scale.display() as f64;
+        let (origin_x, origin_y) = self.pdf_origin();
+        let mut top = origin_y - self.offset;
+        for (pw, ph) in &pdf.sizes {
+            let height = f64::from(*ph) * display;
+            let width = f64::from(*pw) * display;
+            if y >= top && y <= top + height {
+                return crate::visit::page_edge(x, y, origin_x, top, width, height);
+            }
+            top += height + 16.0;
+        }
+        crate::visit::PageEdge::None
     }
 }
 
