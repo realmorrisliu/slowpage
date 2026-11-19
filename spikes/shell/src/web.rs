@@ -162,6 +162,7 @@ pub struct Inbox {
     pub hold: Option<u32>,
     pub sentence: Option<u32>,
     pub pinned: Option<u32>,
+    pub pin_missed: bool,
     pub sample: Option<serde_json::Value>,
     pub gap_ratio: Option<f64>,
     pub page_w: f64,
@@ -286,6 +287,7 @@ define_class!(
                     if let Some(pinned) = value["pinned"].as_u64() {
                         inbox.pinned = Some(pinned as u32);
                     }
+                    inbox.pin_missed = value["missed"].as_bool().unwrap_or(false);
                     if value.get("sample").map(|item| !item.is_null()).unwrap_or(false) {
                         inbox.sample = Some(value["sample"].clone());
                     }

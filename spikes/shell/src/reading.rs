@@ -795,7 +795,7 @@ const SCRIPT: &str = r#"
       requestAnimationFrame(function () {
         const found = locate(offset);
         if (!found) {
-          post();
+          post({ pinned: offset, missed: true });
           return;
         }
         const prev = root.style.transform;
