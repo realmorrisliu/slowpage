@@ -34,6 +34,18 @@ The reading line owns `spikes/shell/**`, `docs/roadmap.md`, `.cursor/skills/veri
 
 Both lines target `main` at `a8942eac8f74aced44419ce6635f1438b9525898`. This branch is not stacked on pull requests 55, 56, 57, or 58. The file sets do not overlap, so either line can merge first.
 
+## Dalibre
+
+Checked [djyde/dalibre](https://github.com/djyde/dalibre) at `aff3eb5e66b1bd0287bfc42b46e93b6fcc2d7151`. The [LICENSE](https://github.com/djyde/dalibre/blob/aff3eb5e66b1bd0287bfc42b46e93b6fcc2d7151/LICENSE) is GPL-3.0 or later. The README says `internal/calibre/metadata_sqlite.sql` is calibre's schema under GPL-3.0. No source is copied.
+
+Dalibre reads and writes a Calibre library. A search of that commit for Apple Books, iBooks, and `ZBKLIBRARYASSET` returns nothing.
+
+In [`internal/calibre/library.go`](https://github.com/djyde/dalibre/blob/aff3eb5e66b1bd0287bfc42b46e93b6fcc2d7151/internal/calibre/library.go) a book path is relative to one library root. `Dir` joins that root and the stored path. A format file is that folder plus the format name. `OpenReadOnly` opens the original `metadata.db` with `mode=ro`. [`internal/catalog/catalog.go`](https://github.com/djyde/dalibre/blob/aff3eb5e66b1bd0287bfc42b46e93b6fcc2d7151/internal/catalog/catalog.go) filters and sorts books that are already loaded. It does not find files.
+
+The useful mechanism is already in this slice. A relative name belongs under the library root, and the openable file is the one that join names. Apple Books has two roots, so this slice takes the first root that already has the file or its `.icloud` placeholder. `home_layout_opens_a_second_root_file_and_a_file_url` is the acceptance. Using Dalibre's single join would mark the second-root file missing again.
+
+Not taken. Opening the live database with `mode=ro` instead of a snapshot. Apple Books keeps its database open, and this crate already copies the sqlite, wal, and shm before a read-only open. Search, filters, metadata edits, OPF writes, plugins, and MCP are outside this slice. GPL-3.0 also rules out copying their source. This check changes no Rust.
+
 ## Verification
 
 Ran on this cloud VM. `just` is not installed here, so the `test` recipe in the justfile was run as its cargo commands. The home-layout fixture is not Apple Books on a Mac.
