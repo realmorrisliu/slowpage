@@ -403,6 +403,7 @@ pub fn page_script(lang: &str) -> String {
         .replace("__FALLBACK__", &fallback)
         .replace("__PAGE__", &page)
         .replace("__MS__", &SLIDE_MS.to_string())
+        .replace("__EDGE__", &crate::visit::PAGE_EDGE.to_string())
         .replace("__PAPER__", PAPER)
         .replace("__TOP__", &face.margin_top.to_string())
         .replace("__BOTTOM__", &face.margin_bottom.to_string())
@@ -890,6 +891,19 @@ const SCRIPT: &str = r#"
     seek((pages - 1) * w);
     post({ kind: "seek" });
   };
+  window.addEventListener("click", function (event) {
+    if (event.button !== 0) return;
+    if (event.target && event.target.closest && event.target.closest('#spike-footer')) return;
+    const w = window.innerWidth;
+    if (!(w > 0)) return;
+    const band = w * __EDGE__;
+    let delta = 0;
+    if (event.clientX < band) delta = -1;
+    else if (event.clientX > w - band) delta = 1;
+    else return;
+    event.preventDefault();
+    window.spikeTurn(delta);
+  }, true);
   window.addEventListener("keydown", function (event) {
     if (event.repeat) return;
     var delta = 0;

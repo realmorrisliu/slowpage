@@ -176,6 +176,37 @@ pub fn page_key_delta(shell: bool, surface: Surface, forward: bool) -> i32 {
     }
 }
 
+/// Outer fraction of the page that a click turns. The middle stays.
+pub const PAGE_EDGE: f64 = 0.25;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageEdge {
+    Back,
+    Forward,
+    None,
+}
+
+/// A click on the left or right of the page rectangle turns one page.
+/// A click in the middle, or outside the rectangle, does not.
+pub fn page_edge(x: f64, y: f64, left: f64, top: f64, width: f64, height: f64) -> PageEdge {
+    if !(width > 0.0 && height > 0.0) {
+        return PageEdge::None;
+    }
+    let at_x = x - left;
+    let at_y = y - top;
+    if at_x < 0.0 || at_y < 0.0 || at_x > width || at_y > height {
+        return PageEdge::None;
+    }
+    let band = width * PAGE_EDGE;
+    if at_x < band {
+        PageEdge::Back
+    } else if at_x > width - band {
+        PageEdge::Forward
+    } else {
+        PageEdge::None
+    }
+}
+
 pub fn step_index(index: usize, count: usize, delta: i64) -> usize {
     if count == 0 || delta == 0 {
         return index.min(count.saturating_sub(1));
@@ -388,5 +419,54 @@ mod tests {
         assert_eq!(step_index(0, count, -1), 0);
         assert_eq!(step_index(9, count, 1), 9);
         assert_eq!(step_index(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn a_click_on_the_page_edge_turns_and_the_middle_does_not() {
+        let (left, top, width, height) = (100.0, 20.0, 400.0, 500.0);
+        assert_eq!(
+            page_edge(100.0, 20.0, left, top, width, height),
+            PageEdge::Back
+        );
+        assert_eq!(
+            page_edge(199.0, 250.0, left, top, width, height),
+            PageEdge::Back
+        );
+        assert_eq!(
+            page_edge(200.0, 250.0, left, top, width, height),
+            PageEdge::None
+        );
+        assert_eq!(
+            page_edge(400.0, 250.0, left, top, width, height),
+            PageEdge::None
+        );
+        assert_eq!(
+            page_edge(401.0, 519.0, left, top, width, height),
+            PageEdge::Forward
+        );
+        assert_eq!(
+            page_edge(500.0, 520.0, left, top, width, height),
+            PageEdge::Forward
+        );
+        assert_eq!(
+            page_edge(99.0, 250.0, left, top, width, height),
+            PageEdge::None
+        );
+        assert_eq!(
+            page_edge(501.0, 250.0, left, top, width, height),
+            PageEdge::None
+        );
+        assert_eq!(
+            page_edge(150.0, 19.0, left, top, width, height),
+            PageEdge::None
+        );
+        assert_eq!(
+            page_edge(450.0, 521.0, left, top, width, height),
+            PageEdge::None
+        );
+        assert_eq!(
+            page_edge(150.0, 250.0, left, top, 0.0, height),
+            PageEdge::None
+        );
     }
 }
