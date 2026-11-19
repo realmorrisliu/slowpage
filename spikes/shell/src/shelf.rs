@@ -88,6 +88,28 @@ pub fn project(catalog: &Catalog, selected: SelectId, history: &[ReadingRecord])
     }
 }
 
+pub(crate) fn searched(mut library: LibraryIn, query: &str) -> LibraryIn {
+    let needle = query.trim();
+    if needle.is_empty() {
+        return library;
+    }
+    let needle = needle.to_lowercase();
+    library.covers.retain(|card| title_or_author(card, &needle));
+    library
+        .continue_reading
+        .retain(|card| title_or_author(card, &needle));
+    library.book_count = library
+        .covers
+        .iter()
+        .filter(|card| card.open_path.is_some())
+        .count() as u32;
+    library
+}
+
+fn title_or_author(card: &CoverCard, needle: &str) -> bool {
+    card.title.to_lowercase().contains(needle) || card.author.to_lowercase().contains(needle)
+}
+
 fn source_rank(label: &str) -> u8 {
     match label {
         "Apple Books" => 0,
@@ -470,5 +492,100 @@ mod tests {
         assert!(shelf.covers[0].open_path.is_none());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&support);
+    }
+
+    #[test]
+    fn a_title_or_author_query_filters_the_shelf_and_clears() {
+        let root = std::env::temp_dir().join(format!("spike-shelf-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let libs = fixture::write_form(&root);
+        let support = root.join("support");
+        let apple = open(scope(libs.apple.clone(), support.clone()));
+        let calibre = open(scope(libs.calibre.clone(), support.clone()));
+        let catalog = apple.admit(spike_library::SourceName::Calibre, calibre);
+        let zhao = catalog
+            .books()
+            .iter()
+            .find(|book| book.title() == "朝花夕拾")
+            .unwrap();
+        let zhao_path = zhao
+            .open_command()
+            .unwrap()
+            .path()
+            .as_path()
+            .display()
+            .to_string();
+        let settings = support.join("settings.json");
+        record_open(&settings, &zhao_path, 4, Some(10), 50).unwrap();
+        let history = crate::settings::load_history(&settings);
+        let all = project(&catalog, SelectId::AllBooks, &history);
+        let open_of = |shelf: &LibraryIn, title: &str| {
+            shelf
+                .covers
+                .iter()
+                .find(|card| card.title == title)
+                .unwrap()
+                .open_path
+                .clone()
+        };
+        assert!(all.covers.len() > 4);
+        assert_eq!(searched(all.clone(), "   "), all);
+
+        let pride = searched(all.clone(), "pRiDe");
+        assert_eq!(pride.covers.len(), 1);
+        assert_eq!(pride.covers[0].title, "Pride and Prejudice");
+        assert_eq!(
+            pride.covers[0].open_path.as_deref(),
+            open_of(&all, "Pride and Prejudice").as_deref()
+        );
+        assert_eq!(pride.book_count, 1);
+        assert_eq!(pride.counts, all.counts);
+        assert!(pride.continue_reading.is_empty());
+
+        let austen = searched(all.clone(), "AUSTEN");
+        assert_eq!(austen.covers.len(), 1);
+        assert_eq!(austen.covers[0].title, "Pride and Prejudice");
+
+        let lu = searched(all.clone(), "鲁迅");
+        assert_eq!(lu.covers.len(), 2);
+        assert!(lu.covers.iter().any(|card| card.title == "朝花夕拾"));
+        assert!(lu.covers.iter().any(|card| card.title == "呐喊"));
+        assert_eq!(lu.book_count, 2);
+        assert_eq!(lu.continue_reading.len(), 1);
+        assert_eq!(lu.continue_reading[0].title, "朝花夕拾");
+        assert_eq!(
+            lu.continue_reading[0].open_path.as_deref(),
+            Some(zhao_path.as_str())
+        );
+        assert_eq!(
+            open_of(&lu, "朝花夕拾").as_deref(),
+            Some(zhao_path.as_str())
+        );
+
+        let ci = searched(all.clone(), "慈欣");
+        assert_eq!(ci.covers.len(), 1);
+        assert_eq!(ci.covers[0].title, "三体");
+        assert_eq!(ci.covers[0].author, "刘慈欣");
+
+        let cao = searched(all.clone(), "曹雪芹");
+        assert!(cao.covers.iter().any(|card| card.title == "红楼梦"));
+        assert!(cao.continue_reading.is_empty());
+        assert_eq!(
+            open_of(&cao, "红楼梦").as_deref(),
+            open_of(&all, "红楼梦").as_deref()
+        );
+
+        let spaced = searched(all.clone(), "  朝花  ");
+        assert_eq!(spaced.covers.len(), 1);
+        assert_eq!(spaced.covers[0].title, "朝花夕拾");
+
+        let miss = searched(all.clone(), "没有这本书");
+        assert!(miss.covers.is_empty());
+        assert!(miss.continue_reading.is_empty());
+        assert_eq!(miss.book_count, 0);
+        assert!(!miss.empty);
+        assert_eq!(miss.sources, all.sources);
+        assert_eq!(miss.counts, all.counts);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
