@@ -1189,6 +1189,79 @@ fn user_turn(report: &PageReport) -> bool {
     !report.chase && report.kind == "turn"
 }
 
+/// What one script message does to the column element.
+/// `None` means leave the mailbox. A user turn or a character hold clears it.
+/// A figure is kept when its probe is current, or when the post names the
+/// element already kept and sends no probe. A late probe is left alone.
+/// A figure with no page is not a place message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FigureMail {
+    pub id: Option<String>,
+    pub lost: bool,
+}
+
+pub fn figure_mail(
+    value: &serde_json::Value,
+    probe: u64,
+    known: Option<&str>,
+) -> Option<FigureMail> {
+    let report = page_report(value);
+    if user_turn(&report) || report.hold.is_some() {
+        return Some(FigureMail {
+            id: None,
+            lost: false,
+        });
+    }
+    let Some(id) = value
+        .get("figure")
+        .and_then(|item| item.as_str())
+        .filter(|id| !id.is_empty())
+    else {
+        return None;
+    };
+    if report.page.is_none() {
+        return None;
+    }
+    let generation = value.get("probe").and_then(|item| item.as_u64());
+    let current = generation.is_some_and(|sent| sent == probe);
+    let same = generation.is_none() && known == Some(id);
+    if !(current || same) {
+        return None;
+    }
+    Some(FigureMail {
+        id: Some(id.to_string()),
+        lost: report.missed == Some(true),
+    })
+}
+
+pub fn keep_message_figure(
+    figure: &mut Option<String>,
+    lost: &mut bool,
+    value: &serde_json::Value,
+    probe: u64,
+    known: Option<&str>,
+) {
+    if let Some(mail) = figure_mail(value, probe, known) {
+        *figure = mail.id;
+        *lost = mail.lost;
+    }
+}
+
+pub fn drop_figure_mail(figure: &mut Option<String>, lost: &mut bool) {
+    *figure = None;
+    *lost = false;
+}
+
+pub fn remember_figure(reader: &mut Reader, id: Option<String>) {
+    if let Some(id) = id {
+        reader.figure = Some(id);
+    }
+}
+
+pub fn figure_flags(id: &Option<String>, lost: bool) -> (bool, bool) {
+    (id.is_some() && !lost, lost)
+}
+
 fn clear_resume(reader: &mut Reader) {
     reader.jump_href.clear();
     reader.jump_offset = None;

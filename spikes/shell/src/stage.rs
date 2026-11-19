@@ -1257,7 +1257,7 @@ impl State {
                 ),
             }
         };
-        let has_figure = figure.is_some() && !figure_lost;
+        let (saw_figure, lost_figure) = crate::visit::figure_flags(&figure, figure_lost);
         if let Some(id) = figure {
             crate::web::note_figure(Some(id));
         }
@@ -1282,8 +1282,8 @@ impl State {
         tick.shown = shown;
         tick.pages = pages;
         tick.pages_known = pages_known;
-        tick.figure = has_figure;
-        tick.figure_lost = figure_lost;
+        tick.figure = saw_figure;
+        tick.figure_lost = lost_figure;
         let plan = crate::web::layout_frame(tick);
         let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
         if resolved {
@@ -1292,8 +1292,7 @@ impl State {
                 inbox.hold = None;
                 inbox.hold_probe = 0;
                 inbox.hold_missed = false;
-                inbox.figure = None;
-                inbox.figure_lost = false;
+                crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
             }
             self.await_hold = false;
             self.hold_since = None;
@@ -1328,8 +1327,7 @@ impl State {
                         inbox.hold = None;
                         inbox.hold_probe = 0;
                         inbox.hold_missed = false;
-                        inbox.figure = None;
-                        inbox.figure_lost = false;
+                        crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
                     }
                     web.measure(page, probe);
                 }

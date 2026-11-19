@@ -282,6 +282,20 @@ define_class!(
                     let href = self.ivars().href.borrow().clone();
                     let report = crate::visit::page_report(&value);
                     let applied = handle_script(&value, &href);
+                    {
+                        let (probe, known) = SESSION.with(|session| {
+                            let reader = &session.borrow().reader;
+                            (reader.probe, reader.figure.clone())
+                        });
+                        let mut inbox = self.ivars().inbox.borrow_mut();
+                        crate::visit::keep_message_figure(
+                            &mut inbox.figure,
+                            &mut inbox.figure_lost,
+                            &value,
+                            probe,
+                            known.as_deref(),
+                        );
+                    }
                     if !applied.paint {
                         return;
                     }
@@ -309,18 +323,6 @@ define_class!(
                         }
                         if let Some(scroll) = value["sx"].as_f64() {
                             inbox.scroll = scroll;
-                        }
-                        if let Some(id) = value["figure"].as_str() {
-                            let generation = value["probe"].as_u64();
-                            let (current, known) = SESSION.with(|session| {
-                                let reader = &session.borrow().reader;
-                                (reader.probe, reader.figure.as_deref() == Some(id))
-                            });
-                            let current_sample = generation.is_some_and(|probe| probe == current);
-                            if current_sample || (generation.is_none() && known) {
-                                inbox.figure = Some(id.to_string());
-                                inbox.figure_lost = value["missed"].as_bool() == Some(true);
-                            }
                         }
                         if let Some(hold) = value["hold"].as_u64() {
                             inbox.hold = Some(hold as u32);
@@ -1016,6 +1018,7 @@ impl WebChapter {
             inbox.pin_missed = false;
             inbox.await_nav = true;
             inbox.nav_done = false;
+            crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
             (slot.shown_web.clone(), href)
         };
         unsafe {
@@ -1068,6 +1071,10 @@ impl WebChapter {
     }
 
     pub fn reload_source(&self) {
+        {
+            let mut inbox = self.inbox.borrow_mut();
+            crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
+        }
         let (web, _, href) = self.shown();
         unsafe {
             let url = NSString::from_str(&format!("epub://book{href}"));
@@ -1081,6 +1088,10 @@ impl WebChapter {
     }
 
     pub fn reload(&self) {
+        {
+            let mut inbox = self.inbox.borrow_mut();
+            crate::visit::drop_figure_mail(&mut inbox.figure, &mut inbox.figure_lost);
+        }
         let (web, _, _) = self.shown();
         reset_restore_epoch();
         unsafe {
@@ -1163,7 +1174,14 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                         handler.ivars().href.replace(href.clone());
                         handler.ivars().chapter_started.set(Some(Instant::now()));
                         handler.ivars().chapter_armed.set(false);
-                        handler.ivars().inbox.borrow_mut().chapter_ms = None;
+                        {
+                            let mut inbox = handler.ivars().inbox.borrow_mut();
+                            inbox.chapter_ms = None;
+                            crate::visit::drop_figure_mail(
+                                &mut inbox.figure,
+                                &mut inbox.figure_lost,
+                            );
+                        }
                         launch = Some((web, href));
                     }
                 }
@@ -1285,7 +1303,9 @@ pub fn anchor_missed() {
 }
 
 pub fn note_figure(id: Option<String>) {
-    SESSION.with(|session| session.borrow_mut().reader.figure = id);
+    SESSION.with(|session| {
+        crate::visit::remember_figure(&mut session.borrow_mut().reader, id);
+    });
 }
 
 pub fn reader_figure() -> Option<String> {
