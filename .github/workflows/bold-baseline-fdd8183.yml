@@ -1,6 +1,7 @@
-# One release spike-shell from fdd8183. Not a product verify and not the PR head.
 # Push of this file is the trigger. workflow_dispatch is not used: this file is
 # not on the default branch, so that entry is not claimed.
+# baseline runs only for the commit that introduced it. Later pushes build the
+# candidate from that push's branch head, not from a pull-request merge ref.
 name: Bold baseline fdd8183
 
 on:
@@ -16,6 +17,7 @@ concurrency:
 
 jobs:
   baseline:
+    if: github.sha == '25922152c63f33abd64a327067f475e60b0e9b14'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,4 +116,145 @@ jobs:
         with:
           name: spike-shell-fdd8183
           path: ${{ runner.temp }}/baseline-provenance
+          if-no-files-found: warn
+
+  candidate:
+    if: github.sha != '25922152c63f33abd64a327067f475e60b0e9b14'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Require this push's branch head on arm64
+        run: |
+          set -euo pipefail
+          got=$(git rev-parse HEAD)
+          echo "role candidate"
+          echo "event ${{ github.event_name }}"
+          echo "source_sha ${got}"
+          echo "github_sha ${{ github.sha }}"
+          test "$got" = "${{ github.sha }}"
+          test "$got" != "fdd8183c5d43e0fbf623c188eebf29551254ab03"
+          test -z "$(git status --porcelain)"
+          test "$(uname -m)" = "arm64"
+          uname -a
+          sw_vers
+
+      - name: Install the toolchain pinned by this commit
+        run: |
+          set -euo pipefail
+          channel=$(awk -F'"' '/^channel/{print $2; exit}' rust-toolchain.toml)
+          echo "pinned_channel ${channel}"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+          rustc --version
+          rustc -vV
+          cargo --version
+          cargo -vV
+          test "$(rustc --version | awk '{print $2}')" = "$channel"
+
+      - name: Release spike-shell, then the shell decision tests
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/candidate-target
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path spikes/Cargo.toml -p spike-shell --release
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test -z "$(git status --porcelain)"
+          log="${RUNNER_TEMP}/shell-tests.log"
+          cargo test -p spike-shell --lib --manifest-path spikes/Cargo.toml -- --test-threads=1 \
+            a_stored_page_does_not_open_the_shelf_launch \
+            an_explicit_file_resumes_its_stored_page \
+            a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
+            a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
+            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
+            | tee "$log"
+          for name in \
+            a_stored_page_does_not_open_the_shelf_launch \
+            an_explicit_file_resumes_its_stored_page \
+            a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
+            a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
+            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice
+          do
+            grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
+          done
+
+      - name: Record identity, architecture, and linked libraries
+        if: always()
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/candidate-target
+        run: |
+          set -euo pipefail
+          bin="${CARGO_TARGET_DIR}/release/spike-shell"
+          out="${RUNNER_TEMP}/candidate-provenance"
+          mkdir -p "$out"
+          if [ -f "${RUNNER_TEMP}/shell-tests.log" ]; then
+            cp "${RUNNER_TEMP}/shell-tests.log" "$out/shell-tests.log"
+          fi
+          if [ ! -f "$bin" ]; then
+            echo "role candidate" > "$out/provenance.txt"
+            echo "source_sha $(git rev-parse HEAD)" >> "$out/provenance.txt"
+            echo "release_binary absent" >> "$out/provenance.txt"
+            exit 1
+          fi
+          cp "$bin" "$out/spike-shell"
+          {
+            echo "role candidate"
+            echo "event push"
+            echo "source_sha $(git rev-parse HEAD)"
+            echo "source_subject $(git log -1 --format=%s)"
+            echo "not_baseline_sha fdd8183c5d43e0fbf623c188eebf29551254ab03"
+            echo "not_a_pull_request_merge_ref"
+            echo "rustc $(rustc --version)"
+            rustc -vV
+            echo "cargo $(cargo --version)"
+            cargo -vV
+            echo "runner_arch $(uname -m)"
+            uname -a
+            sw_vers
+            echo "host_target $(rustc -vV | awk '/^host:/{print $2}')"
+            echo "binary_sha256 $(shasum -a 256 "$bin" | awk '{print $1}')"
+            file "$bin"
+            echo "--- otool -L ---"
+            otool -L "$bin"
+            echo "--- LC_BUILD_VERSION ---"
+            otool -l "$bin" | awk '
+              $1 == "cmd" && $2 == "LC_BUILD_VERSION" { show = 1 }
+              show && $1 == "cmd" && $2 != "LC_BUILD_VERSION" { show = 0 }
+              show { print }
+            '
+            echo "--- pdfium load rule from this commit ---"
+            if otool -L "$bin" | grep -i pdfium >/dev/null; then
+              echo "pdfium_linked yes"
+            else
+              echo "pdfium_linked no"
+            fi
+            grep -n "PDFIUM_LIB\|libpdfium" spikes/report/src/lib.rs || true
+          } > "$out/provenance.txt"
+          otool -L "$bin" | awk 'NR > 1 && $1 != "" { print $1 }' > "$out/libs.txt"
+          bad=0
+          while IFS= read -r lib; do
+            case "$lib" in
+              /usr/lib/*|/System/Library/*) ;;
+              *)
+                echo "not a system library: $lib" | tee -a "$out/provenance.txt"
+                bad=1
+                ;;
+            esac
+          done < "$out/libs.txt"
+          if [ "$bad" -ne 0 ]; then
+            echo "mach_o_system_libs_only no" | tee -a "$out/provenance.txt"
+            exit 1
+          fi
+          echo "mach_o_system_libs_only yes" | tee -a "$out/provenance.txt"
+          echo "pdfium_is_runtime PDF still needs libpdfium.dylib from SPIKE_PDFIUM, the app Frameworks directory, or /tmp/pdfium/lib. This artifact does not include it." | tee -a "$out/provenance.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-shell-candidate
+          path: ${{ runner.temp }}/candidate-provenance
           if-no-files-found: warn

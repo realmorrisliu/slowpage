@@ -85,7 +85,7 @@ The chapter check printed `opened OEBPS/3309323728932395831_25271-0-1.txt.html` 
 
 ## Bold off baseline
 
-`/tmp/spike-shell-main-fdd8183` is still absent. The compared commit is `fdd8183c5d43e0fbf623c188eebf29551254ab03` (`feat(bold-word-starts): paint the prefix in the page`, the main named by `00c8290`). A hosted macOS arm64 job checks out that commit and builds release `spike-shell` there. It does not change that commit's source, lockfile, or NSH pins. Until that job's artifact exists and its provenance names this sha, the binary is not built. A later candidate build of the #53 head is still required. This historical binary is not that candidate and is not product acceptance.
+`/tmp/spike-shell-main-fdd8183` is still absent. The compared commit is `fdd8183c5d43e0fbf623c188eebf29551254ab03` (`feat(bold-word-starts): paint the prefix in the page`, the main named by `00c8290`). A hosted macOS arm64 job checks out that commit and builds release `spike-shell` there. It does not change that commit's source, lockfile, or NSH pins. Until that job's artifact exists and its provenance names this sha, the binary is not built. The candidate is a separate job in the same workflow. It checks out the push's branch head, not the pull-request merge ref and not `fdd8183`. A successful candidate binary is still not the Mac session and not product acceptance.
 
 No log in this file records how long a baseline build or a `just verify` took. The resource window for those two steps is unknown. The load figures above are not a duration.
 
