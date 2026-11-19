@@ -8,8 +8,8 @@ use crate::disk::from_disk;
 use crate::sealed::Sealed;
 use crate::snapshot::snapshot;
 use crate::{
-    resolve_under_roots, sort_by_id, Availability, Book, BookId, Catalog, ImportStep,
-    LibrarySource, Notice, Scope, SourceName, Unreadable,
+    file_uri_path, resolve_under_roots, sort_by_id, Availability, Book, BookId, Catalog,
+    ImportStep, LibrarySource, Notice, Scope, SourceName, Unreadable,
 };
 
 pub(crate) struct AppleBooks {
@@ -200,15 +200,24 @@ impl Cursor {
                 Availability::Unreadable(Unreadable::Missing),
             );
         };
+        let Some(stored) = stored_path(&raw_path) else {
+            return Book::new(
+                id,
+                SourceName::AppleBooks,
+                title,
+                author,
+                None,
+                Availability::Unreadable(Unreadable::Missing),
+            );
+        };
         let resolved = if let Some(root) = &self.override_root {
-            let path = Path::new(&raw_path);
-            if path.is_absolute() {
-                path.to_path_buf()
+            if stored.is_absolute() {
+                stored
             } else {
-                root.join(raw_path)
+                root.join(stored)
             }
         } else {
-            match resolve_under_roots(Path::new(&raw_path), &self.book_roots) {
+            match locate_under_roots(&stored, &self.book_roots) {
                 Some(path) => path,
                 None => {
                     return Book::new(
@@ -238,6 +247,50 @@ impl Cursor {
             availability,
         )
     }
+}
+
+fn stored_path(raw: &str) -> Option<PathBuf> {
+    if raw.starts_with("file:") {
+        file_uri_path(raw)
+    } else {
+        Some(PathBuf::from(raw))
+    }
+}
+
+/// Absolute paths must sit under a root. A relative name uses the first root
+/// that already has the file or its iCloud placeholder, then the first root.
+fn locate_under_roots(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return resolve_under_roots(path, roots);
+    }
+    let mut first = None;
+    for root in roots {
+        let joined = root.join(path);
+        if !joined.starts_with(root) {
+            continue;
+        }
+        if first.is_none() {
+            first = Some(joined.clone());
+        }
+        if on_disk(&joined) {
+            return Some(joined);
+        }
+    }
+    first
+}
+
+fn on_disk(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if name.ends_with(".icloud") {
+        return path.exists();
+    }
+    if path.exists() {
+        return true;
+    }
+    path.parent()
+        .is_some_and(|parent| parent.join(format!(".{name}.icloud")).is_file())
 }
 
 fn drain(mut cursor: Cursor) -> Catalog {
