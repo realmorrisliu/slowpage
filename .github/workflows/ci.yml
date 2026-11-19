@@ -241,6 +241,9 @@ jobs:
       - name: Reject fast model ids in agent text
         working-directory: ${{ github.workspace }}
         run: sh scripts/lint-no-fast-models.sh
+      - name: Harness gates
+        working-directory: ${{ github.workspace }}
+        run: sh scripts/harness-check
       - name: Prebuilt binary sha and source gate
         working-directory: ${{ github.workspace }}
         run: |
