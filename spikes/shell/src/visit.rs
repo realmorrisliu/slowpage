@@ -166,8 +166,8 @@ pub fn fresh_arrival(seq: u64, seen: u64) -> bool {
     seq != 0 && seq != seen
 }
 
-pub fn page_key_delta(surface: Surface, forward: bool) -> i32 {
-    if surface != Surface::Reading {
+pub fn page_key_delta(shell: bool, surface: Surface, forward: bool) -> i32 {
+    if show_library(shell, surface) {
         0
     } else if forward {
         1
@@ -364,16 +364,26 @@ mod tests {
 
     #[test]
     fn a_page_key_turns_one_page_and_stops_at_the_ends() {
-        assert_eq!(page_key_delta(Surface::Library, true), 0);
-        assert_eq!(page_key_delta(Surface::Library, false), 0);
-        assert_eq!(page_key_delta(Surface::Reading, true), 1);
-        assert_eq!(page_key_delta(Surface::Reading, false), -1);
+        assert_eq!(page_key_delta(true, Surface::Library, true), 0);
+        assert_eq!(page_key_delta(true, Surface::Library, false), 0);
+        assert_eq!(page_key_delta(false, Surface::Library, true), 1);
+        assert_eq!(page_key_delta(false, Surface::Library, false), -1);
+        assert_eq!(page_key_delta(true, Surface::Reading, true), 1);
+        assert_eq!(page_key_delta(true, Surface::Reading, false), -1);
 
         let count = 10;
         let mut index = 3;
-        index = step_index(index, count, page_key_delta(Surface::Reading, true) as i64);
+        index = step_index(
+            index,
+            count,
+            page_key_delta(true, Surface::Reading, true) as i64,
+        );
         assert_eq!(index, 4);
-        index = step_index(index, count, page_key_delta(Surface::Reading, false) as i64);
+        index = step_index(
+            index,
+            count,
+            page_key_delta(true, Surface::Reading, false) as i64,
+        );
         assert_eq!(index, 3);
         assert_eq!(step_index(0, count, -1), 0);
         assert_eq!(step_index(9, count, 1), 9);

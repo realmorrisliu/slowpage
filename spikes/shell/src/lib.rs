@@ -453,22 +453,22 @@ pub fn SpikeApp() -> impl IntoElement {
     on_key_with("left", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, false)
+        move |_| turn_page(&stage, &visit, shell_on, false)
     });
     on_key_with("right", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, true)
+        move |_| turn_page(&stage, &visit, shell_on, true)
     });
     on_key_with("space", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, true)
+        move |_| turn_page(&stage, &visit, shell_on, true)
     });
     on_key_with("shift+space", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, false)
+        move |_| turn_page(&stage, &visit, shell_on, false)
     });
     let leave_keys = KeyOptions {
         when: nsh_core::keymap::When::NotEditing,
@@ -991,8 +991,8 @@ fn receive_file(
     history.set(settings::load_history(&settings::path()));
 }
 
-fn turn_page(stage: &ElementRef, visit: &Signal<visit::Visit>, forward: bool) {
-    let delta = visit::page_key_delta(visit.get().surface, forward);
+fn turn_page(stage: &ElementRef, visit: &Signal<visit::Visit>, shell: bool, forward: bool) {
+    let delta = visit::page_key_delta(shell, visit.get().surface, forward);
     if delta != 0 {
         stage.command("page", json!(delta));
     }

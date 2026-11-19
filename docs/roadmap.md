@@ -173,7 +173,7 @@ Scope. The keys use the turn the reader already has. An EPUB keeps the 160 ms sl
 
 Non-goals. No new slide, no edge target, and no finger-following swipe. The EPUB swipe that is already in the page stays. A page whose header matches and whose bytes still fail to load is outside this slice.
 
-Done. Page 4 of 10 goes to 5, then back to 4. Page 1 does not go back. Page 10 does not go forward. The library stays. The product footer for page 2 of 5 is 2/5页 and 本章还剩3页.
+Done. Page 4 of 10 goes to 5, then back to 4. Page 1 does not go back. Page 10 does not go forward. The library form stays. A direct reader launch, whose visit still starts on the library surface, still turns. The product footer for page 2 of 5 is 2/5页 and 本章还剩3页.
 
 Evidence. `spikes/shell/src/visit.rs` tests the key and the stop. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test.
 
