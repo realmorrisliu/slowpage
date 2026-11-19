@@ -2,6 +2,8 @@
 
 The approved window is the gray base, one white card, the version B sidebar, and a right region that changes with the form. The library form's right region is the chat panel. The reading form's right region is the annotation margin. The layout reference is `docs/design/shell/spec.md`. None of these checks exist in the spike yet. Each stays `pending` until the slice that owns it passes. Pending does not fail the exit code.
 
+Reading interactions, recorded 2026-11-17. Goal: the rule is written before an S3 item is built. Scope: `docs/design/reading-interactions.md` and the pointers in `docs/roadmap.md`, `docs/design/north-star.md`, and `docs/design/shell/spec.md`. Non-goals: implementing an item, the margin mockup, S4, the alan handoff, and pull request 58. Done when that document is on the branch that contains main `aa1f2e05ed8afc90986103f2022d72922795e19e`. The ten items are not rows in `scripts/verify`. Not executed, and not a blocker for the document: those items, their headless tests, their Mac recordings, and the shell GUI, performance, image, and animation checks. A green CI run of the document is not a pass. chrono RUSTSEC-2026-0543 stays ignored in `deny.toml` and is not cleared.
+
 ## Sub-features
 
 - `shell-card-inset` is S1. The card is inset 6 points from the base on every side in Full, with the sidebar and the chat panel open.
