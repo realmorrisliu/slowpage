@@ -123,6 +123,8 @@ pub struct ReadingRecord {
     pub href: String,
     pub mark: Option<String>,
     pub opened_label: Option<String>,
+    /// A caret hit, including character 0. Absent in the file means a page-only row.
+    pub caret: bool,
 }
 
 pub struct StoredList {
@@ -154,6 +156,13 @@ pub fn resume_offset(path: &Path, book: &str) -> u32 {
         .find(|row| row.path == book)
         .map(|row| row.offset)
         .unwrap_or(0)
+}
+
+pub fn resume_caret(path: &Path, book: &str) -> bool {
+    load_history(path)
+        .into_iter()
+        .find(|row| row.path == book)
+        .is_some_and(|row| row.caret)
 }
 
 pub fn resume_href(path: &Path, book: &str) -> String {
@@ -214,6 +223,7 @@ fn record_from_value(value: &serde_json::Value) -> Option<ReadingRecord> {
             .to_string(),
         mark,
         opened_label,
+        caret: value.get("caret").and_then(|item| item.as_bool()) == Some(true),
     })
 }
 
@@ -225,7 +235,7 @@ pub fn record_open(
     total: Option<u32>,
     opened_at: i64,
 ) -> Result<(), String> {
-    write_history(path, book, page, total, Some(opened_at), None, None)
+    write_history(path, book, page, total, Some(opened_at), None, None, None)
 }
 
 /// Updates the stored page. Keeps the previous open time and a known total.
@@ -252,6 +262,25 @@ impl crate::visit::PlaceFile for SettingsBook<'_> {
         .is_ok()
     }
 
+    fn write_anchor(&mut self, place: &crate::visit::ReadingPlace) -> bool {
+        if self.book.is_empty() || place.page == 0 {
+            return false;
+        }
+        record_anchor(
+            self.file,
+            self.book,
+            place.page,
+            None,
+            place.offset,
+            &place.href,
+        )
+        .is_ok()
+    }
+
+    fn resume_caret(&self) -> bool {
+        resume_caret(self.file, self.book)
+    }
+
     fn resume(&self) -> crate::visit::ReadingPlace {
         crate::visit::ReadingPlace {
             href: resume_href(self.file, self.book),
@@ -269,7 +298,36 @@ pub fn record_progress(
     offset: u32,
     href: &str,
 ) -> Result<(), String> {
-    write_history(path, book, page, total, None, Some(offset), Some(href))
+    write_history(
+        path,
+        book,
+        page,
+        total,
+        None,
+        Some(offset),
+        Some(href),
+        Some(false),
+    )
+}
+
+pub fn record_anchor(
+    path: &Path,
+    book: &str,
+    page: u32,
+    total: Option<u32>,
+    offset: u32,
+    href: &str,
+) -> Result<(), String> {
+    write_history(
+        path,
+        book,
+        page,
+        total,
+        None,
+        Some(offset),
+        Some(href),
+        Some(true),
+    )
 }
 
 fn write_history(
@@ -280,6 +338,7 @@ fn write_history(
     opened_at: Option<i64>,
     offset: Option<u32>,
     href: Option<&str>,
+    caret: Option<bool>,
 ) -> Result<(), String> {
     if book.is_empty() || page == 0 {
         return Ok(());
@@ -300,6 +359,9 @@ fn write_history(
         if let Some(href) = href {
             existing.href = href.to_string();
         }
+        if let Some(caret) = caret {
+            existing.caret = caret;
+        }
     } else {
         rows.push(ReadingRecord {
             path: book.to_string(),
@@ -310,6 +372,7 @@ fn write_history(
             href: href.unwrap_or("").to_string(),
             mark: None,
             opened_label: None,
+            caret: caret.unwrap_or(false),
         });
     }
     value["history"] = serde_json::json!(rows.iter().map(history_value).collect::<Vec<_>>());
@@ -333,6 +396,9 @@ fn history_value(row: &ReadingRecord) -> serde_json::Value {
     }
     if let Some(label) = &row.opened_label {
         value["openedLabel"] = serde_json::json!(label);
+    }
+    if row.caret {
+        value["caret"] = serde_json::json!(true);
     }
     value
 }
@@ -367,6 +433,7 @@ pub fn record_marked(
             href: String::new(),
             mark: Some(mark.to_string()),
             opened_label: Some(opened_label.to_string()),
+            caret: false,
         });
     }
     value["history"] = serde_json::json!(rows.iter().map(history_value).collect::<Vec<_>>());
@@ -2551,10 +2618,10 @@ mod tests {
             &mut stdout,
             r#"window.__caretOff=null;window.__textNode={nodeType:3,textContent:"a".repeat(5000),nodeValue:"a".repeat(5000),parentNode:document.body,parentElement:document.body};document.body.firstChild=window.__textNode;document.caretRangeFromPoint=function(){if(window.__caretOff==null)return null;return{startContainer:window.__textNode,startOffset:window.__caretOff}};document.createTreeWalker=function(){var sent=false;return{currentNode:window.__textNode,nextNode:function(){if(sent)return null;sent=true;this.currentNode=window.__textNode;return window.__textNode}}};document.createRange=function(){return{setStart:function(){},setEnd:function(){},selectNodeContents:function(){},getClientRects:function(){return[]},getBoundingClientRect:function(){return{left:900,right:910,top:40,bottom:60,width:10,height:20}}}};"#,
         );
-        assert_eq!(
-            crate::visit::begin_reflow(&mut reader),
-            crate::visit::ReflowHold::Measure(10)
-        );
+        let measured = crate::visit::begin_reflow(&mut reader);
+        let crate::visit::ReflowHold::Measure { page: 10, probe } = measured else {
+            panic!("measure the saved column, {measured:?}");
+        };
         assert_eq!(
             crate::visit::begin_reflow(&mut reader),
             crate::visit::ReflowHold::Pending
@@ -2562,7 +2629,7 @@ mod tests {
         let (missed_posts, missed, missed_column) = read_frame(
             &mut stdin,
             &mut stdout,
-            &format!("now {}", crate::visit::hold_eval(10)),
+            &format!("now {}", crate::visit::hold_eval(10, probe)),
         );
         assert!(missed.is_empty(), "{missed:?} {missed_posts:?}");
         assert!(
@@ -2593,6 +2660,43 @@ mod tests {
         assert_eq!(reader.walk, Some(10));
         assert!(reader.measured.is_none());
         assert!(!reader.anchoring);
+        assert!(reader.hold_layout);
+        let stayed = crate::visit::settle_hold(
+            &mut reader,
+            crate::visit::finish_hold_offset(None, true, false),
+        );
+        assert_eq!(stayed, crate::visit::FrameStep::Stay);
+        assert!(!crate::visit::places_frame(stayed));
+        assert_ne!(reader.probe, probe);
+        let blocked = crate::visit::poll_anchored(&mut reader, 4, 40, false);
+        assert!(blocked.command.is_none());
+        assert_eq!(reader.walk, Some(10));
+        let reached = crate::visit::poll_anchored(&mut reader, 10, 40, false);
+        assert!(reached.command.is_none());
+        assert_eq!(reader.walk, Some(10));
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        assert!(crate::visit::keep_frame(&reader));
+        let timed = crate::visit::settle_hold(
+            &mut reader,
+            crate::visit::finish_hold_offset(None, false, true),
+        );
+        assert_eq!(timed, crate::visit::FrameStep::Stay);
+        assert!(crate::visit::keep_frame(&reader));
+        assert!(crate::visit::current_hold(Some(42), probe, reader.probe).is_none());
+        let late = serde_json::json!({
+            "hold": 42,
+            "measured": true,
+            "probe": probe,
+            "page": 4,
+            "pages": 40,
+            "goal": 10,
+        });
+        apply_posts(&mut reader, &[late], "ch.xhtml", &mut store, 4, 40, true);
+        assert!(reader.measured.is_none());
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        assert_eq!(reader.walk, Some(10));
         let user = crate::visit::turn_command(
             1,
             crate::visit::TurnSource::User,
@@ -2617,7 +2721,7 @@ mod tests {
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
         let still = crate::visit::poll_anchored(&mut reader, 4, 40, false);
-        assert!(still.command.is_some());
+        assert!(still.command.is_none());
         assert_eq!(reader.walk, Some(10));
         let (quiet, open_answer, _) = read_frame(
             &mut stdin,
@@ -2657,28 +2761,16 @@ mod tests {
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
         assert_eq!(reader.walk, Some(10));
-        let (zero_posts, zero, _) = read_frame(
-            &mut stdin,
-            &mut stdout,
-            "window.__caretOff=0;window.spikeHold&&window.spikeHold(10)",
-        );
-        assert_eq!(zero, "0", "{zero_posts:?}");
-        assert!(
-            zero_posts
-                .iter()
-                .any(|post| post["measured"] == true && post["hold"] == 0),
-            "{zero_posts:?}"
-        );
-        assert!(reader.measured.is_none());
         let _ = read_frame(&mut stdin, &mut stdout, "window.__caretOff=42");
-        assert_eq!(
-            crate::visit::begin_reflow(&mut reader),
-            crate::visit::ReflowHold::Measure(10)
-        );
+        assert!(crate::visit::keep_frame(&reader));
+        let again = crate::visit::begin_reflow(&mut reader);
+        let crate::visit::ReflowHold::Measure { page: 10, probe } = again else {
+            panic!("measure the caret, {again:?}");
+        };
         let (held_posts, held, _) = read_frame(
             &mut stdin,
             &mut stdout,
-            &format!("now {}", crate::visit::hold_eval(10)),
+            &format!("now {}", crate::visit::hold_eval(10, probe)),
         );
         assert_eq!(held, "42", "{held_posts:?}");
         assert!(
@@ -2703,6 +2795,7 @@ mod tests {
             true,
         );
         assert_eq!(reader.measured, Some(42));
+        assert!(!crate::visit::keep_frame(&reader));
         assert!(reader.anchoring);
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
@@ -2737,6 +2830,25 @@ mod tests {
         );
         assert_ne!(column, 15, "{landed:?}");
         assert_eq!(column, 4, "{landed:?}");
+        let mut denied = SettingsBook {
+            file: &file,
+            book: "",
+        };
+        for post in &landed {
+            crate::visit::handle_page(&mut reader, post, "ch.xhtml", &mut denied);
+        }
+        assert!(reader.restore_ack);
+        assert_eq!(reader.measured, Some(42));
+        assert_eq!(reader.walk, Some(10));
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        let failed_walk = crate::visit::poll_anchored(&mut reader, 4, 40, false);
+        assert!(failed_walk.command.is_none());
+        assert_eq!(reader.walk, Some(10));
+        assert_eq!(
+            crate::visit::begin_reflow(&mut reader),
+            crate::visit::ReflowHold::Keep(42)
+        );
         apply_posts(
             &mut reader,
             &landed,
@@ -3092,6 +3204,75 @@ mod tests {
         assert_eq!(resume_page(&file, book), done_column);
         assert_eq!(reader.place.page, done_column);
         assert!(reader.walk.is_none());
+
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        assert!(!resume_caret(&file, book));
+        let mut reopened = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut reopened, &store);
+        assert_eq!(reopened.walk, Some(10));
+        assert!(reopened.measured.is_none());
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.__caretOff=0;window.innerWidth=250",
+        );
+        let zero_measure = crate::visit::begin_reflow(&mut reopened);
+        let crate::visit::ReflowHold::Measure { page: 10, probe } = zero_measure else {
+            panic!("an old page row is measured, {zero_measure:?}");
+        };
+        let (zero_posts, zero, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::hold_eval(10, probe)),
+        );
+        assert_eq!(zero, "0", "{zero_posts:?}");
+        apply_posts(
+            &mut reopened,
+            &zero_posts,
+            "ch.xhtml",
+            &mut store,
+            4,
+            40,
+            true,
+        );
+        assert_eq!(reopened.measured, Some(0));
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        assert!(!resume_caret(&file, book));
+        let (zero_wait, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeReveal&&window.spikeReveal(0)",
+        );
+        assert!(zero_wait.is_empty(), "{zero_wait:?}");
+        let (zero_landed, _, zero_column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert!(zero_column > 1, "{zero_column} {zero_landed:?}");
+        assert!(
+            zero_landed
+                .iter()
+                .any(|post| post["pinned"] == 0 && post["kind"] == "anchor"),
+            "{zero_landed:?}"
+        );
+        apply_posts(
+            &mut reopened,
+            &zero_landed,
+            "ch.xhtml",
+            &mut store,
+            zero_column,
+            40,
+            false,
+        );
+        assert_eq!(resume_page(&file, book), zero_column);
+        assert_eq!(resume_offset(&file, book), 0);
+        assert!(resume_caret(&file, book));
+        let mut opened = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut opened, &store);
+        assert_eq!(opened.measured, Some(0));
+        assert!(opened.walk.is_none());
+        assert_eq!(
+            crate::visit::begin_reflow(&mut opened),
+            crate::visit::ReflowHold::Keep(0)
+        );
 
         let _ = writeln_cmd(&mut stdin, "quit");
         let _ = child.wait();

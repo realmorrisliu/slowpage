@@ -813,17 +813,18 @@ const SCRIPT: &str = r#"
     seek(saved);
     return hit;
   }
-  window.spikeHold = function (page) {
+  window.spikeHold = function (page, probe) {
     const goal = page | 0;
+    const generation = probe | 0;
     const offset = goal > 0 ? goalOffset(goal) : measureCaret();
     if (offset == null) {
       holdGoal = 0;
-      post({ missed: true, goal: goal });
+      post({ missed: true, goal: goal, probe: generation });
       return null;
     }
     holdGoal = goal;
     window.spikeHeld = offset;
-    post({ hold: offset, measured: true, goal: goal });
+    post({ hold: offset, measured: true, goal: goal, probe: generation });
     return offset;
   };
   function snapSettled() {

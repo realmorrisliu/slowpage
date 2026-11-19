@@ -896,6 +896,7 @@ impl State {
             self.mode = Mode::WebKit;
             let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
             let mut href = crate::settings::resume_href(&crate::settings::path(), &book.path);
+            let mut caret = crate::settings::resume_caret(&crate::settings::path(), &book.path);
             offset = sentence;
             self.epub_page = 0;
             self.web_pages = 1;
@@ -907,6 +908,9 @@ impl State {
                 if open.page != page || open.offset != sentence {
                     page = open.page;
                     offset = open.offset;
+                    if offset == 0 {
+                        caret = false;
+                    }
                     let shown = web.href();
                     if !shown.is_empty() {
                         href = shown.clone();
@@ -915,7 +919,7 @@ impl State {
                 }
             }
             if self.web.is_some() {
-                crate::web::open_reader(page, offset, &href);
+                crate::web::open_reader(page, offset, &href, caret);
             }
             self.web.is_some()
         } else {
@@ -1135,33 +1139,38 @@ impl State {
         if !self.await_hold {
             return;
         }
-        let (offset, missed) = match self.web.as_ref() {
+        let (offset, hold_probe, missed) = match self.web.as_ref() {
             Some(web) => {
                 let inbox = web.inbox.borrow();
-                (inbox.hold, inbox.hold_missed)
+                (inbox.hold, inbox.hold_probe, inbox.hold_missed)
             }
-            None => (None, false),
+            None => (None, 0, false),
         };
         let timed_out = self
             .hold_since
             .map(|at| at.elapsed().as_millis() > 700)
             .unwrap_or(false);
+        let offset = crate::visit::current_hold(offset, hold_probe, crate::web::reader_probe());
         let finish = crate::visit::finish_hold_offset(offset, missed, timed_out);
         if finish == crate::visit::HoldFinish::Wait {
             return;
         }
+        let step = crate::web::settle_finished_hold(finish);
         if let Some(web) = &self.web {
             let mut inbox = web.inbox.borrow_mut();
             inbox.hold = None;
+            inbox.hold_probe = 0;
             inbox.hold_missed = false;
         }
         self.await_hold = false;
-        self.hold_ready = true;
-        self.place_page();
-        let crate::visit::HoldFinish::Reveal(offset) = finish else {
-            crate::web::anchor_missed();
+        if !crate::visit::places_frame(step) {
+            return;
+        }
+        let crate::visit::FrameStep::Reveal(offset) = step else {
             return;
         };
+        self.hold_ready = true;
+        self.place_page();
         if let Some(web) = &self.web {
             web.reveal(offset);
             if let (Some(start), Some(end)) = (
@@ -1297,6 +1306,9 @@ impl State {
         }
         let reflowable = self.declared.is_none();
         if self.settled && reflowable && !self.hold_ready {
+            if crate::web::keep_frame() {
+                return;
+            }
             self.await_hold = true;
             self.hold_since = Some(Instant::now());
             if let Some(web) = &self.web {
@@ -1712,7 +1724,7 @@ impl Stage {
                 state.open_web(&view, "");
                 if let Some(web) = state.web.as_ref() {
                     let href = web.href();
-                    crate::web::open_reader(1, 0, &href);
+                    crate::web::open_reader(1, 0, &href, false);
                     if let Ok(page) = std::env::var("SPIKE_AT").unwrap_or_default().parse::<u32>() {
                         crate::web::prime_walk(page);
                     }

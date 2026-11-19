@@ -1010,6 +1010,12 @@ pub struct Reader {
     /// A caret read is in flight. The poll does not chase and does not end
     /// the walk until the hit or the miss is applied.
     pub anchoring: bool,
+    /// The sample this resize asked for. A post from an older sample is not
+    /// the current character.
+    pub probe: u64,
+    /// The saved page number is not a target in a new layout. Set when a
+    /// caret read misses, times out, or the anchor row fails to land.
+    pub hold_layout: bool,
     /// The next restore answers a user post this reader refused or accepted.
     /// The page blocks an older restore until that answer arrives.
     pub restore_ack: bool,
@@ -1037,6 +1043,8 @@ impl Default for Reader {
             walk: None,
             measured: None,
             anchoring: false,
+            probe: 0,
+            hold_layout: false,
             restore_ack: false,
             restore_load: 0,
         }
@@ -1101,6 +1109,8 @@ pub struct PageReport {
     /// The hold is a caret hit. Absent on a miss, including a miss that
     /// would otherwise look like character 0.
     pub measured: bool,
+    /// The resize sample that produced this post. Zero when the page sent none.
+    pub probe: u64,
     /// The poll's column walk. The same slide as a key, without a reader.
     pub chase: bool,
 }
@@ -1118,6 +1128,7 @@ pub fn page_report(value: &serde_json::Value) -> PageReport {
         missed: value["missed"].as_bool(),
         hold: value["hold"].as_u64().map(|offset| offset as u32),
         measured: value["measured"].as_bool() == Some(true),
+        probe: value["probe"].as_u64().unwrap_or(0),
         chase: value["chase"].as_bool() == Some(true),
     }
 }
@@ -1148,6 +1159,14 @@ fn apply_idle(accepted: bool) -> Apply {
 pub trait PlaceFile {
     fn write_place(&mut self, place: &ReadingPlace) -> bool;
     fn resume(&self) -> ReadingPlace;
+    /// A caret hit, including character 0. The default writes the page row
+    /// and records no caret, which is the old page-only file.
+    fn write_anchor(&mut self, place: &ReadingPlace) -> bool {
+        self.write_place(place)
+    }
+    fn resume_caret(&self) -> bool {
+        false
+    }
 }
 
 /// A swipe token or a key or edge (`kind: "turn"`). A column walk posts
@@ -1169,6 +1188,7 @@ fn clear_resume(reader: &mut Reader) {
     reader.walk = None;
     reader.measured = None;
     reader.anchoring = false;
+    reader.hold_layout = false;
 }
 
 /// Accept a script message. The place changes only after `write_place`
@@ -1198,7 +1218,7 @@ pub fn handle_page(
         && report.kind != "turn"
         && report.pinned.is_none()
     {
-        if report.measured {
+        if report.measured && report.probe == reader.probe {
             reader.measured = report.hold;
         }
         return Apply {
@@ -1213,9 +1233,29 @@ pub fn handle_page(
         && report.token.is_none()
         && report.kind != "turn"
         && report.hold.is_none()
-        && (report.pinned.is_none() || reader.anchoring)
+        && report.pinned.is_none()
+    {
+        if report.probe == reader.probe {
+            reader.anchoring = false;
+            reader.hold_layout = true;
+        }
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    if report.missed == Some(true)
+        && report.token.is_none()
+        && report.kind != "turn"
+        && report.hold.is_none()
+        && report.pinned.is_some()
+        && reader.anchoring
     {
         reader.anchoring = false;
+        reader.hold_layout = true;
         return Apply {
             accepted: true,
             paint: false,
@@ -1240,15 +1280,18 @@ pub fn handle_page(
             offset,
         };
         let changed = place != reader.place;
-        if changed && !store.write_place(&place) {
+        if !store.write_anchor(&place) {
             reader.restore_ack = true;
             reader.anchoring = false;
+            reader.hold_layout = true;
+            reader.measured = Some(offset);
             return apply_idle(false);
         }
         reader.place = place;
         reader.measured = Some(offset);
         reader.walk = None;
         reader.anchoring = false;
+        reader.hold_layout = false;
         reader.restore_ack = true;
         return Apply {
             accepted: true,
@@ -1348,7 +1391,7 @@ pub fn handle_page(
     if write {
         reader.place = place;
     }
-    if !reader.anchoring && reader.walk.is_some_and(|target| shown >= target) {
+    if !layout_held(reader) && reader.walk.is_some_and(|target| shown >= target) {
         reader.walk = None;
     }
     Apply {
@@ -1404,6 +1447,7 @@ pub fn handle_chapter(
         reader.walk = None;
         reader.measured = None;
         reader.anchoring = false;
+        reader.hold_layout = false;
     }
     let reveal = match nav.go {
         ChapterMove::Reveal { offset } => Some(offset),
@@ -1424,8 +1468,9 @@ pub fn leave(reader: &mut Reader) {
 }
 
 /// The resume row becomes the place. An offset above 0 waits as `pending`.
-/// Nothing is written.
-pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str) {
+/// `caret` is a saved hit, including character 0. An old row has no caret
+/// and a zero offset, and that row still walks. Nothing is written.
+pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str, caret: bool) {
     let page = page.max(1);
     reader.place = ReadingPlace {
         href: href.to_string(),
@@ -1439,9 +1484,18 @@ pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str) {
     reader.hold = None;
     reader.back = None;
     reader.reveal = None;
-    reader.measured = if offset > 0 { Some(offset) } else { None };
+    reader.measured = if caret || offset > 0 {
+        Some(offset)
+    } else {
+        None
+    };
     reader.anchoring = false;
-    reader.walk = resume_walk(page, offset);
+    reader.hold_layout = false;
+    reader.walk = if caret {
+        None
+    } else {
+        resume_walk(page, offset)
+    };
 }
 
 /// An explicit stop ends the walk. A shell key does not call this before
@@ -1461,6 +1515,8 @@ pub fn reset_restore_epoch(reader: &mut Reader) {
     reader.restore_ack = false;
     reader.measured = None;
     reader.anchoring = false;
+    reader.hold_layout = false;
+    reader.probe = reader.probe.saturating_add(1);
 }
 
 /// `place_page` on a cancel. The drop stops an animation that has not posted.
@@ -1471,7 +1527,13 @@ pub fn cancel_placed_page(reader: &mut Reader) -> String {
 
 pub fn open_resume(reader: &mut Reader, store: &dyn PlaceFile) {
     let resumed = store.resume();
-    open_place(reader, resumed.page, resumed.offset, &resumed.href);
+    open_place(
+        reader,
+        resumed.page,
+        resumed.offset,
+        &resumed.href,
+        store.resume_caret(),
+    );
 }
 
 /// A stored page with no sentence is walked column by column. A sentence
@@ -1521,8 +1583,18 @@ pub fn poll_resume(
 
 /// The poll while a caret read is in flight. The old page is not chased,
 /// and a column past that page does not end the walk.
+fn layout_held(reader: &Reader) -> bool {
+    reader.anchoring || reader.measured.is_some() || reader.hold_layout
+}
+
+/// A resize must not measure the saved page number. The frame stays until a
+/// caret hit can be revealed, or the reader turns the page.
+pub fn keep_frame(reader: &Reader) -> bool {
+    reader.hold_layout && reader.measured.is_none()
+}
+
 pub fn poll_anchored(reader: &mut Reader, shown: u32, pages: u32, turning: bool) -> ResumePoll {
-    if reader.anchoring {
+    if layout_held(reader) {
         return ResumePoll {
             walk: reader.walk,
             command: None,
@@ -1544,7 +1616,7 @@ pub fn poll_anchored(reader: &mut Reader, shown: u32, pages: u32, turning: bool)
 /// again at the new width. A probe already in flight is not started again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReflowHold {
-    Measure(u32),
+    Measure { page: u32, probe: u64 },
     Keep(u32),
     Pending,
 }
@@ -1557,12 +1629,16 @@ pub fn begin_reflow(reader: &mut Reader) -> ReflowHold {
     if reader.anchoring {
         return ReflowHold::Pending;
     }
+    reader.probe = reader.probe.saturating_add(1);
     reader.anchoring = true;
-    ReflowHold::Measure(reader.walk.unwrap_or(0))
+    ReflowHold::Measure {
+        page: reader.walk.unwrap_or(0),
+        probe: reader.probe,
+    }
 }
 
-pub fn hold_eval(page: u32) -> String {
-    format!("window.spikeHold&&window.spikeHold({page})")
+pub fn hold_eval(page: u32, probe: u64) -> String {
+    format!("window.spikeHold&&window.spikeHold({page},{probe})")
 }
 
 /// The offset `finish_hold` may reveal. A miss and a timeout are not character 0.
@@ -1581,6 +1657,43 @@ pub fn finish_hold_offset(hold: Option<u32>, missed: bool, timed_out: bool) -> H
         HoldFinish::Miss
     } else {
         HoldFinish::Wait
+    }
+}
+
+/// Whether `finish_hold` moves the web view to the new frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameStep {
+    Wait,
+    Stay,
+    Reveal(u32),
+}
+
+pub fn places_frame(step: FrameStep) -> bool {
+    matches!(step, FrameStep::Reveal(_))
+}
+
+/// A hold already in the inbox is current only when it is the sample still
+/// being asked for.
+pub fn current_hold(hold: Option<u32>, hold_probe: u64, reader_probe: u64) -> Option<u32> {
+    hold.filter(|_| hold_probe == reader_probe)
+}
+
+/// Miss and timeout retire the sample and leave the frame where it is.
+/// A hit reveals that character after the frame moves.
+pub fn settle_hold(reader: &mut Reader, finish: HoldFinish) -> FrameStep {
+    match finish {
+        HoldFinish::Wait => FrameStep::Wait,
+        HoldFinish::Miss => {
+            reader.probe = reader.probe.saturating_add(1);
+            reader.anchoring = false;
+            reader.hold_layout = true;
+            FrameStep::Stay
+        }
+        HoldFinish::Reveal(ch) => {
+            reader.anchoring = true;
+            reader.hold_layout = false;
+            FrameStep::Reveal(ch)
+        }
     }
 }
 
@@ -2604,7 +2717,11 @@ mod tests {
         assert_eq!(reader.walk, Some(10));
         assert!(command.contains("spikeFollowDrop"));
         assert!(!reader.swipe.release_open());
-        assert_eq!(begin_reflow(&mut reader), ReflowHold::Measure(10));
+        let first = begin_reflow(&mut reader);
+        let ReflowHold::Measure { page: 10, probe } = first else {
+            panic!("measure the saved column, {first:?}");
+        };
+        assert_eq!(probe, reader.probe);
         assert!(reader.anchoring);
         assert_eq!(begin_reflow(&mut reader), ReflowHold::Pending);
         assert_eq!(finish_hold_offset(None, false, false), HoldFinish::Wait);
@@ -2614,7 +2731,17 @@ mod tests {
             finish_hold_offset(Some(0), false, false),
             HoldFinish::Reveal(0)
         );
+        let stayed = settle_hold(&mut reader, HoldFinish::Miss);
+        assert_eq!(stayed, FrameStep::Stay);
+        assert!(!places_frame(stayed));
+        assert!(reader.hold_layout);
+        assert!(current_hold(Some(9), probe, reader.probe).is_none());
+        let polled = poll_anchored(&mut reader, 10, 40, false);
+        assert!(polled.command.is_none());
+        assert_eq!(reader.walk, Some(10));
+        assert!(keep_frame(&reader));
         reader.measured = Some(42);
+        assert!(!keep_frame(&reader));
         assert_eq!(begin_reflow(&mut reader), ReflowHold::Keep(42));
     }
 

@@ -162,6 +162,7 @@ pub struct Inbox {
     /// The last `turn_command` returned `no`. The poll latch clears; the walk stays.
     pub turn_declined: bool,
     pub hold: Option<u32>,
+    pub hold_probe: u64,
     pub hold_missed: bool,
     pub sentence: Option<u32>,
     pub pinned: Option<u32>,
@@ -309,11 +310,18 @@ define_class!(
                         }
                         if let Some(hold) = value["hold"].as_u64() {
                             inbox.hold = Some(hold as u32);
+                            inbox.hold_probe = value["probe"].as_u64().unwrap_or(0);
                             inbox.hold_missed = false;
                         } else if value["missed"].as_bool() == Some(true)
                             && value.get("pinned").is_none()
                         {
-                            inbox.hold_missed = true;
+                            let generation = value["probe"].as_u64().unwrap_or(0);
+                            let current = SESSION.with(|session| session.borrow().reader.probe);
+                            if generation == current {
+                                inbox.hold = None;
+                                inbox.hold_probe = generation;
+                                inbox.hold_missed = true;
+                            }
                         }
                         if value.get("sample").map(|item| !item.is_null()).unwrap_or(false) {
                             inbox.sample = Some(value["sample"].clone());
@@ -863,14 +871,17 @@ impl WebChapter {
             SESSION.with(|session| crate::visit::begin_reflow(&mut session.borrow_mut().reader));
         match plan {
             crate::visit::ReflowHold::Keep(ch) => {
-                self.inbox.borrow_mut().hold = Some(ch);
+                let mut inbox = self.inbox.borrow_mut();
+                inbox.hold = Some(ch);
+                inbox.hold_probe = SESSION.with(|session| session.borrow().reader.probe);
+                inbox.hold_missed = false;
             }
             crate::visit::ReflowHold::Pending => {}
-            crate::visit::ReflowHold::Measure(page) => {
+            crate::visit::ReflowHold::Measure { page, probe } => {
                 let (web, _, href) = self.shown();
                 eval(
                     &web,
-                    &crate::visit::hold_eval(page),
+                    &crate::visit::hold_eval(page, probe),
                     self.inbox.clone(),
                     href,
                     false,
@@ -1210,9 +1221,9 @@ pub fn turn_chapter(
     })
 }
 
-pub fn open_reader(page: u32, offset: u32, href: &str) {
+pub fn open_reader(page: u32, offset: u32, href: &str, caret: bool) {
     SESSION.with(|session| {
-        crate::visit::open_place(&mut session.borrow_mut().reader, page, offset, href);
+        crate::visit::open_place(&mut session.borrow_mut().reader, page, offset, href, caret);
     });
 }
 
@@ -1254,6 +1265,19 @@ pub fn anchor_missed() {
     SESSION.with(|session| {
         session.borrow_mut().reader.anchoring = false;
     });
+}
+
+pub fn keep_frame() -> bool {
+    SESSION.with(|session| crate::visit::keep_frame(&session.borrow().reader))
+}
+
+pub fn reader_probe() -> u64 {
+    SESSION.with(|session| session.borrow().reader.probe)
+}
+
+/// One reader. A miss leaves the frame, a hit reveals after the frame moves.
+pub fn settle_finished_hold(finish: crate::visit::HoldFinish) -> crate::visit::FrameStep {
+    SESSION.with(|session| crate::visit::settle_hold(&mut session.borrow_mut().reader, finish))
 }
 
 pub fn take_reader_reveal() -> Option<u32> {
