@@ -1043,7 +1043,20 @@ pub fn turn_command(delta: i32, source: TurnSource) -> String {
         TurnSource::Restore => "restore",
         TurnSource::User => "user",
     };
-    format!("window.spikeTurn({delta},\"{source}\")")
+    format!(
+        "(function(){{var answer=(window.spikeTurn&&window.spikeTurn({delta},\"{source}\"))||\"no\";return JSON.stringify({{answer:answer}});}})()"
+    )
+}
+
+/// The page started this turn. `no` did not, so the poll latch clears and the
+/// walk stays where it was.
+pub fn turn_accepted(answer: &str) -> bool {
+    matches!(answer, "ok" | "queued")
+}
+
+/// The eval `drop_swipe` runs for a chapter, a resize, or a reopen.
+pub fn drop_command() -> &'static str {
+    "window.spikeFollowDrop&&window.spikeFollowDrop()"
 }
 
 /// The eval `release_swipe` runs. The page's answer is in the returned JSON.

@@ -112,6 +112,7 @@ jobs:
             a_finished_swipe_is_the_place_a_later_open_reads \
             a_page_resume_does_not_store_the_columns_it_crosses \
             a_resume_walk_ends_when_the_reader_moves \
+            a_taken_turn_is_the_page_the_resume_stops_on \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -147,7 +148,8 @@ jobs:
             a_finished_page_is_saved_before_chapter_or_resize \
             a_finished_swipe_is_the_place_a_later_open_reads \
             a_page_resume_does_not_store_the_columns_it_crosses \
-            a_resume_walk_ends_when_the_reader_moves
+            a_resume_walk_ends_when_the_reader_moves \
+            a_taken_turn_is_the_page_the_resume_stops_on
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

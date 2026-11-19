@@ -159,6 +159,8 @@ pub struct Inbox {
     pub reload: bool,
     pub did_reload: bool,
     pub turn_started: Option<Instant>,
+    /// The last `turn_command` returned `no`. The poll latch clears; the walk stays.
+    pub turn_declined: bool,
     pub hold: Option<u32>,
     pub sentence: Option<u32>,
     pub pinned: Option<u32>,
@@ -569,9 +571,18 @@ fn eval(web: &AnyObject, js: &str, inbox: Rc<RefCell<Inbox>>, href: String, turn
         let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
             return;
         };
+        if parsed.get("swipe").is_some() {
+            if let Some(answer) = parsed["answer"].as_str() {
+                let token = parsed["swipe"].as_u64().unwrap_or(0);
+                SESSION
+                    .with(|session| session.borrow_mut().reader.swipe.note_answer(token, answer));
+            }
+            return;
+        }
         if let Some(answer) = parsed["answer"].as_str() {
-            let token = parsed["swipe"].as_u64().unwrap_or(0);
-            SESSION.with(|session| session.borrow_mut().reader.swipe.note_answer(token, answer));
+            if !crate::visit::turn_accepted(answer) {
+                inbox.borrow_mut().turn_declined = true;
+            }
             return;
         }
         let mut inbox = inbox.borrow_mut();
@@ -880,7 +891,7 @@ impl WebChapter {
         let (web, _, href) = self.shown();
         eval(
             &web,
-            "window.spikeFollowDrop&&window.spikeFollowDrop()",
+            crate::visit::drop_command(),
             self.inbox.clone(),
             href,
             false,
@@ -1184,6 +1195,14 @@ pub fn prime_walk(page: u32) {
 
 pub fn stop_walk() {
     SESSION.with(|session| crate::visit::stop_walk(&mut session.borrow_mut().reader));
+}
+
+/// A restore eval the page refused. One shot, so the next poll can run.
+pub fn take_turn_declined(inbox: &RefCell<Inbox>) -> bool {
+    let mut inbox = inbox.borrow_mut();
+    let declined = inbox.turn_declined;
+    inbox.turn_declined = false;
+    declined
 }
 
 /// One poll of the reader's walk. Reaching the column clears it.

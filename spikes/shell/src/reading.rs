@@ -457,6 +457,8 @@ const SCRIPT: &str = r#"
   let queued = 0;
   let queuedToken = 0;
   let queuedSource = "";
+  let flying = "";
+  let flyingDelta = 0;
   let shift = 0;
   let followX = 0;
   let followGen = 0;
@@ -798,9 +800,27 @@ const SCRIPT: &str = r#"
     followX = 0;
     queued = 0;
     queuedToken = 0;
+    queuedSource = "";
+    flying = "";
+    flyingDelta = 0;
     busy = false;
     committing = false;
     root.style.transform = "none";
+  }
+  function releaseFlying() {
+    motion++;
+    const leaf = document.getElementById("spike-leaf");
+    if (leaf) leaf.remove();
+    document.documentElement.style.transform = "none";
+    if (flying === "restore" && flyingDelta) {
+      const box = column();
+      const back = box.page - flyingDelta;
+      if (back >= 1 && back <= box.pages) seek(box.w * (back - 1));
+    }
+    busy = false;
+    window.spikeBusy = false;
+    flying = "";
+    flyingDelta = 0;
   }
   window.spikeReveal = function (offset) {
     endFollow();
@@ -848,6 +868,8 @@ const SCRIPT: &str = r#"
     queued = 0;
     queuedToken = 0;
     queuedSource = "";
+    flying = "";
+    flyingDelta = 0;
     if (next) begin(next, nextToken, nextSource);
   }
   window.spikeTurn = function (delta, source) {
@@ -855,8 +877,11 @@ const SCRIPT: &str = r#"
     // generation here kills the only callback that clears `busy` and runs
     // the queued key, so the page stops accepting turns. A return glide has
     // not committed, and a key cancels it. The key takes the one queue slot,
-    // so a swipe token waiting in that slot is retired.
+    // so a swipe token waiting in that slot is retired. A restore never
+    // takes that slot: the reader's turn already owns it. A reader turn
+    // takes an unfinished restore's column instead of waiting for it.
     if (source !== "restore") source = "user";
+    if (source !== "restore" && busy && !committing && flying === "restore") releaseFlying();
     if (!committing && source !== "restore") {
       followGen++;
       followX = 0;
@@ -870,14 +895,7 @@ const SCRIPT: &str = r#"
     }
     delta = delta < 0 ? -1 : 1;
     if (busy) {
-      if (source === "restore") {
-        if (committing && !queuedToken && !queued) {
-          queued = delta;
-          queuedSource = "restore";
-          return "queued";
-        }
-        return "no";
-      }
+      if (source === "restore") return "no";
       queued = delta;
       queuedSource = "user";
       return "queued";
@@ -890,10 +908,14 @@ const SCRIPT: &str = r#"
     const box = column();
     const target = box.page + delta;
     if (target < 1 || target > box.pages) {
+      flying = "";
+      flyingDelta = 0;
       if (source === "restore") post({ frames: [], chase: true });
       else post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
       return;
     }
+    flying = source;
+    flyingDelta = delta;
     window.spikeBusy = true;
     window.spikeCover = box.w * (target - 1);
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
@@ -1023,6 +1045,7 @@ const SCRIPT: &str = r#"
     requestAnimationFrame(frame);
   }
   window.spikeFollowEnd = function (delta, token) {
+    if (busy && !committing && flying === "restore") releaseFlying();
     if (busy) {
       // A key slide is not a commit. Drop the follow paint and let that slide
       // finish. A commit glide is the turn already decided: cancelling its
@@ -1069,6 +1092,8 @@ const SCRIPT: &str = r#"
       queued = 0;
       queuedToken = 0;
       queuedSource = "";
+      flying = "";
+      flyingDelta = 0;
       if (next) begin(next, nextToken, nextSource);
     });
     return "glide";

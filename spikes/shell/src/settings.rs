@@ -1827,7 +1827,7 @@ mod tests {
         reader
             .swipe
             .note_answer(11, parsed["answer"].as_str().unwrap());
-        let (queued_posts, _) = read_answered(
+        let (queued_posts, restore_answer) = read_answered(
             &mut stdin,
             &mut stdout,
             &format!(
@@ -1836,14 +1836,12 @@ mod tests {
             ),
         );
         assert!(queued_posts.iter().all(|post| post["dropped"] != true));
+        let refused = script_answer(&restore_answer);
+        assert_eq!(reader.walk, Some(10), "{refused}");
         let finished = read_step(&mut stdin, &mut stdout, "void 0");
         assert!(finished.iter().all(|post| post["dropped"] != true));
         assert!(
-            finished.iter().any(|post| post["chase"] == true),
-            "{finished:?}"
-        );
-        assert!(
-            finished.iter().all(|post| post["kind"] != "turn"),
+            finished.iter().all(|post| post["chase"] != true),
             "{finished:?}"
         );
         let swipe_page = finished
@@ -1852,9 +1850,20 @@ mod tests {
             .unwrap()["page"]
             .as_u64()
             .unwrap() as u32;
+        let screen = screen_page(&finished);
         apply_posts(&mut reader, &finished, "ch.xhtml", &mut store, 1, 40, false);
-        assert_eq!(resume_page(&file, book), swipe_page);
-        assert_eq!(reader.place.page, swipe_page);
+        assert_eq!(resume_page(&file, book), screen, "{refused} {finished:?}");
+        assert_eq!(reader.place.page, screen);
+        assert_eq!(swipe_page, screen);
+        assert!(reader.walk.is_none());
+        assert_eq!(refused, "no", "{restore_answer}");
+        assert!(!crate::visit::turn_accepted(&refused));
+        for _ in 0..3 {
+            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            assert!(again.command.is_none());
+            reader.walk = again.walk;
+            assert_eq!(resume_page(&file, book), screen);
+        }
 
         let (first_posts, first_answer) = read_answered(
             &mut stdin,
@@ -1876,7 +1885,7 @@ mod tests {
         reader
             .swipe
             .note_answer(22, second["answer"].as_str().unwrap());
-        let (chase_posts, _) = read_answered(
+        let (chase_posts, restore_answer) = read_answered(
             &mut stdin,
             &mut stdout,
             &format!(
@@ -1884,6 +1893,7 @@ mod tests {
                 crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
             ),
         );
+        assert_eq!(script_answer(&restore_answer), "no", "{restore_answer}");
         assert!(
             chase_posts.iter().all(|post| post["dropped"] != true),
             "{chase_posts:?}"
@@ -1894,11 +1904,19 @@ mod tests {
             "{released:?}"
         );
         assert!(
+            released.iter().all(|post| post["chase"] != true),
+            "{released:?}"
+        );
+        assert!(
             released
                 .iter()
                 .any(|post| post["swipe"].as_u64() == Some(22)),
             "{released:?}"
         );
+        let screen = screen_page(&released);
+        apply_posts(&mut reader, &released, "ch.xhtml", &mut store, 1, 40, false);
+        assert_eq!(resume_page(&file, book), screen, "{released:?}");
+        assert_eq!(reader.place.page, screen);
 
         record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
         let mut reader = crate::visit::Reader::default();
@@ -1908,6 +1926,311 @@ mod tests {
             .command
             .is_none());
         assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+
+        let _ = writeln_cmd(&mut stdin, "quit");
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_taken_turn_is_the_page_the_resume_stops_on() {
+        let script = crate::reading::page_script("en");
+        let dir = std::env::temp_dir().join(format!("superreader-taken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page_js = dir.join("page.js");
+        let drive = dir.join("drive.js");
+        std::fs::write(&page_js, script).unwrap();
+        std::fs::write(&drive, PAGE_WALK_DRIVE).unwrap();
+        let mut child = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page_js)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("node");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        let opened = read_posts(&mut stdout);
+        let mut screen = opened
+            .iter()
+            .rev()
+            .find_map(|post| post["page"].as_u64())
+            .unwrap_or(1) as u32;
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        let mut store = SettingsBook { file: &file, book };
+        let mut reader = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut reader, &store);
+        assert_eq!(reader.walk, Some(10));
+        let mut steps = 0u32;
+        while steps < 12 {
+            let polled = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            reader.walk = polled.walk;
+            let Some(command) = polled.command else {
+                break;
+            };
+            let posts = read_step(&mut stdin, &mut stdout, &command);
+            assert!(posts.iter().all(|post| post["kind"] != "turn"), "{posts:?}");
+            apply_posts(
+                &mut reader,
+                &posts,
+                "ch.xhtml",
+                &mut store,
+                screen,
+                40,
+                true,
+            );
+            screen = screen_page(&posts);
+            steps += 1;
+            assert_eq!(resume_page(&file, book), 10);
+            assert_eq!(resume_offset(&file, book), 0);
+        }
+        assert_eq!(screen, 10, "{steps}");
+        assert!(reader.walk.is_none());
+        assert_eq!(resume_page(&file, book), screen);
+
+        record_progress(&file, book, 20, None, 0, "ch.xhtml").unwrap();
+        crate::visit::open_resume(&mut reader, &store);
+        assert_eq!(reader.walk, Some(20));
+        let before = screen;
+        let (quiet, release_answer) = read_answered(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::release_command(1, 11)),
+        );
+        assert!(quiet.is_empty(), "{quiet:?}");
+        let release: serde_json::Value =
+            serde_json::from_str(&release_answer).expect(&release_answer);
+        reader
+            .swipe
+            .note_answer(11, release["answer"].as_str().unwrap());
+        let polled = crate::visit::poll_resume(reader.walk, before, 40, false);
+        reader.walk = polled.walk;
+        let command = polled.command.expect("the commit has not cleared the walk");
+        let (mid, restore_answer) =
+            read_answered(&mut stdin, &mut stdout, &format!("now {command}"));
+        assert!(mid.is_empty(), "{mid:?}");
+        let refused = script_answer(&restore_answer);
+        assert_eq!(reader.walk, Some(20), "{refused}");
+        let finished = read_step(&mut stdin, &mut stdout, "void 0");
+        screen = screen_page(&finished);
+        apply_posts(
+            &mut reader,
+            &finished,
+            "ch.xhtml",
+            &mut store,
+            before,
+            40,
+            false,
+        );
+        let saved = resume_page(&file, book);
+        assert!(
+            saved == screen && refused == "no" && finished.iter().all(|post| post["chase"] != true),
+            "saved {saved} screen {screen} answer {refused} posts {finished:?}"
+        );
+        assert_eq!(reader.place.page, screen);
+        assert!(reader.walk.is_none());
+        assert!(!crate::visit::turn_accepted(&refused));
+        for _ in 0..3 {
+            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            assert!(again.command.is_none());
+            reader.walk = again.walk;
+            assert_eq!(resume_page(&file, book), saved);
+        }
+
+        record_progress(&file, book, 30, None, 0, "ch.xhtml").unwrap();
+        crate::visit::open_resume(&mut reader, &store);
+        assert_eq!(reader.walk, Some(30));
+        let before = screen;
+        for token in [21u64, 22] {
+            let (posts, answer) = read_answered(
+                &mut stdin,
+                &mut stdout,
+                &format!("now {}", crate::visit::release_command(1, token)),
+            );
+            assert!(
+                posts.iter().all(|post| post["dropped"] != true),
+                "{posts:?}"
+            );
+            let parsed: serde_json::Value = serde_json::from_str(&answer).expect(&answer);
+            reader
+                .swipe
+                .note_answer(token, parsed["answer"].as_str().unwrap());
+        }
+        let polled = crate::visit::poll_resume(reader.walk, before, 40, false);
+        reader.walk = polled.walk;
+        let command = polled
+            .command
+            .expect("two queued commits still leave the walk");
+        let (mid, restore_answer) =
+            read_answered(&mut stdin, &mut stdout, &format!("now {command}"));
+        let refused = script_answer(&restore_answer);
+        assert_eq!(refused, "no", "{restore_answer}");
+        assert!(!crate::visit::turn_accepted(&refused));
+        assert_eq!(reader.walk, Some(30));
+        assert!(mid.iter().all(|post| post["dropped"] != true), "{mid:?}");
+        let released = read_step(&mut stdin, &mut stdout, "void 0");
+        assert!(
+            released.iter().all(|post| post["dropped"] != true),
+            "{released:?}"
+        );
+        assert!(
+            released.iter().all(|post| post["chase"] != true),
+            "{released:?}"
+        );
+        assert!(
+            released
+                .iter()
+                .any(|post| post["swipe"].as_u64() == Some(22)),
+            "{released:?}"
+        );
+        screen = screen_page(&released);
+        apply_posts(
+            &mut reader,
+            &released,
+            "ch.xhtml",
+            &mut store,
+            before,
+            40,
+            false,
+        );
+        assert_eq!(screen, before + 2, "{released:?}");
+        assert_eq!(resume_page(&file, book), screen);
+        assert_eq!(reader.place.page, screen);
+        assert!(reader.walk.is_none());
+        for _ in 0..3 {
+            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            assert!(again.command.is_none());
+            reader.walk = again.walk;
+            assert_eq!(resume_page(&file, book), screen);
+        }
+
+        for (label, command) in [
+            (
+                "shell",
+                crate::visit::turn_command(1, crate::visit::TurnSource::User),
+            ),
+            ("page-key", "keydown {\"key\":\"ArrowRight\"}".to_string()),
+        ] {
+            record_progress(&file, book, 40, None, 0, "ch.xhtml").unwrap();
+            crate::visit::open_resume(&mut reader, &store);
+            assert_eq!(reader.walk, Some(40), "{label}");
+            let before = screen;
+            let started = read_step(
+                &mut stdin,
+                &mut stdout,
+                &format!(
+                    "now {}",
+                    crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+                ),
+            );
+            assert!(started.is_empty(), "{label} {started:?}");
+            assert_eq!(reader.walk, Some(40), "{label}");
+            let posts = read_step(&mut stdin, &mut stdout, &command);
+            assert!(
+                posts.iter().all(|post| post["chase"] != true),
+                "{label} {posts:?}"
+            );
+            assert!(
+                posts.iter().any(|post| post["kind"] == "turn"),
+                "{label} {posts:?}"
+            );
+            screen = screen_page(&posts);
+            apply_posts(
+                &mut reader,
+                &posts,
+                "ch.xhtml",
+                &mut store,
+                before,
+                40,
+                false,
+            );
+            assert_eq!(screen, before + 1, "{label} {posts:?}");
+            assert_eq!(resume_page(&file, book), screen, "{label}");
+            assert_eq!(reader.place.page, screen, "{label}");
+            assert!(reader.walk.is_none(), "{label}");
+            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            assert!(again.command.is_none(), "{label}");
+        }
+
+        record_progress(&file, book, 40, None, 0, "ch.xhtml").unwrap();
+        crate::visit::open_resume(&mut reader, &store);
+        let before = screen;
+        let started = read_step(
+            &mut stdin,
+            &mut stdout,
+            &format!(
+                "now {}",
+                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+            ),
+        );
+        assert!(started.is_empty(), "{started:?}");
+        let (quiet, swipe_answer) = read_answered(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::release_command(1, 31)),
+        );
+        assert!(quiet.is_empty(), "{quiet:?}");
+        let swipe: serde_json::Value = serde_json::from_str(&swipe_answer).expect(&swipe_answer);
+        reader
+            .swipe
+            .note_answer(31, swipe["answer"].as_str().unwrap());
+        let posts = read_step(&mut stdin, &mut stdout, "void 0");
+        assert!(posts.iter().all(|post| post["chase"] != true), "{posts:?}");
+        screen = screen_page(&posts);
+        apply_posts(
+            &mut reader,
+            &posts,
+            "ch.xhtml",
+            &mut store,
+            before,
+            40,
+            false,
+        );
+        assert_eq!(screen, before + 1, "{posts:?}");
+        assert_eq!(resume_page(&file, book), screen);
+        assert_eq!(reader.place.page, screen);
+        assert!(reader.walk.is_none());
+        assert!(crate::visit::poll_resume(reader.walk, screen, 40, false)
+            .command
+            .is_none());
+
+        record_progress(&file, book, 40, None, 0, "ch.xhtml").unwrap();
+        crate::visit::open_resume(&mut reader, &store);
+        let kept = resume_page(&file, book);
+        let started = read_step(
+            &mut stdin,
+            &mut stdout,
+            &format!(
+                "now {}",
+                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+            ),
+        );
+        assert!(started.is_empty(), "{started:?}");
+        let dropped = read_step(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::drop_command()),
+        );
+        assert!(
+            dropped.iter().all(|post| post["chase"] != true),
+            "{dropped:?}"
+        );
+        let settled = read_step(&mut stdin, &mut stdout, "void 0");
+        assert!(
+            settled.iter().all(|post| post["chase"] != true),
+            "{settled:?}"
+        );
+        crate::visit::stop_walk(&mut reader);
+        assert!(crate::visit::poll_resume(reader.walk, screen, 40, false)
+            .command
+            .is_none());
+        assert_eq!(resume_page(&file, book), kept);
         assert_eq!(resume_offset(&file, book), 0);
 
         let _ = writeln_cmd(&mut stdin, "quit");
@@ -1972,6 +2295,21 @@ mod tests {
         stdin.write_all(command.as_bytes()).unwrap();
         stdin.write_all(b"\n").unwrap();
         stdin.flush().unwrap();
+    }
+
+    fn screen_page(posts: &[serde_json::Value]) -> u32 {
+        posts
+            .iter()
+            .rev()
+            .find_map(|post| post["page"].as_u64())
+            .expect("screen") as u32
+    }
+
+    fn script_answer(raw: &str) -> String {
+        serde_json::from_str::<serde_json::Value>(raw)
+            .ok()
+            .and_then(|value| value["answer"].as_str().map(str::to_string))
+            .unwrap_or_else(|| raw.to_string())
     }
 }
 

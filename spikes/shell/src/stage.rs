@@ -1083,6 +1083,9 @@ impl State {
                 web.turn(1, crate::visit::TurnSource::Restore);
             }
         }
+        if crate::web::take_turn_declined(&web.inbox) {
+            self.turn_pending = false;
+        }
         let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
         if crate::web::poll_reader_walk(page as u32, count as u32, self.turn_pending) {
             self.turn_pending = true;
