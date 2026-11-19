@@ -113,6 +113,40 @@ pub fn wheel_scrolls_shelf(shell: bool) -> bool {
     shell && ON_LIBRARY.load(Ordering::Relaxed)
 }
 
+pub const OPEN_REFUSAL: &str = "打不开这个文件";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileOpen {
+    Read { path: String, page: u32 },
+    Refuse,
+}
+
+pub fn prefix_is_book(pdf: bool, bytes: &[u8]) -> bool {
+    if pdf {
+        bytes.starts_with(b"%PDF")
+    } else {
+        bytes.starts_with(b"PK")
+    }
+}
+
+pub fn file_open(openable: bool, path: &str, page: u32) -> FileOpen {
+    if !openable || path.is_empty() {
+        FileOpen::Refuse
+    } else {
+        FileOpen::Read {
+            path: path.to_string(),
+            page: page.max(1),
+        }
+    }
+}
+
+pub fn apply_file_open(visit: &Visit, open: &FileOpen) -> Visit {
+    match open {
+        FileOpen::Refuse => visit.clone(),
+        FileOpen::Read { path, page } => open_cover(visit, path, *page),
+    }
+}
+
 pub fn leave_key(key: LeaveKey, focus: Focus, immersion: Immersion, surface: Surface) -> KeyEffect {
     if focus == Focus::Editing {
         return KeyEffect::None;
@@ -233,5 +267,46 @@ mod tests {
         assert!(!wheel_scrolls_shelf(true));
         publish_surface(Surface::Library);
         assert!(wheel_scrolls_shelf(true));
+    }
+
+    fn fixture(name: &str) -> Vec<u8> {
+        for path in [
+            format!("spikes/library/fixtures/apple/{name}"),
+            format!("library/fixtures/apple/{name}"),
+            format!("../library/fixtures/apple/{name}"),
+        ] {
+            if let Ok(bytes) = std::fs::read(&path) {
+                return bytes;
+            }
+        }
+        panic!("missing fixture {name}");
+    }
+
+    #[test]
+    fn a_file_open_while_running_switches_books_and_refuses_a_bad_file() {
+        let essay = fixture("Plain Essay.epub");
+        let guide = fixture("Field Guide.pdf");
+        assert!(prefix_is_book(false, &essay));
+        assert!(prefix_is_book(true, &guide));
+        assert!(!prefix_is_book(true, b"not a pdf"));
+        assert!(!prefix_is_book(false, b"not a zip"));
+
+        let shelf = note_scroll(&Visit::shelf(), 240.0);
+        let opened = apply_file_open(&shelf, &file_open(true, "/books/plain-essay.epub", 4));
+        assert_eq!(opened.surface, Surface::Reading);
+        assert_eq!(opened.path, "/books/plain-essay.epub");
+        assert_eq!(opened.page, 4);
+        assert_eq!(opened.scroll, 240.0);
+
+        let switched = apply_file_open(&opened, &file_open(true, "/books/field-guide.pdf", 2));
+        assert_eq!(switched.surface, Surface::Reading);
+        assert_eq!(switched.path, "/books/field-guide.pdf");
+        assert_eq!(switched.page, 2);
+        assert_eq!(switched.scroll, 240.0);
+
+        let stayed = apply_file_open(&switched, &file_open(false, "/tmp/notes.txt", 9));
+        assert_eq!(stayed, switched);
+        assert_eq!(apply_file_open(&shelf, &file_open(false, "", 1)), shelf);
+        assert_eq!(OPEN_REFUSAL, "打不开这个文件");
     }
 }

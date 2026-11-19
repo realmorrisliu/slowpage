@@ -150,3 +150,17 @@ Observable. The EPUB fixture Plain Essay and the PDF fixture Field Guide keep sc
 Evidence. `spikes/shell/src/visit.rs` tests. The headless `shell.test.tsx` case leaves the reader between the two opens. macOS CI runs the visit tests. `smoke-shell-click` stays pending because no window was driven.
 
 Not run. Mac GUI, smoothness, frames, animation, and PDF runtime loading.
+
+## S3 file open
+
+Goal. A file opened from Finder or the Dock, at launch or while Slowpage is already running, opens that book. A second file replaces the book on screen. A file that is not an EPUB or a PDF, or whose bytes do not match, stays on the current book and shows 打不开这个文件.
+
+Scope. `next_open_files` and a drop on the window use one decision. An EPUB starts with `PK`. A PDF starts with `%PDF`. The exploded EPUB directory still counts. The visit switches to reading and the stage receives `open`. Cold start from a command-line path stays the launch target it already is.
+
+Non-goals. No new animation, no margin, no new type, and no new PDF renderer. A file whose header matches and whose pages still fail to load is outside this slice.
+
+Done. Plain Essay and Field Guide switch the visit and keep the shelf offset. A bad file leaves the open book in place. The refusal is the sentence above.
+
+Evidence. `spikes/shell/src/visit.rs` reads those two fixtures. macOS CI runs that test. `nsh test` does not deliver `openFiles` on this machine.
+
+Not run. A Mac window of Finder, the Dock, and a second real PDF loading in pdfium. Smoothness, frames, and animation.
