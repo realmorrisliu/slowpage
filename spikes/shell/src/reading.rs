@@ -343,6 +343,13 @@ pub fn footer_zh(page: u32, pages: u32) -> (String, String) {
     (format!("{page}/{pages}页"), format!("本章还剩{left}页"))
 }
 
+pub fn product_page_footer(page: u32, pages: u32) -> (String, String) {
+    if pages == 0 {
+        return (String::new(), String::new());
+    }
+    footer_zh(page, pages)
+}
+
 pub fn title_alpha(shown_ms: u32) -> f32 {
     fade_down(shown_ms, TITLE_DELAY_MS, TITLE_OVER_MS).clamp(0.0, 1.0)
 }
@@ -396,6 +403,8 @@ pub fn page_script(lang: &str) -> String {
         .replace("__FALLBACK__", &fallback)
         .replace("__PAGE__", &page)
         .replace("__MS__", &SLIDE_MS.to_string())
+        .replace("__EDGE__", &crate::visit::PAGE_EDGE.to_string())
+        .replace("__SLOP__", &crate::visit::CLICK_SLOP.to_string())
         .replace("__PAPER__", PAPER)
         .replace("__TOP__", &face.margin_top.to_string())
         .replace("__BOTTOM__", &face.margin_bottom.to_string())
@@ -651,7 +660,7 @@ const SCRIPT: &str = r#"
   function post(extra) {
     const box = column();
     const fill = columnFill();
-    const body = { page: box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf") };
+    const body = { page: box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
     body.fill_gap = fill.fill_gap;
     body.line_h = fill.line_h;
     body.content_bottom = fill.content_bottom;
@@ -763,17 +772,19 @@ const SCRIPT: &str = r#"
     }
     return "ok";
   };
-  window.spikeHold = function () {
+  function heldOffset() {
     const x = Math.max(24, Math.min(80, window.innerWidth * 0.2));
     const y = Math.max(48, Math.min(140, window.innerHeight * 0.18));
     const caret = document.caretRangeFromPoint(x, y) || document.caretRangeFromPoint(x, y + 40);
-    let offset = 0;
-    if (caret && caret.startContainer) {
-      const node = caret.startContainer.nodeType === 3
-        ? caret.startContainer
-        : (caret.startContainer.firstChild || null);
-      if (node && node.nodeType === 3) offset = offsetOf(node, caret.startOffset || 0);
-    }
+    if (!caret || !caret.startContainer) return 0;
+    const node = caret.startContainer.nodeType === 3
+      ? caret.startContainer
+      : (caret.startContainer.firstChild || null);
+    if (!node || node.nodeType !== 3) return 0;
+    return offsetOf(node, caret.startOffset || 0);
+  }
+  window.spikeHold = function () {
+    const offset = heldOffset();
     window.spikeHeld = offset;
     post({ hold: offset });
     return offset;
@@ -784,7 +795,7 @@ const SCRIPT: &str = r#"
       requestAnimationFrame(function () {
         const found = locate(offset);
         if (!found) {
-          post();
+          post({ pinned: offset, missed: true });
           return;
         }
         const prev = root.style.transform;
@@ -883,11 +894,47 @@ const SCRIPT: &str = r#"
     seek((pages - 1) * w);
     post({ kind: "seek" });
   };
+  let edgeX = 0;
+  let edgeY = 0;
+  let edgeDrag = false;
+  window.addEventListener("mousedown", function (event) {
+    if (event.button !== 0) return;
+    edgeX = event.clientX;
+    edgeY = event.clientY;
+    edgeDrag = false;
+  }, true);
+  window.addEventListener("mousemove", function (event) {
+    if (event.buttons !== 1) return;
+    if (Math.abs(event.clientX - edgeX) >= __SLOP__ || Math.abs(event.clientY - edgeY) >= __SLOP__) edgeDrag = true;
+  }, true);
+  window.addEventListener("click", function (event) {
+    if (event.button !== 0) return;
+    const dragged = edgeDrag;
+    edgeDrag = false;
+    if (dragged) return;
+    const bar = document.getElementById('spike-footer');
+    if (bar) {
+      const box = bar.getBoundingClientRect();
+      if (event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom) return;
+    }
+    const w = window.innerWidth;
+    if (!(w > 0)) return;
+    const band = w * __EDGE__;
+    let delta = 0;
+    if (event.clientX < band) delta = -1;
+    else if (event.clientX > w - band) delta = 1;
+    else return;
+    event.preventDefault();
+    window.spikeTurn(delta);
+  }, true);
   window.addEventListener("keydown", function (event) {
     if (event.repeat) return;
-    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    var delta = 0;
+    if (event.key === "ArrowRight" || (event.key === " " && !event.shiftKey)) delta = 1;
+    else if (event.key === "ArrowLeft" || (event.key === " " && event.shiftKey)) delta = -1;
+    else return;
     event.preventDefault();
-    window.spikeTurn(event.key === "ArrowRight" ? 1 : -1);
+    window.spikeTurn(delta);
   }, true);
   window.addEventListener("wheel", function (event) {
     if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
@@ -938,9 +985,22 @@ mod tests {
         let (left, right) = footer_zh(590, 1146);
         assert_eq!(left, "590/1146页");
         assert_eq!(right, "本章还剩556页");
+        let (left, right) = product_page_footer(2, 5);
+        assert_eq!(left, "2/5页");
+        assert_eq!(right, "本章还剩3页");
+        assert_eq!(product_page_footer(1, 0), (String::new(), String::new()));
         let (left, right) = footer_zh(2, 2);
         assert_eq!(left, "2/2页");
         assert_eq!(right, "本章还剩0页");
+    }
+
+    #[test]
+    fn space_and_shift_space_use_the_existing_page_turn() {
+        let script = page_script("zh");
+        assert!(script.contains("event.key === \" \""));
+        assert!(script.contains("event.shiftKey"));
+        assert!(script.contains("window.spikeTurn(delta)"));
+        assert!(script.contains("target > box.pages"));
     }
 
     #[test]

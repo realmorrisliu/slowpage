@@ -156,7 +156,7 @@ define_class!(
 
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
-            if crate::chrome::shell_on() {
+            if crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on()) {
                 // Covers forward a wheel here. The shelf is the NSH scroll
                 // above this stage, so move that instead of the PDF offset.
                 let mut dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
@@ -211,10 +211,22 @@ define_class!(
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
             let point = point_in(self, event);
+            let bounds: NSRect = unsafe { msg_send![self, bounds] };
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
-                state.finish_drag(start, point);
+                let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
+                let edge = if click && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
+                {
+                    state.page_edge_at(point.0, point.1, bounds.size.width, bounds.size.height)
+                } else {
+                    crate::visit::PageEdge::None
+                };
+                match edge {
+                    crate::visit::PageEdge::Back => state.command("page", &json!(-1)),
+                    crate::visit::PageEdge::Forward => state.command("page", &json!(1)),
+                    crate::visit::PageEdge::None => state.finish_drag(start, point),
+                }
             }
             drop(state);
             unsafe { msg_send![self, setNeedsDisplay: true] }
@@ -254,6 +266,10 @@ struct State {
     book_path: String,
     product: bool,
     saved_page: u32,
+    saved_sentence: u32,
+    pending_sentence: u32,
+    awaiting_pin: Option<u32>,
+    hold_shown: Option<u32>,
     page_total: Option<u32>,
     epub_page: usize,
     anchor: Option<Anchor>,
@@ -761,11 +777,7 @@ impl State {
             return;
         }
         let current = self.current_page();
-        let next = if delta < 0 {
-            current.saturating_sub(1)
-        } else {
-            (current + 1).min(count - 1)
-        };
+        let next = crate::visit::step_index(current, count, delta);
         let sizes = pdf.sizes.clone();
         self.offset = page_offset(&sizes, next as u32 + 1, self.scale);
         self.note_page();
@@ -787,6 +799,10 @@ impl State {
         };
         let page = page.max(1);
         self.page_total = None;
+        self.saved_sentence = 0;
+        self.pending_sentence = 0;
+        self.awaiting_pin = None;
+        self.hold_shown = None;
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
         self.dismiss_web();
         self.pdf = None;
@@ -806,6 +822,12 @@ impl State {
             } else {
                 None
             };
+            let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
+            self.saved_sentence = sentence;
+            self.pending_sentence = sentence;
+            if sentence > 0 {
+                self.goto = None;
+            }
             self.epub_page = 0;
             self.web_pages = 1;
             self.shown_at = None;
@@ -851,13 +873,17 @@ impl State {
         if self.book_path.is_empty() || page == self.saved_page {
             return;
         }
-        self.saved_page = page;
         let path = self.book_path.clone();
+        let (page, offset) =
+            crate::visit::next_sentence(self.saved_page, self.saved_sentence, page, 0);
+        self.saved_page = page;
+        self.saved_sentence = offset;
         let _ = crate::settings::record_progress(
             &crate::settings::path(),
             &path,
             page,
             self.page_total,
+            offset,
         );
     }
 
@@ -919,15 +945,45 @@ impl State {
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
             let shown = self.epub_page as u32 + 1;
             let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-            if !still_turning && shown != self.saved_page {
-                let path = self.book_path.clone();
-                self.saved_page = shown;
-                let _ = crate::settings::record_progress(
-                    &crate::settings::path(),
-                    &path,
+            let reported = web.inbox.borrow().pages.is_some();
+            let sentence = web.inbox.borrow().sentence.unwrap_or(0);
+            let pinned = web.inbox.borrow().pinned;
+            let missed = web.inbox.borrow().pin_missed;
+            if self.pending_sentence > 0 && reported {
+                let offset = self.pending_sentence;
+                self.pending_sentence = 0;
+                self.awaiting_pin = Some(offset);
+                web.reveal(offset);
+            }
+            let step = crate::visit::step_restore(
+                self.pending_sentence > 0,
+                self.awaiting_pin,
+                self.hold_shown,
+                shown,
+                pinned,
+                missed,
+            );
+            self.awaiting_pin = step.want;
+            self.hold_shown = step.hold;
+            if step.write && !still_turning {
+                let (page, offset) = crate::visit::next_sentence(
+                    self.saved_page,
+                    self.saved_sentence,
                     shown,
-                    self.page_total,
+                    sentence,
                 );
+                if page != self.saved_page || offset != self.saved_sentence {
+                    let path = self.book_path.clone();
+                    self.saved_page = page;
+                    self.saved_sentence = offset;
+                    let _ = crate::settings::record_progress(
+                        &crate::settings::path(),
+                        &path,
+                        page,
+                        self.page_total,
+                        offset,
+                    );
+                }
             }
         }
         if changed || self.chrome_moving() {
@@ -1180,6 +1236,8 @@ impl State {
         let mut title_opacity = 1.0_f32;
         let mut footer_opacity = 1.0_f32;
         let mut bars_row = false;
+        let mut shown_page = 0_u32;
+        let mut shown_pages = 0_u32;
         let (title, variant, left, right, show_text, html) = match self.mode {
             Mode::Empty => {
                 bars_row = true;
@@ -1195,6 +1253,8 @@ impl State {
             Mode::Pdfium | Mode::Hayro => {
                 let pages = self.pdf.as_ref().map(|p| p.sizes.len()).unwrap_or(0);
                 let current = self.current_page().saturating_add(1);
+                shown_page = current as u32;
+                shown_pages = pages as u32;
                 let left_pages = pages.saturating_sub(current);
                 let title = if self.book_path.is_empty() || self.book_path.ends_with("gpt3.pdf") {
                     "Language Models are Few-Shot Learners".to_string()
@@ -1222,21 +1282,21 @@ impl State {
                         self.scale.name()
                     )
                 };
-                let left = if self.product {
-                    String::new()
+                let (left, right) = if self.product {
+                    crate::reading::product_page_footer(current as u32, pages as u32)
                 } else {
-                    format!("{current}/{pages}")
-                };
-                let right = if self.product {
-                    String::new()
-                } else {
-                    format!("{left_pages} pages left")
+                    (
+                        format!("{current}/{pages}"),
+                        format!("{left_pages} pages left"),
+                    )
                 };
                 (title, variant, left, right, false, String::new())
             }
             Mode::WebKit => {
                 let pages = self.web_pages.max(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 let path = self.epub_path();
                 let title = self
                     .web
@@ -1268,6 +1328,8 @@ impl State {
                     .map(|c| (c.plain.chars().count() / 1200).max(1))
                     .unwrap_or(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 (
                     title,
                     label.to_string(),
@@ -1303,6 +1365,8 @@ impl State {
                 "footer_opacity": footer_opacity,
                 "bars_row": bars_row,
                 "trim": self.trim_id,
+                "page": shown_page,
+                "pages": shown_pages,
                 "empty": self.mode == Mode::Empty,
                 "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
                 "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
@@ -1341,6 +1405,44 @@ fn pdf_origin_of(product: bool) -> (f64, f64) {
 impl State {
     fn pdf_origin(&self) -> (f64, f64) {
         pdf_origin_of(self.product)
+    }
+
+    fn page_edge_at(&self, x: f64, y: f64, stage_w: f64, stage_h: f64) -> crate::visit::PageEdge {
+        if !matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            return crate::visit::PageEdge::None;
+        }
+        let Some(pdf) = self.pdf.as_ref() else {
+            return crate::visit::PageEdge::None;
+        };
+        if pdf.sizes.is_empty() {
+            return crate::visit::PageEdge::None;
+        }
+        if self.product {
+            let index = self.current_page().min(pdf.sizes.len() - 1);
+            let (pw, ph) = pdf.sizes[index];
+            let (box_w, box_h, left, top) = crate::chrome::content_box(stage_w, stage_h);
+            let (rx, ry, rw, rh) = spike_report::fitted_pdf_page(
+                left,
+                top,
+                box_w,
+                box_h,
+                f64::from(pw),
+                f64::from(ph),
+            );
+            return crate::visit::page_edge(x, y, rx, ry, rw, rh);
+        }
+        let display = self.scale.display() as f64;
+        let (origin_x, origin_y) = self.pdf_origin();
+        let mut top = origin_y - self.offset;
+        for (pw, ph) in &pdf.sizes {
+            let height = f64::from(*ph) * display;
+            let width = f64::from(*pw) * display;
+            if y >= top && y <= top + height {
+                return crate::visit::page_edge(x, y, origin_x, top, width, height);
+            }
+            top += height + 16.0;
+        }
+        crate::visit::PageEdge::None
     }
 }
 
@@ -1409,6 +1511,10 @@ impl Stage {
             book_path: String::new(),
             product: false,
             saved_page: 0,
+            saved_sentence: 0,
+            pending_sentence: 0,
+            awaiting_pin: None,
+            hold_shown: None,
             page_total: None,
             epub_page: 0,
             anchor: None,

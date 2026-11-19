@@ -64,7 +64,7 @@ The fitted window frame is AppKit `setFrame`. The fit math uses `visibleFrame`, 
 
 File > Open and a drop on the window are NSH. `pick_paths` is the open panel. `on_file_drop` is the drop. Both reach the stage command `open`. A drop on the Dock icon and `open -a` are `application:openURLs:`.
 
-`NshAppDelegate` forwards each URL to the core. The core turns a `file:` URL into a path only when the root claims the `file` scheme, and it keeps that path until `next_open_files` is waiting. The shell's task queues the path. The reader stage opens it. `opens.log` records `queued` plus the path.
+`NshAppDelegate` forwards each URL to the core. The core turns a `file:` URL into a path only when the root claims the `file` scheme, and it keeps that path until `next_open_files` is waiting. The shell checks the file. A book opens with the stage command `open`. A book that arrives before the stage exists is queued, and the stage opens that queue. A refused file is not queued. `opens.log` records `queued` plus the path.
 
 `Info.plist` still lists EPUB, including the package form, and PDF. The package script writes those types, and `zh-Hans.lproj/InfoPlist.strings`, before the first `codesign`. The disk image is `Slowpage.app`. This release does not call `nsh package`. That switch is a later cleanup. `nsh package` would write `CFBundleDocumentTypes` from `fileTypes`, and it would not write the imported EPUB type that conforms to `com.apple.package`.
 

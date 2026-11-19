@@ -601,6 +601,415 @@ fn apple_and_calibre_keep_distinct_ids_and_every_title() {
 }
 
 #[test]
+fn home_layout_opens_a_second_root_file_and_a_file_url() {
+    let home = std::env::temp_dir().join(format!(
+        "spike-home-layout-{}-{}",
+        std::process::id(),
+        unique_tag()
+    ));
+    let _ = fs::remove_dir_all(&home);
+    let library = home.join("Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary");
+    let icloud = home.join("Library/Mobile Documents/iCloud~com~apple~iBooks/Documents");
+    let books =
+        home.join("Library/Containers/com.apple.BKAgentService/Data/Documents/iBooks/Books");
+    fs::create_dir_all(&library).unwrap();
+    fs::create_dir_all(&icloud).unwrap();
+    fs::create_dir_all(&books).unwrap();
+
+    let flat = std::env::temp_dir().join(format!(
+        "spike-home-flat-{}-{}",
+        std::process::id(),
+        unique_tag()
+    ));
+    let _ = fs::remove_dir_all(&flat);
+    fixture::write_apple(&flat);
+    fs::copy(
+        flat.join("Plain Essay.epub"),
+        icloud.join("Plain Essay.epub"),
+    )
+    .unwrap();
+    fs::copy(flat.join("Field Guide.pdf"), books.join("Field Guide.pdf")).unwrap();
+    fs::copy(
+        flat.join("Spoken Sample.m4b"),
+        books.join("Spoken Sample.m4b"),
+    )
+    .unwrap();
+    fs::write(
+        icloud.join(".Cloud Copy.epub.icloud"),
+        b"icloud-placeholder",
+    )
+    .unwrap();
+
+    let older = library.join("BKLibrary-older.sqlite");
+    let newer = library.join("BKLibrary-newer.sqlite");
+    let conn = Connection::open(&older).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE ZBKLIBRARYASSET (ZASSETID TEXT, ZTITLE TEXT, ZAUTHOR TEXT, ZPATH TEXT, ZSTOREID TEXT, ZCONTENTTYPE INTEGER)",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO ZBKLIBRARYASSET VALUES ('old', 'Old Library', '', 'Old Library.epub', '', 1)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    let held = Connection::open(&newer).unwrap();
+    held.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         CREATE TABLE ZBKLIBRARYASSET (
+            ZASSETID TEXT, ZTITLE TEXT, ZAUTHOR TEXT, ZPATH TEXT, ZSTOREID TEXT, ZCONTENTTYPE INTEGER
+         );",
+    )
+    .unwrap();
+    let insert = |id: &str, title: &str, path: &str, store: &str, kind: i64| {
+        held.execute(
+            "INSERT INTO ZBKLIBRARYASSET VALUES (?1, ?2, '', ?3, ?4, ?5)",
+            rusqlite::params![id, title, path, store, kind],
+        )
+        .unwrap();
+    };
+    insert(
+        "essay-1",
+        "Plain Essay",
+        icloud.join("Plain Essay.epub").to_str().unwrap(),
+        "",
+        1,
+    );
+    insert(
+        "guide-1",
+        "Field Guide",
+        books.join("Field Guide.pdf").to_str().unwrap(),
+        "",
+        3,
+    );
+    insert(
+        "cloud-1",
+        "Cloud Copy",
+        icloud.join("Cloud Copy.epub").to_str().unwrap(),
+        "",
+        1,
+    );
+    insert(
+        "store-1",
+        "Store Sample",
+        books.join("Store Sample.epub").to_str().unwrap(),
+        "1234567890",
+        1,
+    );
+    insert(
+        "spoken-1",
+        "Spoken Sample",
+        books.join("Spoken Sample.m4b").to_str().unwrap(),
+        "",
+        6,
+    );
+    insert(
+        "series-1",
+        "Series Sample",
+        books.join("Series Sample.epub").to_str().unwrap(),
+        "",
+        5,
+    );
+    insert("local-1", "Local Only", "Local Only.epub", "", 1);
+    fs::write(books.join("Local Only.epub"), b"PK\x03\x04local").unwrap();
+    let file_url = books
+        .join("File Url.epub")
+        .display()
+        .to_string()
+        .replace(' ', "%20");
+    insert("file-1", "File Url", &format!("file://{file_url}"), "", 1);
+    fs::write(books.join("File Url.epub"), b"PK\x03\x04file").unwrap();
+    held.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        .unwrap();
+    insert(
+        "wal-1",
+        "Wal Only",
+        books.join("Wal Only.epub").to_str().unwrap(),
+        "",
+        1,
+    );
+    fs::write(books.join("Wal Only.epub"), b"PK\x03\x04wal").unwrap();
+    insert("escape-1", "Escape Url", "file:///etc/passwd", "", 1);
+    insert(
+        "dot-1",
+        "Dot Dot Volume",
+        "missing/../../outside.epub",
+        "",
+        1,
+    );
+    fs::write(home.join("outside.epub"), b"PK\x03\x04out").unwrap();
+
+    let before = fs::read(&newer).unwrap();
+    let catalog = open(Scope {
+        support: temp_support(),
+        override_root: None,
+        remembered: None,
+        home: Home::Open(home.clone()),
+    });
+    let again = open(Scope {
+        support: temp_support(),
+        override_root: None,
+        remembered: None,
+        home: Home::Open(home.clone()),
+    });
+    assert_eq!(fs::read(&newer).unwrap(), before);
+    drop(held);
+
+    let book = |title: &str| {
+        catalog
+            .books()
+            .iter()
+            .find(|book| book.title() == title)
+            .unwrap_or_else(|| panic!("missing {title}"))
+    };
+    let opened = |title: &str| {
+        book(title)
+            .open_command()
+            .expect(title)
+            .path()
+            .as_path()
+            .to_path_buf()
+    };
+    assert_eq!(opened("Plain Essay"), icloud.join("Plain Essay.epub"));
+    assert_eq!(
+        book("Plain Essay").open_command().unwrap().kind(),
+        OpenKind::EpubFile
+    );
+    assert_eq!(opened("Field Guide"), books.join("Field Guide.pdf"));
+    assert_eq!(
+        book("Field Guide").open_command().unwrap().kind(),
+        OpenKind::Pdf
+    );
+    assert_eq!(opened("Local Only"), books.join("Local Only.epub"));
+    assert_eq!(opened("File Url"), books.join("File Url.epub"));
+    assert_eq!(opened("Wal Only"), books.join("Wal Only.epub"));
+    assert!(book("Cloud Copy").open_command().is_none());
+    assert_eq!(
+        book("Cloud Copy").unavailable_label(),
+        Some("Not downloaded")
+    );
+    assert!(book("Store Sample").open_command().is_none());
+    assert_eq!(book("Store Sample").unavailable_label(), Some("Store"));
+    assert!(!books.join("Store Sample.epub").exists());
+    assert!(book("Spoken Sample").open_command().is_none());
+    assert_eq!(book("Spoken Sample").unavailable_label(), Some("Audiobook"));
+    assert!(book("Escape Url").open_command().is_none());
+    assert!(book("Dot Dot Volume").open_command().is_none());
+    assert!(catalog
+        .books()
+        .iter()
+        .all(|book| book.title() != "Old Library"));
+    assert!(catalog
+        .books()
+        .iter()
+        .all(|book| book.title() != "Series Sample"));
+    let again_open: Vec<_> = again
+        .books()
+        .iter()
+        .map(|book| (book.title().to_string(), book.open_command().is_some()))
+        .collect();
+    let first_open: Vec<_> = catalog
+        .books()
+        .iter()
+        .map(|book| (book.title().to_string(), book.open_command().is_some()))
+        .collect();
+    assert_eq!(first_open, again_open);
+    let _ = fs::remove_dir_all(&home);
+    let _ = fs::remove_dir_all(&flat);
+}
+
+#[test]
+fn cloud_and_series_rows_do_not_look_like_missing_files() {
+    let root = std::env::temp_dir().join(format!(
+        "spike-apple-state-{}-{}",
+        std::process::id(),
+        unique_tag()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("Local.epub"), b"PK\x03\x04local").unwrap();
+    fs::write(root.join("Kept.epub"), b"PK\x03\x04kept").unwrap();
+    fs::write(root.join("Fetched.epub"), b"PK\x03\x04fetched").unwrap();
+    let db = root.join("BKLibrary-state.sqlite");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE ZBKLIBRARYASSET (
+            ZASSETID TEXT, ZTITLE TEXT, ZAUTHOR TEXT, ZPATH TEXT,
+            ZSTOREID TEXT, ZCONTENTTYPE INTEGER, ZSTATE INTEGER
+        )",
+    )
+    .unwrap();
+    let insert = |id: &str, title: &str, path: &str, store: &str, kind: i64, state: i64| {
+        conn.execute(
+            "INSERT INTO ZBKLIBRARYASSET VALUES (?1, ?2, '', ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, title, path, store, kind, state],
+        )
+        .unwrap();
+    };
+    insert("local", "Local Book", "Local.epub", "", 1, 1);
+    insert("fetched", "Fetched Cloud", "Fetched.epub", "", 1, 3);
+    insert("cloud", "Cloud Book", "Cloud.epub", "", 1, 3);
+    insert("sample", "Cloud Sample", "", "", 1, 6);
+    insert("series", "Unowned Series", "Series.epub", "", 1, 5);
+    insert("kept", "Kept Series", "Kept.epub", "", 1, 5);
+    insert("store", "Store Sample", "Store.epub", "123", 1, 1);
+    insert("spoken", "Spoken Sample", "Spoken.m4b", "", 6, 1);
+    fs::write(root.join("Spoken.m4b"), b"spoken").unwrap();
+    drop(conn);
+    let before = fs::read(&db).unwrap();
+    let catalog = open(scope_dir(root.clone(), temp_support()));
+    assert_eq!(fs::read(&db).unwrap(), before);
+    let book = |title: &str| {
+        catalog
+            .books()
+            .iter()
+            .find(|book| book.title() == title)
+            .unwrap_or_else(|| panic!("missing {title}"))
+    };
+    assert_eq!(
+        book("Local Book").open_command().unwrap().path().as_path(),
+        root.join("Local.epub")
+    );
+    assert_eq!(
+        book("Fetched Cloud")
+            .open_command()
+            .unwrap()
+            .path()
+            .as_path(),
+        root.join("Fetched.epub")
+    );
+    assert_eq!(
+        book("Kept Series").open_command().unwrap().path().as_path(),
+        root.join("Kept.epub")
+    );
+    assert!(book("Cloud Book").open_command().is_none());
+    assert_eq!(
+        book("Cloud Book").unavailable_label(),
+        Some("Not downloaded")
+    );
+    assert!(book("Cloud Sample").open_command().is_none());
+    assert_eq!(
+        book("Cloud Sample").unavailable_label(),
+        Some("Not downloaded")
+    );
+    assert!(catalog
+        .books()
+        .iter()
+        .all(|book| book.title() != "Unowned Series"));
+    assert!(book("Store Sample").open_command().is_none());
+    assert_eq!(book("Store Sample").unavailable_label(), Some("Store"));
+    assert!(!root.join("Store.epub").exists());
+    assert!(book("Spoken Sample").open_command().is_none());
+    assert_eq!(book("Spoken Sample").unavailable_label(), Some("Audiobook"));
+    let again = open(scope_dir(root.clone(), temp_support()));
+    assert_eq!(
+        catalog
+            .books()
+            .iter()
+            .map(|book| (book.title().to_string(), book.unavailable_label()))
+            .collect::<Vec<_>>(),
+        again
+            .books()
+            .iter()
+            .map(|book| (book.title().to_string(), book.unavailable_label()))
+            .collect::<Vec<_>>()
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_local_copy_opens_when_icloud_only_has_the_placeholder() {
+    let home = std::env::temp_dir().join(format!(
+        "spike-local-copy-{}-{}",
+        std::process::id(),
+        unique_tag()
+    ));
+    let _ = fs::remove_dir_all(&home);
+    let library = home.join("Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary");
+    let icloud = home.join("Library/Mobile Documents/iCloud~com~apple~iBooks/Documents");
+    let books =
+        home.join("Library/Containers/com.apple.BKAgentService/Data/Documents/iBooks/Books");
+    fs::create_dir_all(&library).unwrap();
+    fs::create_dir_all(&icloud).unwrap();
+    fs::create_dir_all(&books).unwrap();
+    fs::write(icloud.join(".Same Name.epub.icloud"), b"placeholder").unwrap();
+    fs::write(books.join("Same Name.epub"), b"PK\x03\x04local").unwrap();
+    fs::write(icloud.join("Cloud Name.epub"), b"PK\x03\x04cloud").unwrap();
+    fs::write(icloud.join(".Only Cloud.epub.icloud"), b"placeholder").unwrap();
+
+    let db = library.join("BKLibrary-local.sqlite");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE ZBKLIBRARYASSET (
+            ZASSETID TEXT, ZTITLE TEXT, ZAUTHOR TEXT, ZPATH TEXT, ZSTOREID TEXT, ZCONTENTTYPE INTEGER
+        )",
+    )
+    .unwrap();
+    let insert = |id: &str, title: &str, path: &str, store: &str, kind: i64| {
+        conn.execute(
+            "INSERT INTO ZBKLIBRARYASSET VALUES (?1, ?2, '', ?3, ?4, ?5)",
+            rusqlite::params![id, title, path, store, kind],
+        )
+        .unwrap();
+    };
+    insert("same", "Same Name", "Same Name.epub", "", 1);
+    insert("cloud", "Cloud Name", "Cloud Name.epub", "", 1);
+    insert("only", "Only Cloud", "Only Cloud.epub", "", 1);
+    insert("store", "Store Sample", "Store Sample.epub", "123", 1);
+    drop(conn);
+
+    let before = fs::read(&db).unwrap();
+    let scope = |support| Scope {
+        support,
+        override_root: None,
+        remembered: None,
+        home: Home::Open(home.clone()),
+    };
+    let catalog = open(scope(temp_support()));
+    assert_eq!(fs::read(&db).unwrap(), before);
+    let book = |title: &str| {
+        catalog
+            .books()
+            .iter()
+            .find(|book| book.title() == title)
+            .unwrap_or_else(|| panic!("missing {title}"))
+    };
+    assert_eq!(
+        book("Same Name").open_command().unwrap().path().as_path(),
+        books.join("Same Name.epub")
+    );
+    assert_eq!(
+        book("Cloud Name").open_command().unwrap().path().as_path(),
+        icloud.join("Cloud Name.epub")
+    );
+    assert!(book("Only Cloud").open_command().is_none());
+    assert_eq!(
+        book("Only Cloud").unavailable_label(),
+        Some("Not downloaded")
+    );
+    assert!(book("Store Sample").open_command().is_none());
+    assert_eq!(book("Store Sample").unavailable_label(), Some("Store"));
+    assert!(!books.join("Store Sample.epub").exists());
+    assert!(!icloud.join("Store Sample.epub").exists());
+    let again = open(scope(temp_support()));
+    assert_eq!(
+        catalog
+            .books()
+            .iter()
+            .map(|book| (book.title().to_string(), book.open_command().is_some()))
+            .collect::<Vec<_>>(),
+        again
+            .books()
+            .iter()
+            .map(|book| (book.title().to_string(), book.open_command().is_some()))
+            .collect::<Vec<_>>()
+    );
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 fn store_variant_has_no_path_field() {
     fn assert_store() {
         let _ = Availability::Store;
