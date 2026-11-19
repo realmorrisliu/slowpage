@@ -3749,7 +3749,7 @@ mod tests {
         let found_again = crate::visit::layout_frame(&mut recovered, found_tick);
         assert_eq!(
             found_again.draw,
-            crate::visit::Draw::Align,
+            crate::visit::Draw::Rest,
             "{found_again:?}"
         );
         assert_eq!(recovered.figure_misses, 0);
