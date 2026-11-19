@@ -605,7 +605,14 @@ mod tests {
         assert_eq!(kept.offset, 800);
         assert_eq!(kept.index, 0);
         assert_eq!(
-            crate::visit::chapter_target(&resume_href(&file, path), &spine[0], 4, 800),
+            crate::visit::chapter_target(
+                &resume_href(&file, path),
+                &spine[0],
+                4,
+                800,
+                &spine[0],
+                Some(0)
+            ),
             (4, 800)
         );
 
@@ -633,39 +640,108 @@ mod tests {
         assert_eq!(valid.offset, 20);
 
         record_progress(&file, path, 4, Some(10), 800, "/OEBPS/chapter.xhtml").unwrap();
+        let chapter = "/OEBPS/chapter.xhtml";
         let next = "/OEBPS/next.xhtml";
+        let empty = "/OEBPS/empty.xhtml";
         let waiting = crate::visit::step_restore(true, None, None, 4, None, false);
         assert!(!waiting.write);
-        let (page, offset) = crate::visit::chapter_target(&resume_href(&file, path), next, 4, 800);
-        assert_eq!((page, offset), (1, 0));
-        record_progress(&file, path, page, Some(10), offset, next).unwrap();
+        let origin = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let marks = crate::visit::contents_marks("sample", &spine);
+        let selected = crate::visit::chapter_jump(&origin, &marks, 2, &spine, None);
+        let crate::visit::ChapterMove::Chapter { index, offset } = selected.go else {
+            panic!("selecting another chapter moves");
+        };
+        assert_eq!(offset, 0);
+        let (page, stored) = crate::visit::chapter_target(
+            chapter,
+            &spine[index],
+            4,
+            800,
+            &spine[index],
+            Some(offset),
+        );
+        assert_eq!((page, stored), (1, 0));
+        record_progress(&file, path, page, Some(10), stored, next).unwrap();
         assert_eq!(resume_href(&file, path), next);
         assert_eq!(resume_page(&file, path), 1);
         assert_eq!(resume_offset(&file, path), 0);
-        let reopened = crate::visit::opened_place(
-            &spine,
-            &resume_href(&file, path),
-            resume_page(&file, path),
-            resume_offset(&file, path),
-        );
-        assert_eq!(reopened.index, 2);
-        assert_eq!(reopened.page, 1);
-        assert_eq!(reopened.offset, 0);
 
-        record_progress(&file, path, 4, Some(10), 800, "/OEBPS/chapter.xhtml").unwrap();
-        let missed = crate::visit::step_restore(false, Some(0), None, 1, Some(0), true);
-        assert!(!missed.write);
-        let empty = "/OEBPS/empty.xhtml";
-        assert!(crate::visit::changed_chapter(
-            &resume_href(&file, path),
-            empty
-        ));
-        let (page, offset) = crate::visit::chapter_target(&resume_href(&file, path), empty, 4, 800);
-        assert_eq!((page, offset), (1, 0));
-        record_progress(&file, path, page, Some(10), offset, empty).unwrap();
+        let returned = crate::visit::chapter_return(
+            &crate::visit::ReadingPlace {
+                href: next.to_string(),
+                page: 1,
+                offset: 0,
+            },
+            Some(origin),
+            &spine,
+        );
+        let crate::visit::ChapterMove::Chapter {
+            index: back_index,
+            offset: back_offset,
+        } = returned.go
+        else {
+            panic!("returning across chapters moves");
+        };
+        assert_eq!(back_offset, 800);
+        let (page, stored) = crate::visit::chapter_target(
+            next,
+            &spine[back_index],
+            1,
+            0,
+            &spine[back_index],
+            Some(back_offset),
+        );
+        assert_eq!((page, stored), (1, 800));
+        record_progress(&file, path, page, Some(10), stored, chapter).unwrap();
+        assert_eq!(resume_href(&file, path), chapter);
+        assert_eq!(resume_page(&file, path), 1);
+        assert_eq!(resume_offset(&file, path), 800);
+        let here = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page,
+            offset: stored,
+        };
+        let again = crate::visit::chapter_jump(&here, &marks, 1, &spine, None);
+        assert_eq!(again.back.as_ref().map(|place| place.offset), Some(800));
+        let crate::visit::ChapterMove::Chapter {
+            index: next_index,
+            offset: next_offset,
+        } = again.go
+        else {
+            panic!("leaving before the pin moves");
+        };
+        assert_eq!(next_offset, 0);
+        let (page, stored) = crate::visit::chapter_target(
+            &here.href,
+            &spine[next_index],
+            here.page,
+            here.offset,
+            &spine[next_index],
+            Some(next_offset),
+        );
+        assert_eq!((page, stored), (1, 0));
+        record_progress(&file, path, page, Some(10), stored, empty).unwrap();
         assert_eq!(resume_href(&file, path), empty);
         assert_eq!(resume_page(&file, path), 1);
         assert_eq!(resume_offset(&file, path), 0);
+
+        record_progress(&file, path, 4, Some(10), 800, chapter).unwrap();
+        let missed = crate::visit::step_restore(false, Some(0), None, 1, Some(0), true);
+        assert!(!missed.write);
+        let (page, stored) = crate::visit::chapter_target(chapter, empty, 4, 800, empty, Some(0));
+        assert_eq!((page, stored), (1, 0));
+        record_progress(&file, path, page, Some(10), stored, empty).unwrap();
+        assert_eq!(resume_href(&file, path), empty);
+        assert_eq!(resume_page(&file, path), 1);
+        assert_eq!(resume_offset(&file, path), 0);
+        assert_eq!(
+            crate::visit::chapter_target(chapter, chapter, 4, 800, chapter, Some(800)),
+            (4, 800)
+        );
         let back = crate::visit::opened_place(
             &spine,
             &resume_href(&file, path),

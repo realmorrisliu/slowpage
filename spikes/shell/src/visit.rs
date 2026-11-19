@@ -408,14 +408,26 @@ pub fn changed_chapter(stored_href: &str, href: &str) -> bool {
     !href.is_empty() && href != stored_href
 }
 
-/// Page and offset that belong with `href` before that chapter reports its own pin.
-/// A different chapter opens at the start. A stored row with no href keeps its place.
-pub fn chapter_target(stored_href: &str, href: &str, page: u32, offset: u32) -> (u32, u32) {
-    if !stored_href.is_empty() && changed_chapter(stored_href, href) {
-        (1, 0)
-    } else {
-        (page, offset)
+/// Page and offset stored with `href` before that chapter reports its own pin.
+/// A different chapter stores the jump aimed at it. A stored row with no href,
+/// and the same href, keep their place.
+pub fn chapter_target(
+    stored_href: &str,
+    href: &str,
+    page: u32,
+    offset: u32,
+    jump_href: &str,
+    jump_offset: Option<u32>,
+) -> (u32, u32) {
+    if stored_href.is_empty() || !changed_chapter(stored_href, href) {
+        return (page, offset);
     }
+    let aimed = if jump_href == href {
+        jump_offset.unwrap_or(0)
+    } else {
+        0
+    };
+    (1, aimed)
 }
 
 pub fn place_changed(
@@ -881,11 +893,75 @@ mod tests {
         assert!(changed_chapter(chapter, empty));
         assert!(!changed_chapter(empty, empty));
         assert!(!changed_chapter(chapter, ""));
-        assert_eq!(chapter_target(chapter, next, 4, 800), (1, 0));
-        assert_eq!(chapter_target(chapter, empty, 4, 800), (1, 0));
-        assert_eq!(chapter_target(chapter, chapter, 4, 800), (4, 800));
-        assert_eq!(chapter_target(chapter, "", 4, 800), (4, 800));
-        assert_eq!(chapter_target("", chapter, 4, 800), (4, 800));
+        let origin = ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let chosen = chapter_jump(&origin, &marks, 1, &spine, None);
+        let ChapterMove::Chapter { index, offset } = chosen.go else {
+            panic!("a different chapter is a chapter move");
+        };
+        assert_eq!(offset, 0);
+        assert_eq!(
+            chapter_target(chapter, &spine[index], 4, 800, &spine[index], Some(offset)),
+            (1, 0)
+        );
+        let returned = chapter_return(
+            &ReadingPlace {
+                href: next.to_string(),
+                page: 1,
+                offset: 0,
+            },
+            Some(origin.clone()),
+            &spine,
+        );
+        let ChapterMove::Chapter {
+            index: back_index,
+            offset: back_offset,
+        } = returned.go
+        else {
+            panic!("returning across chapters is a chapter move");
+        };
+        assert_eq!(back_offset, 800);
+        let (back_page, kept) = chapter_target(
+            next,
+            &spine[back_index],
+            1,
+            0,
+            &spine[back_index],
+            Some(back_offset),
+        );
+        assert_eq!((back_page, kept), (1, 800));
+        let again = chapter_jump(
+            &ReadingPlace {
+                href: spine[back_index].clone(),
+                page: back_page,
+                offset: kept,
+            },
+            &marks,
+            1,
+            &spine,
+            None,
+        );
+        assert_eq!(again.back.as_ref().map(|place| place.offset), Some(800));
+        assert_eq!(
+            chapter_target(chapter, next, 4, 800, chapter, Some(800)),
+            (1, 0)
+        );
+        assert_eq!(
+            chapter_target(chapter, empty, 4, 800, empty, Some(0)),
+            (1, 0)
+        );
+        assert_eq!(
+            chapter_target(chapter, chapter, 4, 800, chapter, Some(at)),
+            (4, 800)
+        );
+        assert_eq!(chapter_target(chapter, "", 4, 800, "", None), (4, 800));
+        assert_eq!(
+            chapter_target("", chapter, 4, 800, chapter, Some(0)),
+            (4, 800)
+        );
         let waiting = step_restore(true, None, None, 4, None, false);
         assert!(!waiting.write);
         assert!(place_changed(1, 0, chapter, 1, 0, next));

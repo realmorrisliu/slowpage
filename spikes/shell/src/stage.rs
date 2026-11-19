@@ -1162,6 +1162,8 @@ impl State {
                         &href,
                         self.saved_page,
                         self.saved_sentence,
+                        &self.jump_href,
+                        self.jump_offset,
                     );
                     let path = self.book_path.clone();
                     self.saved_page = page;
