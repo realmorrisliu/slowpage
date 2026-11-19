@@ -1520,10 +1520,10 @@ mod tests {
         let file = dir.join("settings.json");
         let book = dir.join("book.epub");
         let book = book.to_str().unwrap();
+        let mut reader = crate::visit::Reader::default();
+        let mut store = SettingsBook { file: &file, book };
         for href in ["", "ch.xhtml"] {
             record_progress(&file, book, 10, None, 0, href).unwrap();
-            let mut reader = crate::visit::Reader::default();
-            let mut store = SettingsBook { file: &file, book };
             crate::visit::open_resume(&mut reader, &store);
             let target = crate::visit::resume_walk(reader.place.page, reader.place.offset);
             assert_eq!(target, Some(10));
@@ -1533,20 +1533,32 @@ mod tests {
             assert_eq!(resume_page(&file, book), 10);
             assert_eq!(resume_offset(&file, book), 0);
             assert!(crate::visit::resume_turn(target, shown, pages, false));
-            let crossed = read_step(
-                &mut stdin,
-                &mut stdout,
-                &crate::visit::turn_command(
-                    1,
-                    crate::visit::TurnSource::Restore,
-                    reader.walk.unwrap_or(reader.place.page.max(1)),
-                    reader.restore_ack,
-                    reader.restore_load,
-                ),
+            let (_, _, live) = read_frame(&mut stdin, &mut stdout, "now 0");
+            let crossed_command = crate::visit::turn_command(
+                1,
+                crate::visit::TurnSource::Restore,
+                reader.walk.unwrap_or(reader.place.page.max(1)),
+                reader.restore_ack,
+                reader.restore_load,
             );
-            assert!(crossed.iter().any(|post| post.get("frames").is_some()));
-            assert!(crossed.iter().all(|post| post["kind"] != "turn"));
-            apply_posts(&mut reader, &crossed, href, &mut store, shown, pages, true);
+            reader.restore_ack = false;
+            let (crossed, crossed_answer, _) =
+                read_frame(&mut stdin, &mut stdout, &crossed_command);
+            if live < 10 {
+                assert!(
+                    crossed.iter().any(|post| post.get("frames").is_some()),
+                    "{href} {crossed:?}"
+                );
+                assert!(crossed.iter().all(|post| post["kind"] != "turn"));
+                apply_posts(&mut reader, &crossed, href, &mut store, shown, pages, true);
+            } else {
+                assert_eq!(
+                    script_answer(&crossed_answer),
+                    "no",
+                    "{href} {crossed_answer}"
+                );
+                assert!(crossed.iter().all(|post| post["kind"] != "turn"));
+            }
             assert_eq!(resume_page(&file, book), 10, "{href}");
             assert_eq!(resume_offset(&file, book), 0, "{href}");
             crate::visit::leave(&mut reader);
@@ -1559,7 +1571,6 @@ mod tests {
             );
 
             record_progress(&file, book, 10, None, 0, href).unwrap();
-            let mut reader = crate::visit::Reader::default();
             crate::visit::open_resume(&mut reader, &store);
             let mut shown = 1u32;
             let mut pages = 1u32;
@@ -1576,6 +1587,8 @@ mod tests {
             shown = next_shown;
             pages = next_pages;
             turning = next_turning;
+            let (_, _, live) = read_frame(&mut stdin, &mut stdout, "now 0");
+            shown = live;
             let mut steps = 0u32;
             while crate::visit::resume_turn(crate::visit::resume_walk(10, 0), shown, pages, turning)
                 && steps < 12
@@ -1608,7 +1621,6 @@ mod tests {
             assert_eq!((reader.place.page, reader.place.offset), (10, 0));
 
             record_progress(&file, book, 10, None, 0, href).unwrap();
-            let mut reader = crate::visit::Reader::default();
             crate::visit::open_resume(&mut reader, &store);
             let (shown, pages, turning) =
                 apply_posts(&mut reader, &opened, href, &mut store, 1, 1, false);
