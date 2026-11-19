@@ -651,8 +651,9 @@ fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool) -> Vec<u8> {
     let justify =
         crate::reading::justify_source(std::env::var("SPIKE_JUSTIFY").as_deref() != Ok("0"));
     let starts = if bold { "true" } else { "false" };
+    let load = SESSION.with(|session| session.borrow().reader.restore_load);
     let script = format!(
-        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
+        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
         crate::reading::page_script(language)
     );
     if let Some(at) = html.to_ascii_lowercase().rfind("</body>") {
@@ -773,6 +774,7 @@ impl WebChapter {
             let nsurl = objc2_foundation::NSURL::URLWithString(&url).ok_or("url")?;
             let request: Retained<AnyObject> =
                 msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+            reset_restore_epoch();
             let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
         }
         let slot = Rc::new(RefCell::new(Slot {
@@ -878,9 +880,13 @@ impl WebChapter {
     pub fn turn(&self, delta: i32, source: crate::visit::TurnSource) {
         self.inbox.borrow_mut().turn_started = Some(Instant::now());
         let (web, _, href) = self.shown();
+        let (epoch, load) = SESSION.with(|session| {
+            let reader = &session.borrow().reader;
+            (reader.restore_epoch, reader.restore_load)
+        });
         eval(
             &web,
-            &crate::visit::turn_command(delta, source),
+            &crate::visit::turn_command(delta, source, epoch, load),
             self.inbox.clone(),
             href,
             true,
@@ -889,9 +895,10 @@ impl WebChapter {
 
     pub fn drop_swipe(&self) {
         let (web, _, href) = self.shown();
+        let load = SESSION.with(|session| session.borrow().reader.restore_load);
         eval(
             &web,
-            crate::visit::drop_command(),
+            &crate::visit::drop_command(load),
             self.inbox.clone(),
             href,
             false,
@@ -965,6 +972,7 @@ impl WebChapter {
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+                reset_restore_epoch();
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
         }
@@ -1015,6 +1023,7 @@ impl WebChapter {
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+                reset_restore_epoch();
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
         }
@@ -1022,6 +1031,7 @@ impl WebChapter {
 
     pub fn reload(&self) {
         let (web, _, _) = self.shown();
+        reset_restore_epoch();
         unsafe {
             let _: Option<Retained<AnyObject>> = msg_send![&web, reload];
         }
@@ -1116,6 +1126,7 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+                reset_restore_epoch();
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
         }
@@ -1209,7 +1220,14 @@ pub fn take_turn_declined(inbox: &RefCell<Inbox>) -> bool {
 pub fn poll_reader_walk(shown: u32, pages: u32, turning: bool) -> bool {
     SESSION.with(|session| {
         let mut session = session.borrow_mut();
-        let polled = crate::visit::poll_resume(session.reader.walk, shown, pages, turning);
+        let polled = crate::visit::poll_resume(
+            session.reader.walk,
+            shown,
+            pages,
+            turning,
+            session.reader.restore_epoch,
+            session.reader.restore_load,
+        );
         session.reader.walk = polled.walk;
         polled.command.is_some()
     })
@@ -1248,13 +1266,27 @@ pub fn abandon_swipe() -> bool {
 /// Drop a follow or the finger-up glide. A chapter, reveal, return, resize,
 /// reopen, or another book uses this. The glide must not seek or post later.
 pub fn cancel_swipe() -> bool {
-    let drop = SESSION.with(|session| session.borrow_mut().reader.swipe.cancel_release());
-    if drop {
-        if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
-            web.drop_swipe();
-        }
+    let drop =
+        SESSION.with(|session| crate::visit::retire_restore(&mut session.borrow_mut().reader));
+    if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
+        web.drop_swipe();
     }
     drop
+}
+
+pub fn cancel_placed_page() {
+    SESSION.with(|session| {
+        let _ = crate::visit::cancel_placed_page(&mut session.borrow_mut().reader);
+    });
+    if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
+        web.drop_swipe();
+    }
+}
+
+fn reset_restore_epoch() {
+    SESSION.with(|session| {
+        crate::visit::reset_restore_epoch(&mut session.borrow_mut().reader);
+    });
 }
 
 /// Handle one scroll-wheel sample while an EPUB page is showing.

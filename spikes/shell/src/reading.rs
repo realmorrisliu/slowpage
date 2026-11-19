@@ -459,6 +459,9 @@ const SCRIPT: &str = r#"
   let queuedSource = "";
   let flying = "";
   let flyingDelta = 0;
+  let restoreEpoch = 0;
+  let pageLoad = window.__spikeLoad | 0;
+  let settled = 1;
   let shift = 0;
   let followX = 0;
   let followGen = 0;
@@ -497,6 +500,7 @@ const SCRIPT: &str = r#"
   }
   function reflowPage() {
     fitColumns();
+    if (flying !== "restore") snapSettled();
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
   }
   function ensureFooter() {
@@ -794,7 +798,13 @@ const SCRIPT: &str = r#"
     post({ hold: offset });
     return offset;
   };
+  function snapSettled() {
+    const box = column();
+    const page = Math.max(1, Math.min(box.pages, settled));
+    seek(box.w * (page - 1));
+  }
   function endFollow() {
+    if (flying === "restore") releaseFlying();
     followGen++;
     motion++;
     followX = 0;
@@ -812,11 +822,7 @@ const SCRIPT: &str = r#"
     const leaf = document.getElementById("spike-leaf");
     if (leaf) leaf.remove();
     document.documentElement.style.transform = "none";
-    if (flying === "restore" && flyingDelta) {
-      const box = column();
-      const back = box.page - flyingDelta;
-      if (back >= 1 && back <= box.pages) seek(box.w * (back - 1));
-    }
+    if (flying === "restore") snapSettled();
     busy = false;
     window.spikeBusy = false;
     flying = "";
@@ -843,6 +849,7 @@ const SCRIPT: &str = r#"
         const index = Math.max(0, Math.floor((rect.left + 8) / w));
         root.style.transform = prev;
         seek(index * w);
+        settled = column().page;
         measured = false;
         post({ pinned: offset });
       });
@@ -859,6 +866,8 @@ const SCRIPT: &str = r#"
     if (token) source = "user";
     if (source === "restore") extra.chase = true;
     else if (!token) extra.kind = "turn";
+    if (source !== "restore") restoreEpoch++;
+    settled = column().page;
     post(extra);
     busy = false;
     window.spikeBusy = false;
@@ -872,7 +881,7 @@ const SCRIPT: &str = r#"
     flyingDelta = 0;
     if (next) begin(next, nextToken, nextSource);
   }
-  window.spikeTurn = function (delta, source) {
+  window.spikeTurn = function (delta, source, issued, load) {
     // A commit glide is the turn that was already decided. Bumping the
     // generation here kills the only callback that clears `busy` and runs
     // the queued key, so the page stops accepting turns. A return glide has
@@ -881,6 +890,7 @@ const SCRIPT: &str = r#"
     // takes that slot: the reader's turn already owns it. A reader turn
     // takes an unfinished restore's column instead of waiting for it.
     if (source !== "restore") source = "user";
+    if (source === "restore" && ((issued | 0) !== restoreEpoch || (load | 0) !== pageLoad)) return "no";
     if (source !== "restore" && busy && !committing && flying === "restore") releaseFlying();
     if (!committing && source !== "restore") {
       followGen++;
@@ -911,7 +921,10 @@ const SCRIPT: &str = r#"
       flying = "";
       flyingDelta = 0;
       if (source === "restore") post({ frames: [], chase: true });
-      else post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
+      else {
+        restoreEpoch++;
+        post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
+      }
       return;
     }
     flying = source;
@@ -967,6 +980,7 @@ const SCRIPT: &str = r#"
     const w = pageWidth();
     const pages = Math.max(1, Math.round(Math.max(root.scrollWidth, w) / w));
     seek((pages - 1) * w);
+    settled = column().page;
     post({ kind: "seek" });
   };
   let edgeX = 0;
@@ -1011,7 +1025,9 @@ const SCRIPT: &str = r#"
     event.preventDefault();
     window.spikeTurn(delta);
   }, true);
-  window.spikeFollowDrop = function () {
+  window.spikeFollowDrop = function (load) {
+    if ((load | 0) !== pageLoad) return;
+    restoreEpoch++;
     endFollow();
   };
   window.spikeFollow = function (offset) {
@@ -1080,10 +1096,12 @@ const SCRIPT: &str = r#"
     committing = true;
     busy = true;
     glide(from, step > 0 ? w : -w, function () {
+      restoreEpoch++;
       committing = false;
       followX = 0;
       root.style.transform = "none";
       seek(box.w * (box.page + step - 1));
+      settled = column().page;
       post(token ? { swipe: token } : null);
       busy = false;
       const next = queued;

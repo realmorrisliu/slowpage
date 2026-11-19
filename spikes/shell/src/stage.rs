@@ -1276,8 +1276,7 @@ impl State {
         match crate::visit::place_step(fitted_same, zoom_same, stage_same) {
             crate::visit::PlaceStep::Hold => return,
             crate::visit::PlaceStep::Cancel { reflow } => {
-                crate::web::cancel_swipe();
-                crate::web::stop_walk();
+                crate::web::cancel_placed_page();
                 self.placed_stage_w = self.stage_w;
                 self.placed_stage_h = self.stage_h;
                 if !reflow {

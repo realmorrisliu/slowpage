@@ -1520,9 +1520,11 @@ mod tests {
         let file = dir.join("settings.json");
         let book = dir.join("book.epub");
         let book = book.to_str().unwrap();
+        let mut carried_epoch = 0u64;
         for href in ["", "ch.xhtml"] {
             record_progress(&file, book, 10, None, 0, href).unwrap();
             let mut reader = crate::visit::Reader::default();
+            reader.restore_epoch = carried_epoch;
             let mut store = SettingsBook { file: &file, book };
             crate::visit::open_resume(&mut reader, &store);
             let target = crate::visit::resume_walk(reader.place.page, reader.place.offset);
@@ -1536,7 +1538,12 @@ mod tests {
             let crossed = read_step(
                 &mut stdin,
                 &mut stdout,
-                &crate::visit::turn_command(1, crate::visit::TurnSource::Restore),
+                &crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::Restore,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                ),
             );
             assert!(crossed.iter().any(|post| post.get("frames").is_some()));
             assert!(crossed.iter().all(|post| post["kind"] != "turn"));
@@ -1578,7 +1585,12 @@ mod tests {
                 let posts = read_step(
                     &mut stdin,
                     &mut stdout,
-                    &crate::visit::turn_command(1, crate::visit::TurnSource::Restore),
+                    &crate::visit::turn_command(
+                        1,
+                        crate::visit::TurnSource::Restore,
+                        reader.restore_epoch,
+                        reader.restore_load,
+                    ),
                 );
                 let applied =
                     apply_posts(&mut reader, &posts, href, &mut store, shown, pages, turning);
@@ -1597,6 +1609,7 @@ mod tests {
 
             record_progress(&file, book, 10, None, 0, href).unwrap();
             let mut reader = crate::visit::Reader::default();
+            reader.restore_epoch = carried_epoch;
             crate::visit::open_resume(&mut reader, &store);
             let (shown, pages, turning) =
                 apply_posts(&mut reader, &opened, href, &mut store, 1, 1, false);
@@ -1604,7 +1617,12 @@ mod tests {
             let chased = read_step(
                 &mut stdin,
                 &mut stdout,
-                &crate::visit::turn_command(1, crate::visit::TurnSource::Restore),
+                &crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::Restore,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                ),
             );
             let (shown, pages, turning) =
                 apply_posts(&mut reader, &chased, href, &mut store, shown, pages, true);
@@ -1612,10 +1630,16 @@ mod tests {
             let taken = read_step(
                 &mut stdin,
                 &mut stdout,
-                &crate::visit::turn_command(1, crate::visit::TurnSource::User),
+                &crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                ),
             );
             assert!(taken.iter().any(|post| post["kind"] == "turn"));
             apply_posts(&mut reader, &taken, href, &mut store, shown, pages, turning);
+            carried_epoch = reader.restore_epoch;
             let saved = resume_page(&file, book);
             assert_ne!(saved, 10, "{href}");
             assert_eq!(saved, reader.place.page);
@@ -1653,15 +1677,24 @@ mod tests {
         let file = dir.join("settings.json");
         let book = dir.join("book.epub");
         let book = book.to_str().unwrap();
+        let mut carried_epoch = 0u64;
         for href in ["", "ch.xhtml"] {
             let mut reader = crate::visit::Reader::default();
+            reader.restore_epoch = carried_epoch;
             let mut store = SettingsBook { file: &file, book };
             record_progress(&file, book, 10, None, 0, href).unwrap();
             crate::visit::open_resume(&mut reader, &store);
             assert_eq!(reader.walk, Some(10));
             let mut shown = 1u32;
             let mut pages = 1u32;
-            let polled = crate::visit::poll_resume(reader.walk, shown, 40, false);
+            let polled = crate::visit::poll_resume(
+                reader.walk,
+                shown,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             reader.walk = polled.walk;
             let command = polled.command.expect("the walk still has columns");
             let crossed = read_step(&mut stdin, &mut stdout, &command);
@@ -1674,7 +1707,12 @@ mod tests {
             let taken = read_step(
                 &mut stdin,
                 &mut stdout,
-                &crate::visit::turn_command(1, crate::visit::TurnSource::User),
+                &crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                ),
             );
             assert!(
                 taken.iter().any(|post| post["kind"] == "turn"),
@@ -1687,23 +1725,39 @@ mod tests {
             assert!(reader.walk.is_none(), "{href}");
             shown = reader.place.page;
             for _ in 0..3 {
-                let again = crate::visit::poll_resume(reader.walk, shown, pages, false);
+                let again = crate::visit::poll_resume(
+                    reader.walk,
+                    shown,
+                    pages,
+                    false,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                );
                 assert!(again.command.is_none(), "{href}");
                 reader.walk = again.walk;
                 assert_eq!(resume_page(&file, book), saved, "{href}");
             }
+            carried_epoch = reader.restore_epoch;
         }
 
         record_progress(&file, book, 10, None, 0, "").unwrap();
         let mut store = SettingsBook { file: &file, book };
         let mut reader = crate::visit::Reader::default();
+        reader.restore_epoch = carried_epoch;
         crate::visit::open_resume(&mut reader, &store);
         let mut shown = 1u32;
         let mut pages = 40u32;
         let mut left = false;
         let mut steps = 0u32;
         while steps < 12 {
-            let polled = crate::visit::poll_resume(reader.walk, shown, pages, false);
+            let polled = crate::visit::poll_resume(
+                reader.walk,
+                shown,
+                pages,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             reader.walk = polled.walk;
             let Some(command) = polled.command else {
                 break;
@@ -1728,7 +1782,12 @@ mod tests {
         let back = read_step(
             &mut stdin,
             &mut stdout,
-            &crate::visit::turn_command(-1, crate::visit::TurnSource::User),
+            &crate::visit::turn_command(
+                -1,
+                crate::visit::TurnSource::User,
+                reader.restore_epoch,
+                reader.restore_load,
+            ),
         );
         assert!(back.iter().any(|post| post["kind"] == "turn"), "{back:?}");
         apply_posts(&mut reader, &back, "", &mut store, shown, pages, false);
@@ -1736,12 +1795,20 @@ mod tests {
         assert_ne!(backed, 10);
         assert!(reader.walk.is_none());
         for _ in 0..3 {
-            let again = crate::visit::poll_resume(reader.walk, backed, pages, false);
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                backed,
+                pages,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             assert!(again.command.is_none());
             reader.walk = again.walk;
             assert_eq!(resume_page(&file, book), backed);
         }
 
+        carried_epoch = reader.restore_epoch;
         let mut store = SettingsBook { file: &file, book };
         for (label, command) in [
             (
@@ -1749,6 +1816,8 @@ mod tests {
                 crate::visit::turn_command(
                     crate::visit::page_key_delta(true, crate::visit::Surface::Reading, false),
                     crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
                 ),
             ),
             (
@@ -1756,6 +1825,8 @@ mod tests {
                 crate::visit::turn_command(
                     crate::visit::page_key_delta(true, crate::visit::Surface::Reading, true),
                     crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
                 ),
             ),
             (
@@ -1763,6 +1834,8 @@ mod tests {
                 crate::visit::turn_command(
                     crate::visit::page_key_delta(true, crate::visit::Surface::Reading, true),
                     crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
                 ),
             ),
             (
@@ -1770,15 +1843,27 @@ mod tests {
                 crate::visit::turn_command(
                     crate::visit::page_key_delta(true, crate::visit::Surface::Reading, false),
                     crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
                 ),
             ),
             (
                 "edge-back",
-                crate::visit::turn_command(-1, crate::visit::TurnSource::User),
+                crate::visit::turn_command(
+                    -1,
+                    crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                ),
             ),
             (
                 "edge-forward",
-                crate::visit::turn_command(1, crate::visit::TurnSource::User),
+                crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                ),
             ),
             ("page-right", "keydown {\"key\":\"ArrowRight\"}".to_string()),
             ("page-left", "keydown {\"key\":\"ArrowLeft\"}".to_string()),
@@ -1798,6 +1883,7 @@ mod tests {
         ] {
             record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
             let mut reader = crate::visit::Reader::default();
+            reader.restore_epoch = carried_epoch;
             crate::visit::open_resume(&mut reader, &store);
             assert_eq!(reader.walk, Some(10), "{label}");
             let posts = read_step(&mut stdin, &mut stdout, &command);
@@ -1809,13 +1895,22 @@ mod tests {
             assert!(reader.walk.is_none(), "{label}");
             assert_eq!(resume_page(&file, book), reader.place.page, "{label}");
             let saved = reader.place.page;
-            let again = crate::visit::poll_resume(reader.walk, 3, 40, false);
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                3,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             assert!(again.command.is_none(), "{label}");
             assert_eq!(resume_page(&file, book), saved, "{label}");
+            carried_epoch = reader.restore_epoch;
         }
 
         record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
         let mut reader = crate::visit::Reader::default();
+        reader.restore_epoch = carried_epoch;
         crate::visit::open_resume(&mut reader, &store);
         let (quiet, answer) = read_answered(
             &mut stdin,
@@ -1832,7 +1927,12 @@ mod tests {
             &mut stdout,
             &format!(
                 "now {}",
-                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+                crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::Restore,
+                    reader.restore_epoch,
+                    reader.restore_load
+                )
             ),
         );
         assert!(queued_posts.iter().all(|post| post["dropped"] != true));
@@ -1859,7 +1959,14 @@ mod tests {
         assert_eq!(refused, "no", "{restore_answer}");
         assert!(!crate::visit::turn_accepted(&refused));
         for _ in 0..3 {
-            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                screen,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             assert!(again.command.is_none());
             reader.walk = again.walk;
             assert_eq!(resume_page(&file, book), screen);
@@ -1890,7 +1997,12 @@ mod tests {
             &mut stdout,
             &format!(
                 "now {}",
-                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+                crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::Restore,
+                    reader.restore_epoch,
+                    reader.restore_load
+                )
             ),
         );
         assert_eq!(script_answer(&restore_answer), "no", "{restore_answer}");
@@ -1922,9 +2034,16 @@ mod tests {
         let mut reader = crate::visit::Reader::default();
         crate::visit::open_resume(&mut reader, &store);
         crate::visit::stop_walk(&mut reader);
-        assert!(crate::visit::poll_resume(reader.walk, 3, 40, false)
-            .command
-            .is_none());
+        assert!(crate::visit::poll_resume(
+            reader.walk,
+            3,
+            40,
+            false,
+            reader.restore_epoch,
+            reader.restore_load
+        )
+        .command
+        .is_none());
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
 
@@ -1969,7 +2088,14 @@ mod tests {
         assert_eq!(reader.walk, Some(10));
         let mut steps = 0u32;
         while steps < 12 {
-            let polled = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            let polled = crate::visit::poll_resume(
+                reader.walk,
+                screen,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             reader.walk = polled.walk;
             let Some(command) = polled.command else {
                 break;
@@ -2009,7 +2135,14 @@ mod tests {
         reader
             .swipe
             .note_answer(11, release["answer"].as_str().unwrap());
-        let polled = crate::visit::poll_resume(reader.walk, before, 40, false);
+        let polled = crate::visit::poll_resume(
+            reader.walk,
+            before,
+            40,
+            false,
+            reader.restore_epoch,
+            reader.restore_load,
+        );
         reader.walk = polled.walk;
         let command = polled.command.expect("the commit has not cleared the walk");
         let (mid, restore_answer) =
@@ -2037,7 +2170,14 @@ mod tests {
         assert!(reader.walk.is_none());
         assert!(!crate::visit::turn_accepted(&refused));
         for _ in 0..3 {
-            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                screen,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             assert!(again.command.is_none());
             reader.walk = again.walk;
             assert_eq!(resume_page(&file, book), saved);
@@ -2062,7 +2202,14 @@ mod tests {
                 .swipe
                 .note_answer(token, parsed["answer"].as_str().unwrap());
         }
-        let polled = crate::visit::poll_resume(reader.walk, before, 40, false);
+        let polled = crate::visit::poll_resume(
+            reader.walk,
+            before,
+            40,
+            false,
+            reader.restore_epoch,
+            reader.restore_load,
+        );
         reader.walk = polled.walk;
         let command = polled
             .command
@@ -2104,7 +2251,14 @@ mod tests {
         assert_eq!(reader.place.page, screen);
         assert!(reader.walk.is_none());
         for _ in 0..3 {
-            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                screen,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             assert!(again.command.is_none());
             reader.walk = again.walk;
             assert_eq!(resume_page(&file, book), screen);
@@ -2113,7 +2267,12 @@ mod tests {
         for (label, command) in [
             (
                 "shell",
-                crate::visit::turn_command(1, crate::visit::TurnSource::User),
+                crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::User,
+                    reader.restore_epoch,
+                    reader.restore_load,
+                ),
             ),
             ("page-key", "keydown {\"key\":\"ArrowRight\"}".to_string()),
         ] {
@@ -2126,7 +2285,12 @@ mod tests {
                 &mut stdout,
                 &format!(
                     "now {}",
-                    crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+                    crate::visit::turn_command(
+                        1,
+                        crate::visit::TurnSource::Restore,
+                        reader.restore_epoch,
+                        reader.restore_load
+                    )
                 ),
             );
             assert!(started.is_empty(), "{label} {started:?}");
@@ -2154,7 +2318,14 @@ mod tests {
             assert_eq!(resume_page(&file, book), screen, "{label}");
             assert_eq!(reader.place.page, screen, "{label}");
             assert!(reader.walk.is_none(), "{label}");
-            let again = crate::visit::poll_resume(reader.walk, screen, 40, false);
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                screen,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
             assert!(again.command.is_none(), "{label}");
         }
 
@@ -2166,7 +2337,12 @@ mod tests {
             &mut stdout,
             &format!(
                 "now {}",
-                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+                crate::visit::turn_command(
+                    1,
+                    crate::visit::TurnSource::Restore,
+                    reader.restore_epoch,
+                    reader.restore_load
+                )
             ),
         );
         assert!(started.is_empty(), "{started:?}");
@@ -2196,42 +2372,260 @@ mod tests {
         assert_eq!(resume_page(&file, book), screen);
         assert_eq!(reader.place.page, screen);
         assert!(reader.walk.is_none());
-        assert!(crate::visit::poll_resume(reader.walk, screen, 40, false)
-            .command
-            .is_none());
+        assert!(crate::visit::poll_resume(
+            reader.walk,
+            screen,
+            40,
+            false,
+            reader.restore_epoch,
+            reader.restore_load
+        )
+        .command
+        .is_none());
 
         record_progress(&file, book, 40, None, 0, "ch.xhtml").unwrap();
         crate::visit::open_resume(&mut reader, &store);
         let kept = resume_page(&file, book);
-        let started = read_step(
-            &mut stdin,
-            &mut stdout,
-            &format!(
-                "now {}",
-                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
-            ),
+        let (_, _, before) = read_frame(&mut stdin, &mut stdout, "now 0");
+        let issued = crate::visit::turn_command(
+            1,
+            crate::visit::TurnSource::Restore,
+            reader.restore_epoch,
+            reader.restore_load,
         );
+        let (started, answer, sought) =
+            read_frame(&mut stdin, &mut stdout, &format!("now {issued}"));
         assert!(started.is_empty(), "{started:?}");
-        let dropped = read_step(
-            &mut stdin,
-            &mut stdout,
-            &format!("now {}", crate::visit::drop_command()),
+        assert_eq!(script_answer(&answer), "ok", "{answer}");
+        assert_eq!(sought, before + 1, "{sought}");
+        assert_eq!(
+            crate::visit::place_step(true, true, false),
+            crate::visit::PlaceStep::Cancel { reflow: false }
         );
+        let command = crate::visit::cancel_placed_page(&mut reader);
+        let (dropped, _, column) = read_frame(&mut stdin, &mut stdout, &format!("now {command}"));
         assert!(
             dropped.iter().all(|post| post["chase"] != true),
             "{dropped:?}"
         );
-        let settled = read_step(&mut stdin, &mut stdout, "void 0");
+        assert_eq!(column, before, "{column}");
+        let (late_posts, late_answer, late_column) =
+            read_frame(&mut stdin, &mut stdout, &format!("now {issued}"));
+        assert_eq!(script_answer(&late_answer), "no", "{late_answer}");
+        assert!(late_posts.iter().all(|post| post["chase"] != true));
+        assert_eq!(late_column, before);
+        let (settled, _, settled_column) = read_frame(&mut stdin, &mut stdout, "void 0");
         assert!(
             settled.iter().all(|post| post["chase"] != true),
             "{settled:?}"
         );
-        crate::visit::stop_walk(&mut reader);
-        assert!(crate::visit::poll_resume(reader.walk, screen, 40, false)
-            .command
-            .is_none());
+        assert_eq!(settled_column, before);
+        assert!(reader.walk.is_none());
+        assert!(crate::visit::poll_resume(
+            reader.walk,
+            before,
+            40,
+            false,
+            reader.restore_epoch,
+            reader.restore_load
+        )
+        .command
+        .is_none());
         assert_eq!(resume_page(&file, book), kept);
         assert_eq!(resume_offset(&file, book), 0);
+
+        let _ = writeln_cmd(&mut stdin, "quit");
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_restore_stays_on_the_settled_column() {
+        let script = crate::reading::page_script("en");
+        let dir = std::env::temp_dir().join(format!("superreader-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page_js = dir.join("page.js");
+        let drive = dir.join("drive.js");
+        std::fs::write(&page_js, script).unwrap();
+        std::fs::write(&drive, PAGE_WALK_DRIVE).unwrap();
+        let mut child = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page_js)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("node");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        let _opened = read_posts(&mut stdout);
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        let mut store = SettingsBook { file: &file, book };
+        let mut reader = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut reader, &store);
+        let mut screen = 1u32;
+        while screen < 4 {
+            let polled = crate::visit::poll_resume(
+                reader.walk,
+                screen,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
+            reader.walk = polled.walk;
+            let command = polled.command.expect("walk");
+            let (posts, _, column) = read_frame(&mut stdin, &mut stdout, &command);
+            assert!(posts.iter().all(|post| post["kind"] != "turn"), "{posts:?}");
+            apply_posts(
+                &mut reader,
+                &posts,
+                "ch.xhtml",
+                &mut store,
+                screen,
+                40,
+                true,
+            );
+            screen = column;
+            assert_eq!(resume_page(&file, book), 10);
+            assert_eq!(resume_offset(&file, book), 0);
+        }
+        assert_eq!(screen, 4);
+        let issued = crate::visit::turn_command(
+            1,
+            crate::visit::TurnSource::Restore,
+            reader.restore_epoch,
+            reader.restore_load,
+        );
+        let (mid, answer, sought) = read_frame(&mut stdin, &mut stdout, &format!("now {issued}"));
+        assert!(mid.is_empty(), "{mid:?}");
+        assert_eq!(script_answer(&answer), "ok");
+        assert_eq!(sought, 5);
+        assert_eq!(
+            crate::visit::place_step(false, true, true),
+            crate::visit::PlaceStep::Cancel { reflow: true }
+        );
+        let command = crate::visit::cancel_placed_page(&mut reader);
+        let (dropped, _, column) = read_frame(&mut stdin, &mut stdout, &format!("now {command}"));
+        assert!(
+            dropped.iter().all(|post| post["chase"] != true),
+            "{dropped:?}"
+        );
+        assert_eq!(column, 4);
+        let (resized, _, column) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.innerWidth=250;window.dispatchEvent({type:\"resize\"})",
+        );
+        assert!(
+            resized.iter().all(|post| post["chase"] != true),
+            "{resized:?}"
+        );
+        assert_eq!(column, 4, "{resized:?}");
+        let (_, _, scroll_column) = read_frame(&mut stdin, &mut stdout, "now 0");
+        assert_eq!(scroll_column, 4);
+        assert!(reader.walk.is_none());
+        for _ in 0..3 {
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                column,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
+            assert!(again.command.is_none());
+            reader.walk = again.walk;
+            assert_eq!(resume_page(&file, book), 10);
+            assert_eq!(resume_offset(&file, book), 0);
+        }
+
+        let (quiet, release_answer, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::release_command(1, 11)),
+        );
+        assert!(quiet.is_empty(), "{quiet:?}");
+        let release: serde_json::Value =
+            serde_json::from_str(&release_answer).expect(&release_answer);
+        reader
+            .swipe
+            .note_answer(11, release["answer"].as_str().unwrap());
+        let issued = crate::visit::turn_command(
+            1,
+            crate::visit::TurnSource::Restore,
+            reader.restore_epoch,
+            reader.restore_load,
+        );
+        let (finished, _, column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        apply_posts(&mut reader, &finished, "ch.xhtml", &mut store, 1, 40, false);
+        let saved = resume_page(&file, book);
+        assert_eq!(column, saved, "{finished:?}");
+        assert_eq!(reader.place.page, saved);
+        assert!(reader.walk.is_none());
+        let (late_posts, late_answer, late_column) =
+            read_frame(&mut stdin, &mut stdout, &format!("now {issued}"));
+        assert_eq!(script_answer(&late_answer), "no", "{late_answer}");
+        assert!(
+            late_posts.iter().all(|post| post["chase"] != true),
+            "{late_posts:?}"
+        );
+        assert_eq!(late_column, saved);
+        let (tail, _, tail_column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert!(tail.iter().all(|post| post["chase"] != true), "{tail:?}");
+        assert_eq!(tail_column, saved);
+        for _ in 0..3 {
+            let again = crate::visit::poll_resume(
+                reader.walk,
+                saved,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
+            assert!(again.command.is_none());
+            reader.walk = again.walk;
+            assert_eq!(resume_page(&file, book), saved);
+        }
+
+        record_progress(&file, book, saved + 2, None, 0, "ch.xhtml").unwrap();
+        crate::visit::open_resume(&mut reader, &store);
+        assert_eq!(reader.restore_epoch, 2);
+        let mut screen = saved;
+        let target = saved + 2;
+        loop {
+            let polled = crate::visit::poll_resume(
+                reader.walk,
+                screen,
+                40,
+                false,
+                reader.restore_epoch,
+                reader.restore_load,
+            );
+            reader.walk = polled.walk;
+            let Some(command) = polled.command else {
+                break;
+            };
+            let (posts, _, column) = read_frame(&mut stdin, &mut stdout, &command);
+            assert!(posts.iter().any(|post| post["chase"] == true), "{posts:?}");
+            apply_posts(
+                &mut reader,
+                &posts,
+                "ch.xhtml",
+                &mut store,
+                screen,
+                40,
+                true,
+            );
+            screen = column;
+            assert_eq!(resume_page(&file, book), target);
+        }
+        assert_eq!(screen, target);
+        assert!(reader.walk.is_none());
 
         let _ = writeln_cmd(&mut stdin, "quit");
         let _ = child.wait();
@@ -2305,6 +2699,21 @@ mod tests {
             .expect("screen") as u32
     }
 
+    fn read_frame(
+        stdin: &mut impl std::io::Write,
+        stdout: &mut impl std::io::BufRead,
+        command: &str,
+    ) -> (Vec<serde_json::Value>, String, u32) {
+        writeln_cmd(stdin, command);
+        let mut line = String::new();
+        stdout.read_line(&mut line).expect("node");
+        let value: serde_json::Value = serde_json::from_str(&line).expect(&line);
+        let posts = value["posts"].as_array().cloned().unwrap_or_default();
+        let answer = value["answer"].as_str().unwrap_or("").to_string();
+        let column = value["column"].as_u64().expect("column") as u32;
+        (posts, answer, column)
+    }
+
     fn script_answer(raw: &str) -> String {
         serde_json::from_str::<serde_json::Value>(raw)
             .ok()
@@ -2351,6 +2760,9 @@ const listeners = {};
 global.addEventListener = (type, fn) => {
   (listeners[type] ||= []).push(fn);
 };
+global.dispatchEvent = (event) => {
+  fire(event && event.type, event || {});
+};
 function fire(type, event) {
   for (const fn of listeners[type] || []) fn(event);
 }
@@ -2364,6 +2776,10 @@ function flush() {
   for (const fn of batch) fn(global.__now);
 }
 function emit(value) {
+  const w = Math.max(1, Math.round(window.innerWidth));
+  value.column = Math.round((body.scrollLeft || 0) / w) + 1;
+  value.scroll = body.scrollLeft || 0;
+  value.width = w;
   fs.writeSync(1, JSON.stringify(value) + "\n");
 }
 eval(script);

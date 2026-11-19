@@ -1003,6 +1003,11 @@ pub struct Reader {
     /// The one column walk started by a page-only resume. It ends when the
     /// shown column reaches it, or when a reader turn or a resize takes over.
     pub walk: Option<u32>,
+    /// Restore commands still allowed to seek. A user post or a page cancel
+    /// advances it. The command carries the value from when it was issued.
+    pub restore_epoch: u64,
+    /// The loaded chapter document. A command from an older document does not run.
+    pub restore_load: u64,
 }
 
 impl Default for Reader {
@@ -1022,6 +1027,8 @@ impl Default for Reader {
             hold: None,
             reveal: None,
             walk: None,
+            restore_epoch: 0,
+            restore_load: 0,
         }
     }
 }
@@ -1038,13 +1045,13 @@ pub enum TurnSource {
 }
 
 /// The eval `web.turn` runs. Tests send this string; they do not pick a flag.
-pub fn turn_command(delta: i32, source: TurnSource) -> String {
+pub fn turn_command(delta: i32, source: TurnSource, epoch: u64, load: u64) -> String {
     let source = match source {
         TurnSource::Restore => "restore",
         TurnSource::User => "user",
     };
     format!(
-        "(function(){{var answer=(window.spikeTurn&&window.spikeTurn({delta},\"{source}\"))||\"no\";return JSON.stringify({{answer:answer}});}})()"
+        "(function(){{var answer=(window.spikeTurn&&window.spikeTurn({delta},\"{source}\",{epoch},{load}))||\"no\";return JSON.stringify({{answer:answer}});}})()"
     )
 }
 
@@ -1055,8 +1062,8 @@ pub fn turn_accepted(answer: &str) -> bool {
 }
 
 /// The eval `drop_swipe` runs for a chapter, a resize, or a reopen.
-pub fn drop_command() -> &'static str {
-    "window.spikeFollowDrop&&window.spikeFollowDrop()"
+pub fn drop_command(load: u64) -> String {
+    format!("window.spikeFollowDrop&&window.spikeFollowDrop({load})")
 }
 
 /// The eval `release_swipe` runs. The page's answer is in the returned JSON.
@@ -1215,6 +1222,7 @@ pub fn handle_page(
         }
         next.place = place;
         clear_resume(&mut next);
+        next.restore_epoch = next.restore_epoch.saturating_add(1);
         *reader = next;
         return Apply {
             accepted: true,
@@ -1368,6 +1376,26 @@ pub fn stop_walk(reader: &mut Reader) {
     reader.walk = None;
 }
 
+/// The page dropped its gesture, or a new chapter document replaced it.
+/// Empty swipe slots still count: a restore slide is not one of those slots.
+pub fn retire_restore(reader: &mut Reader) -> bool {
+    let dropped = reader.swipe.cancel_release();
+    reader.restore_epoch = reader.restore_epoch.saturating_add(1);
+    dropped
+}
+
+pub fn reset_restore_epoch(reader: &mut Reader) {
+    reader.restore_epoch = 0;
+    reader.restore_load = reader.restore_load.saturating_add(1);
+}
+
+/// `place_page` on a cancel. The returned eval is the one drop the page runs.
+pub fn cancel_placed_page(reader: &mut Reader) -> String {
+    retire_restore(reader);
+    stop_walk(reader);
+    drop_command(reader.restore_load)
+}
+
 pub fn open_resume(reader: &mut Reader, store: &dyn PlaceFile) {
     let resumed = store.resume();
     open_place(reader, resumed.page, resumed.offset, &resumed.href);
@@ -1397,13 +1425,20 @@ pub struct ResumePoll {
     pub command: Option<String>,
 }
 
-pub fn poll_resume(walk: Option<u32>, shown: u32, pages: u32, turning: bool) -> ResumePoll {
+pub fn poll_resume(
+    walk: Option<u32>,
+    shown: u32,
+    pages: u32,
+    turning: bool,
+    epoch: u64,
+    load: u64,
+) -> ResumePoll {
     let walk = match walk {
         Some(target) if shown >= target => None,
         other => other,
     };
     let command = if resume_turn(walk, shown, pages, turning) {
-        Some(turn_command(1, TurnSource::Restore))
+        Some(turn_command(1, TurnSource::Restore, epoch, load))
     } else {
         None
     };
@@ -2422,6 +2457,15 @@ mod tests {
             place_step(false, true, true),
             PlaceStep::Cancel { reflow: true }
         );
+        let mut reader = Reader::default();
+        reader.walk = Some(10);
+        let step = place_step(true, true, false);
+        assert_eq!(step, PlaceStep::Cancel { reflow: false });
+        let command = cancel_placed_page(&mut reader);
+        assert!(reader.walk.is_none());
+        assert_eq!(reader.restore_epoch, 1);
+        assert!(command.contains("spikeFollowDrop"));
+        assert!(!reader.swipe.release_open());
     }
 
     #[test]
