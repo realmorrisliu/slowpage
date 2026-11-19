@@ -1,0 +1,198 @@
+{
+  "windowed_ax": {
+    "close_min_x": 8.0,
+    "close_max_x": 24.0,
+    "close_min_y": 16.0,
+    "close_max_y": 32.0,
+    "mini_min_x": 31.0,
+    "mini_max_x": 47.0,
+    "mini_min_y": 16.0,
+    "mini_max_y": 32.0,
+    "zoom_min_x": 54.0,
+    "zoom_max_x": 70.0,
+    "zoom_min_y": 16.0,
+    "zoom_max_y": 32.0
+  },
+  "windowed_err": "",
+  "windowed_gaps": {
+    "left": 9.0,
+    "right": 9.0,
+    "bar_w": 78.0,
+    "light_w": 78.0
+  },
+  "inset_before": {
+    "left": 6.0,
+    "top": 6.0,
+    "right": 6.0,
+    "bottom": 6.0,
+    "sidebar_w": 220.0,
+    "chat_w": 320.0,
+    "window": [
+      1440.0,
+      855.0
+    ]
+  },
+  "enter": 0,
+  "fullscreen": true,
+  "hover_lights": 1.0,
+  "click": [
+    60.0,
+    24.0
+  ],
+  "clicks": [
+    {
+      "at": [
+        60.0,
+        24.0
+      ],
+      "lights": 0.0,
+      "fullscreen": true
+    },
+    {
+      "at": [
+        60.0,
+        32.0
+      ],
+      "lights": 0.0,
+      "fullscreen": true
+    },
+    {
+      "at": [
+        60.0,
+        40.0
+      ],
+      "lights": 1.0,
+      "fullscreen": true
+    }
+  ],
+  "key": 0,
+  "frames": [
+    {
+      "file": "exit-click-00.png",
+      "saturated": 1268,
+      "error": "",
+      "size": [
+        1512.0,
+        949.0
+      ]
+    },
+    {
+      "file": "exit-click-01.png",
+      "saturated": 2134,
+      "error": "",
+      "size": [
+        1512.0,
+        949.0
+      ]
+    },
+    {
+      "file": "exit-click-02.png",
+      "saturated": 1268,
+      "error": "",
+      "size": [
+        1512.0,
+        949.0
+      ]
+    },
+    {
+      "file": "exit-click-03.png",
+      "saturated": 1268,
+      "error": "",
+      "size": [
+        1512.0,
+        949.0
+      ]
+    },
+    {
+      "file": "exit-click-04.png",
+      "saturated": 0,
+      "error": "no window",
+      "size": null
+    },
+    {
+      "file": "exit-key-00.png",
+      "saturated": 2716,
+      "error": "",
+      "size": [
+        1440.0,
+        855.0
+      ]
+    },
+    {
+      "file": "exit-key-01.png",
+      "saturated": 2716,
+      "error": "",
+      "size": [
+        1440.0,
+        855.0
+      ]
+    },
+    {
+      "file": "exit-key-02.png",
+      "saturated": 1271,
+      "error": "",
+      "size": [
+        1440.0,
+        855.0
+      ]
+    },
+    {
+      "file": "exit-key-03.png",
+      "saturated": 1271,
+      "error": "",
+      "size": [
+        1440.0,
+        855.0
+      ]
+    },
+    {
+      "file": "exit-key-04.png",
+      "saturated": 1271,
+      "error": "",
+      "size": [
+        1440.0,
+        855.0
+      ]
+    }
+  ],
+  "restored_fullscreen": false,
+  "restored_ax": {
+    "close_min_x": 8.0,
+    "close_max_x": 24.0,
+    "close_min_y": 16.0,
+    "close_max_y": 32.0,
+    "mini_min_x": 31.0,
+    "mini_max_x": 47.0,
+    "mini_min_y": 16.0,
+    "mini_max_y": 32.0,
+    "zoom_min_x": 54.0,
+    "zoom_max_x": 70.0,
+    "zoom_min_y": 16.0,
+    "zoom_max_y": 32.0
+  },
+  "restored_err": "",
+  "restored_gaps": {
+    "left": 9.0,
+    "right": 9.0,
+    "bar_w": 78.0,
+    "light_w": 78.0
+  },
+  "inset_after": {
+    "left": 6.0,
+    "top": 6.0,
+    "right": 6.0,
+    "bottom": 6.0,
+    "sidebar_w": 220.0,
+    "chat_w": 320.0,
+    "window": [
+      1440.0,
+      855.0
+    ]
+  },
+  "frame_delta": 0.0,
+  "restore_capture": "",
+  "restore_size": [
+    1440.0,
+    855.0
+  ]
+}

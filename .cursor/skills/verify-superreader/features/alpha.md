@@ -24,14 +24,14 @@ The installed `Slowpage.app` opens a book, turns a page, and comes back to that 
 
 ## Driving it with scripts/verify
 
-Preconditions: `/Applications/Slowpage.app` is the packaged build. Fixtures are `/tmp/superreader-fixtures/pride-se.epub` and `/tmp/superreader-fixtures/gpt3.pdf`. `SUPERREADER_SUPPORT_DIR` for the run is empty, so the check does not use a person's library.
+Preconditions: fixtures are `/tmp/superreader-fixtures/pride-se.epub` and `/tmp/superreader-fixtures/gpt3.pdf`. `scripts/verify` packages a temporary `Slowpage.app` in the run directory and launches that binary with `SUPERREADER_SUPPORT_DIR` set to a fresh temp directory. It does not install into `/Applications` and it does not use a person's library.
 
-- `scripts/verify --subset alpha` launches the app in Applications, drives File > Open, turns a page, quits, and launches again.
+- `scripts/verify --subset alpha` launches that temporary app, drives File > Open, turns a page, quits, and launches again.
 - Shots land in `docs/verify/alpha/`.
 
 ## Gotchas
 
 - NSH 0.5.0 delivers Finder files through `application:openURLs:` and `next_open_files`. The shell no longer replaces the delegate. `alpha-finder-open` stays pending. The `official-open` checks use `open -a` instead of a Finder double-click.
-- The dev binary under `spikes/target` is not this check. It still opens the fixture from `SPIKE_*`.
+- The unpackaged `spike-shell` binary is not this check. It still opens the fixture from `SPIKE_*`.
 - S1 removes the empty-window Open button and the `open -a` and Open With checks. Do not repair `alpha-finder-open` during the shell slices. File > Open stays until a later slice says otherwise.
 - EPUB page numbers come from `/tmp/superreader-spike/webkit.json`. PDF page numbers come from the Accessibility footer `N/M`.

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -510,6 +511,93 @@ fn switching_epub_and_pdf_drops_the_other_surface() {
     let again = back.open(OpenKind::Pdf, 1);
     assert!(!again.web);
     assert!(again.pdf);
+}
+
+#[test]
+fn form_fixture_loads_twelve_original_plates() {
+    let root = std::env::temp_dir().join(format!(
+        "spike-form-fixture-{}-{}",
+        std::process::id(),
+        unique_tag()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let libs = fixture::write_form(&root);
+    let support = temp_support();
+    let apple = open(scope_dir(libs.apple, support.clone()));
+    let calibre = open(scope_dir(libs.calibre, support.clone()));
+    let folder = open(scope_dir(libs.folder, support));
+    assert_eq!(apple.books().len(), 5);
+    assert_eq!(calibre.books().len(), 6);
+    assert_eq!(folder.books().len(), 1);
+    let pdf = calibre
+        .books()
+        .iter()
+        .filter(|book| {
+            book.open_command()
+                .is_some_and(|command| command.kind() == OpenKind::Pdf)
+        })
+        .count();
+    assert_eq!(pdf, 1);
+    let pride = apple
+        .books()
+        .iter()
+        .find(|book| book.title() == "Pride and Prejudice")
+        .expect("Pride");
+    let pride_bytes = fs::read(pride.cover().expect("plate").as_path()).unwrap();
+    assert_eq!(crate::plate_color(&pride_bytes), Some(0x7D8C6A));
+    assert_eq!(crate::png_center_rgb(&pride_bytes), Some(0x7D8C6A));
+    assert!(calibre.books().iter().any(|book| book.title() == "三体"));
+    assert!(folder.books().iter().any(|book| book.title() == "人间词话"));
+    let combined = apple
+        .admit(SourceName::Calibre, calibre)
+        .admit(SourceName::Folder("~/Books".into()), folder);
+    assert_eq!(combined.books().len(), 12);
+    let labels: Vec<&str> = combined
+        .books()
+        .iter()
+        .map(|book| book.source().label())
+        .collect();
+    assert!(labels.contains(&"Apple Books"));
+    assert!(labels.contains(&"calibre"));
+    assert!(labels.contains(&"~/Books"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn apple_and_calibre_keep_distinct_ids_and_every_title() {
+    let root = std::env::temp_dir().join(format!(
+        "spike-source-ids-{}-{}",
+        std::process::id(),
+        unique_tag()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let apple_dir = root.join("apple");
+    let calibre_dir = root.join("calibre");
+    fixture::write_apple(&apple_dir);
+    fixture::write_calibre(&calibre_dir);
+    let support = temp_support();
+    let apple = open(scope_dir(apple_dir, support.clone()));
+    let calibre = open(scope_dir(calibre_dir, support));
+    let combined = apple.admit(SourceName::Calibre, calibre);
+    let mut ids = HashSet::new();
+    let mut covers = HashSet::new();
+    let mut titles = HashSet::new();
+    for book in combined.books() {
+        assert!(
+            ids.insert(format!("{:?}", book.id())),
+            "duplicate id {}",
+            book.title()
+        );
+        titles.insert(book.title().to_string());
+        if let Some(cover) = book.cover() {
+            let name = cover.as_path().file_name().unwrap().to_owned();
+            assert!(covers.insert(name), "duplicate cover for {}", book.title());
+        }
+    }
+    for title in ["Plain Essay", "Field Guide", "Folder Book", "Harbor Notes"] {
+        assert!(titles.contains(title), "{title}");
+    }
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

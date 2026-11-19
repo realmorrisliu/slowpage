@@ -1,0 +1,344 @@
+[
+  {
+    "path": ".",
+    "mtime_ns": 1794398550750509918,
+    "size": 256,
+    "mode": 16877
+  },
+  {
+    "path": "breaks",
+    "mtime_ns": 1794413406785600298,
+    "size": 96,
+    "mode": 16877
+  },
+  {
+    "path": "breaks/5dc7698038e0b90b99ec1e5c0384b7c0fe5cab4ebac1b6b6ad87a537368ba0fb.json",
+    "mtime_ns": 1794413406785342046,
+    "size": 20028,
+    "mode": 33188
+  },
+  {
+    "path": "covers",
+    "mtime_ns": 1794412860500105431,
+    "size": 384,
+    "mode": 16877
+  },
+  {
+    "path": "covers/apple_cloud-1",
+    "mtime_ns": 1794395277909736757,
+    "size": 69,
+    "mode": 33188
+  },
+  {
+    "path": "covers/apple_essay-1",
+    "mtime_ns": 1794395277909736757,
+    "size": 69,
+    "mode": 33188
+  },
+  {
+    "path": "covers/apple_essay-1.png",
+    "mtime_ns": 1794412860473248756,
+    "size": 28988,
+    "mode": 33188
+  },
+  {
+    "path": "covers/apple_folder-1",
+    "mtime_ns": 1794395277909736757,
+    "size": 69,
+    "mode": 33188
+  },
+  {
+    "path": "covers/apple_folder-1.png",
+    "mtime_ns": 1794412860477202698,
+    "size": 28988,
+    "mode": 33188
+  },
+  {
+    "path": "covers/apple_guide-1",
+    "mtime_ns": 1794395277909736757,
+    "size": 69,
+    "mode": 33188
+  },
+  {
+    "path": "covers/apple_guide-1.png",
+    "mtime_ns": 1794412860499958388,
+    "size": 497,
+    "mode": 33188
+  },
+  {
+    "path": "covers/apple_spoken-1",
+    "mtime_ns": 1794395277909736757,
+    "size": 69,
+    "mode": 33188
+  },
+  {
+    "path": "covers/calibre_1",
+    "mtime_ns": 1794387648096455846,
+    "size": 69,
+    "mode": 33188
+  },
+  {
+    "path": "covers/calibre_1.png",
+    "mtime_ns": 1794412860106776917,
+    "size": 28988,
+    "mode": 33188
+  },
+  {
+    "path": "library-copies",
+    "mtime_ns": 1794412860471660121,
+    "size": 64,
+    "mode": 16877
+  },
+  {
+    "path": "onboarding",
+    "mtime_ns": 1794390333567200981,
+    "size": 160,
+    "mode": 16877
+  },
+  {
+    "path": "onboarding/book.png",
+    "mtime_ns": 1794390333561891017,
+    "size": 293,
+    "mode": 33188
+  },
+  {
+    "path": "onboarding/folder.png",
+    "mtime_ns": 1794390333564334497,
+    "size": 373,
+    "mode": 33188
+  },
+  {
+    "path": "onboarding/library.png",
+    "mtime_ns": 1794390333567315357,
+    "size": 421,
+    "mode": 33188
+  },
+  {
+    "path": "settings.json",
+    "mtime_ns": 1794413406261855244,
+    "size": 850,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs",
+    "mtime_ns": 1794906416667554127,
+    "size": 1216,
+    "mode": 16877
+  },
+  {
+    "path": "shell-glyphs/arrow-up-FFFFFF.png",
+    "mtime_ns": 1794906416640624135,
+    "size": 390,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/book-6E6E73.png",
+    "mtime_ns": 1794906416660193417,
+    "size": 452,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/book-open-6E6E73.png",
+    "mtime_ns": 1794906416601932490,
+    "size": 739,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/book-open.png",
+    "mtime_ns": 1794398550752259428,
+    "size": 528,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/book.png",
+    "mtime_ns": 1794398550754516524,
+    "size": 368,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/bookmark-6E6E73.png",
+    "mtime_ns": 1794906416605880972,
+    "size": 703,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/bookmark.png",
+    "mtime_ns": 1794398550752532055,
+    "size": 528,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/check-6E6E73.png",
+    "mtime_ns": 1794906416609211742,
+    "size": 558,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/check.png",
+    "mtime_ns": 1794398550752774973,
+    "size": 464,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/chevron-down-6E6E73.png",
+    "mtime_ns": 1794906416647942719,
+    "size": 463,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/edit-6E6E73.png",
+    "mtime_ns": 1794906416629388569,
+    "size": 661,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/file-6E6E73.png",
+    "mtime_ns": 1794906416613185557,
+    "size": 646,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/file-solid.png",
+    "mtime_ns": 1794404951938433555,
+    "size": 422,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/file.png",
+    "mtime_ns": 1794398550753054724,
+    "size": 511,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/folder-6E6E73.png",
+    "mtime_ns": 1794906416667599085,
+    "size": 682,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/folder.png",
+    "mtime_ns": 1794398550755045736,
+    "size": 521,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/grid-1D1D1F.png",
+    "mtime_ns": 1794906416651849492,
+    "size": 943,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/library-6E6E73.png",
+    "mtime_ns": 1794906416663952564,
+    "size": 802,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/library-solid-1D1D1F.png",
+    "mtime_ns": 1794906416597434214,
+    "size": 616,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/library-solid.png",
+    "mtime_ns": 1794398550751987176,
+    "size": 481,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/library.png",
+    "mtime_ns": 1794398550754781193,
+    "size": 588,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/list-6E6E73.png",
+    "mtime_ns": 1794906416655745432,
+    "size": 582,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/list.png",
+    "mtime_ns": 1794398550751419423,
+    "size": 462,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/note-6E6E73.png",
+    "mtime_ns": 1794906416617479124,
+    "size": 680,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/note.png",
+    "mtime_ns": 1794398550753310393,
+    "size": 530,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/paperclip-6E6E73.png",
+    "mtime_ns": 1794906416637044739,
+    "size": 722,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/plus-8E8E93.png",
+    "mtime_ns": 1794906416621236312,
+    "size": 340,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/plus.png",
+    "mtime_ns": 1794398550753545519,
+    "size": 300,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/search-1D1D1F.png",
+    "mtime_ns": 1794906416592473185,
+    "size": 853,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/search.png",
+    "mtime_ns": 1794398550751703091,
+    "size": 710,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/settings.png",
+    "mtime_ns": 1794398550753947688,
+    "size": 949,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/sidebar-left-6E6E73.png",
+    "mtime_ns": 1794906416588150701,
+    "size": 640,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/sidebar-right-6E6E73.png",
+    "mtime_ns": 1794906416633273217,
+    "size": 639,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/sidebar-right.png",
+    "mtime_ns": 1794398550754243898,
+    "size": 478,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/sliders-6E6E73.png",
+    "mtime_ns": 1794906416625507379,
+    "size": 946,
+    "mode": 33188
+  },
+  {
+    "path": "shell-glyphs/sort-desc-6E6E73.png",
+    "mtime_ns": 1794906416644121239,
+    "size": 461,
+    "mode": 33188
+  }
+]

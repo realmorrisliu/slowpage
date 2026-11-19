@@ -64,10 +64,35 @@ jobs:
           workspaces: |
             spikes
             crates/superreader-typeset
-      - run: cargo test -p spike-report -p spike-epub --lib
+      - run: cargo test -p spike-report -p spike-epub --lib -- --skip fixtures_open_on_chapter_text
       - run: cargo test -p spike-bold-word-starts
       - run: cargo test -p spike-library
       - run: cargo test -p spike-pdf --lib
+      # nsh-platform-macos and objc2 need the macOS SDK on this macos-latest
+      # runner. One package, not the workspace: spike-measure in the same
+      # cargo command unifies taffy's features and fails the build.
+      - name: Shell launch, break origin, and fullscreen decisions
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          cargo test -p spike-shell --lib -- --test-threads=1 \
+            a_stored_page_does_not_open_the_shelf_launch \
+            an_explicit_file_resumes_its_stored_page \
+            a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
+            a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
+            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
+            | tee "$log"
+          for name in \
+            a_stored_page_does_not_open_the_shelf_launch \
+            an_explicit_file_resumes_its_stored_page \
+            a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
+            a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
+            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice
+          do
+            grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
+          done
       - name: Cache typesetter fixture fonts
         uses: actions/cache@v4
         with:
@@ -85,13 +110,62 @@ jobs:
             brew install just
           fi
           just fixtures-fonts
-      - name: Fetch books the typesetter tests open
+      - name: Cache typesetter books
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/superreader-fixtures/pride-se.epub
+            /tmp/superreader-fixtures/zhaohua.epub
+          key: typesetter-books-se-pride-25271
+      - name: Fetch admitted books
         run: |
+          set -euo pipefail
           dest=/tmp/superreader-fixtures
           mkdir -p "$dest"
-          curl -fsSL -A "Mozilla/5.0" -o "$dest/pride-se.epub" \
+          fetch() {
+            out="$1"
+            shift
+            if [ -s "$out" ]; then
+              return 0
+            fi
+            for url in "$@"; do
+              try=1
+              while [ "$try" -le 4 ]; do
+                if curl -fsSL -A "Mozilla/5.0" -o "$out" "$url"; then
+                  return 0
+                fi
+                try=$((try + 1))
+                sleep 3
+              done
+            done
+            rm -f "$out"
+            echo "network: could not download $out. This is not a product or chapter failure." >&2
+            return 1
+          }
+          fetch "$dest/pride-se.epub" \
             "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice/downloads/jane-austen_pride-and-prejudice.epub?source=download"
-          curl -fsSL -o "$dest/zhaohua.epub" "https://www.gutenberg.org/ebooks/25271.epub.noimages"
+          fetch "$dest/zhaohua.epub" \
+            "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub"
+          # A cached copy with any other bytes is not the admitted file.
+          if ! echo "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293  $dest/zhaohua.epub" | shasum -a 256 -c -; then
+            rm -f "$dest/zhaohua.epub"
+            fetch "$dest/zhaohua.epub" \
+              "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub"
+            if ! echo "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293  $dest/zhaohua.epub" | shasum -a 256 -c -; then
+              echo "fixture sha mismatch for $dest/zhaohua.epub. This is not a chapter assertion." >&2
+              exit 1
+            fi
+          fi
+      - name: Admitted chapter is the 范愛農 document
+        run: python3 epub/fixtures/check_zhaohua.py
+      - name: Open the admitted chapter
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          cargo test -p spike-epub --lib fixtures_open_on_chapter_text -- --nocapture | tee "$log"
+          grep -E "test .*fixtures_open_on_chapter_text \\.\\.\\. ok$" "$log"
       - run: cargo test
         working-directory: crates/superreader-typeset
 
@@ -132,9 +206,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 40
       - name: Reject fast model ids in agent text
         working-directory: ${{ github.workspace }}
         run: sh scripts/lint-no-fast-models.sh
+      - name: Prebuilt binary sha and source gate
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          python3 -u scripts/verify --prebuilt-self-test | tee "$log"
+          for line in \
+            "prebuilt shell wrong_sha rejected" \
+            "prebuilt measure wrong_sha rejected" \
+            "prebuilt shell product_mismatch rejected" \
+            "prebuilt measure product_mismatch rejected" \
+            "prebuilt shell correct_source accepted" \
+            "prebuilt measure correct_source accepted" \
+            "prebuilt rejected_before_doctor" \
+            "prebuilt rejected_before_build" \
+            "prebuilt rejected_before_app" \
+            "prebuilt unset cargo_default"
+          do
+            grep -F "$line" "$log"
+          done
 
   bold-word-starts-ip:
     runs-on: macos-latest

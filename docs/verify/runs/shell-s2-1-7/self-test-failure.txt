@@ -1,0 +1,26 @@
+command: SR_VERIFY_MAX_LOAD=999 SR_VERIFY_LOAD_START=999 just verify --out docs/verify/runs/shell-s2-1-7
+start: 2026-11-18 00:38:32 CST
+end: 2026-11-18 00:38:33 CST
+exit: 1
+head: f2400729ee1f5a2cfd4690839c91790770773fa9
+nsh: nsh 0.5.1 (224d9a7)
+cargo: /Users/morris/.local/bin/cargo 1.98.1
+support_before_launch: /tmp/superreader-support-s2-1-7.CDSNRQ
+doctor_before_just_verify: pass nsh-pin, nsh-cargo-pin, fixtures, no-agpl-gpl, spike-shell-free, macos
+lock: acquired then released with rmdir in the same second. No suite process remained.
+real_support: 51 files, inode 900769011, sha256 509c53b00275d1310bcb764d87e4c3aed563ae58aeea46cf46ea25921a7b0391 before and after. No app launched, so official-open did not run.
+
+just verify runs self_test() before it creates the run directory or launches a window.
+The failure is an empty AssertionError at scripts/verify line 1897:
+
+    assert require_isolated_support({"SUPERREADER_SUPPORT_DIR": str(isolated)}) == isolated.resolve()
+
+require_isolated_support returns the path it was given.
+On this Mac, tempfile.TemporaryDirectory() is under /var/folders, and /var is a symlink to /private/var.
+Observed:
+  RETURN  /var/folders/.../support
+  RESOLVE /private/var/folders/.../support
+  EQUAL   False
+
+The window suite, the three sizes, fullscreen frames, and summary.json were not produced.
+CI remains separately blocked. This is not a ready or merge result.

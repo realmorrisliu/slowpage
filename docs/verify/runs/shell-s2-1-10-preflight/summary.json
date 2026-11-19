@@ -1,0 +1,145 @@
+{
+  "ok": false,
+  "nsh": "nsh 0.5.1 (224d9a7)",
+  "load_start": 999.0,
+  "load_end": 13.93,
+  "loadavg": "13.93 46.92 41.51",
+  "top": [
+    {
+      "cpu": 95.6,
+      "command": "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/Resources/Python.app/Contents/MacOS/Python"
+    },
+    {
+      "cpu": 39.8,
+      "command": "/Applications/OrbStack.app/Contents/Frameworks/OrbStack Helper.app/Contents/MacOS/OrbStack Helper"
+    },
+    {
+      "cpu": 30.4,
+      "command": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+    },
+    {
+      "cpu": 20.3,
+      "command": "/Applications/Grok Bot.app/Contents/Frameworks/Grok Bot Helper (Renderer).app/Contents/MacOS/Grok Bot Helper (Renderer)"
+    },
+    {
+      "cpu": 18.7,
+      "command": "/Library/SystemExtensions/C51001B6-448C-46AE-9E66-51DF100EC58E/io.tailscale.ipn.macsys.network-extension.systemextension/Contents/MacOS/io.tailscale.ipn.macsys.network-extension"
+    },
+    {
+      "cpu": 16.4,
+      "command": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent"
+    },
+    {
+      "cpu": 13.6,
+      "command": "pi"
+    },
+    {
+      "cpu": 13.1,
+      "command": "/Applications/Grok Bot.app/Contents/Frameworks/Grok Bot Helper.app/Contents/MacOS/Grok Bot Helper"
+    }
+  ],
+  "warm_phases": null,
+  "head": "6c5e1d45a581f84d3e62f879f6682b8cbce2073e",
+  "checks": [
+    {
+      "id": "nsh-pin",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "nsh 0.5.1 (224d9a7)"
+    },
+    {
+      "id": "nsh-cargo-pin",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "nsh-core, nsh-base, and nsh-platform-macos are =0.5.1"
+    },
+    {
+      "id": "fixtures",
+      "feature": "open-a-pdf",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "gpt3, pride, and libpdfium are present under /tmp/superreader-fixtures and /tmp/pdfium/lib"
+    },
+    {
+      "id": "no-agpl-gpl",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "Cargo.lock has neither the epub crate nor mupdf"
+    },
+    {
+      "id": "spike-shell-free",
+      "feature": "open-a-pdf",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "no spike-shell process is running"
+    },
+    {
+      "id": "macos",
+      "feature": "reading-bars",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "darwin"
+    },
+    {
+      "id": "gui-session",
+      "feature": "doctor",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "console is lock flag not reported. frontmost app is Gemini."
+    },
+    {
+      "id": "build",
+      "feature": "open-a-pdf",
+      "status": "pass",
+      "driver": "doctor",
+      "detail": "release spike-shell and spike-measure, built separately so taffy's calc feature stays off the shell"
+    },
+    {
+      "id": "shell-fonts",
+      "feature": "shell",
+      "status": "pass",
+      "driver": "fonts.json",
+      "detail": "fonts.json matches the view tree for the full-form labels"
+    },
+    {
+      "id": "shell-form-fixture",
+      "feature": "shell",
+      "status": "pass",
+      "driver": "window",
+      "detail": "window 1440x855 sidebar 220 chat 320 card 226.0,6.0 888.0x843.0 left 6.0 before-chat 6.0 bottom 6.0; missing none; continue order True",
+      "evidence": "form-fixture.png"
+    },
+    {
+      "id": "shell-form-parity",
+      "feature": "shell",
+      "status": "pass",
+      "driver": "window",
+      "detail": "mean channel delta sidebar 9.9%, header 6.0%, continue 12.7%, shelf 34.2%, chat 13.8%",
+      "evidence": "side-by-side.png"
+    },
+    {
+      "id": "shell-shelf-geometry",
+      "feature": "shell",
+      "status": "pass",
+      "driver": "geometry.json",
+      "detail": "cover 128.0x192.0 gap 42.0/28.0 caption 42.0 columns 5 scrolls, last \u4eba\u95f4\u8bcd\u8bdd"
+    },
+    {
+      "id": "shell-shelf-scroll",
+      "feature": "shell",
+      "status": "pass",
+      "driver": "geometry.json",
+      "detail": "scrolls True, last \u4eba\u95f4\u8bcd\u8bdd is in the tree"
+    },
+    {
+      "id": "shell-clip",
+      "feature": "shell",
+      "status": "fail",
+      "driver": "layout.json",
+      "detail": "wheel over the shelf grid changed 0 pixels; 1440x900: content 808.0 columns 5 cover 128.0x192.0 gap 42; chat 320.0; clip none; 578x528: content 266.0 columns 2 cover 112.0x168.0 gap 42; chat 0.0; clip none; fullscreen capture returned false; fullscreen: content 808.0 columns 5 cover 128.0x192.0 gap 42; chat 320.0; clip none; png missing; fullscreen did not exit; fullscreen-enter frame missing"
+    }
+  ]
+}

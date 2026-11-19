@@ -1,0 +1,28 @@
+verify lock acquired cursor/shell-form-tokens-d356 2026-11-17T09:02:38Z
+{ 26.08 37.21 46.73 }
+support before 36 paths
+building spike-shell
+nsh shell rows
+form fixture harness
+minimum 578x520
+pass minimum-578x520 window [578.0, 520.0] clip 0 overlap none continue 2 inside True shelf True settings pinned True below rows True
+1100x700
+fail plates-1100 1100x700 plates 3 worst token delta 3 type False color False clip none chat 320.0 content 468.0 columns 3 cover 128.0x192.0 gap 42
+breakpoint 897
+fail chat-breakpoint-897 897 before 0.0 after toggle 0.0 click missing window [897.0, 640.0]
+breakpoint 898
+fail chat-breakpoint-898 898 before 320.0 after one toggle 320.0 click missing window [898.0, 640.0]
+1440 proofs
+fail cover-type-1440 5 plates type+ink False problems ['cover.0 face #808B6D vs 7D8C6A', 'cover.0 plate has no type', 'cover.1 plate has no type', 'cover.2 face #EDE6D5 vs 2F4F3E']
+fail cover-color-1440 worst token delta 12 Middlemarch None vs #C8A24C
+pass header-sidebar-fonts 全部书籍 notes [{'size': 13.0, 'weight': 600}, {'size': 26.0, 'weight': 700}] header 26/700 True sidebar 13/600 True header ink 1845 fonts.json matches the view tree for the full-form labels
+fail shelf-wheel-and-page-down wheel over the shelf grid changed 1526 pixels; page down changed 0 pixels 
+fail chat-toggle-1440 chat 320.0 then 320.0 then 320.0 clicks missing/missing
+fullscreen hover
+proofs failed could not create image from window
+
+smoke
+fail real-support-untouched changed shell-glyphs, shell-glyphs/arrow-up-FFFFFF.png, shell-glyphs/book-6E6E73.png, shell-glyphs/book-open-6E6E73.png, shell-glyphs/bookmark-6E6E73.png, shell-glyphs/check-6E6E73.png, shell-glyphs/chevron-down-6E6E73.png, shell-glyphs/edit-6E6E73.png, shell-glyphs/file-6E6E73.png, shell-glyphs/folder-6E6E73.png, shell-glyphs/grid-1D1D1F.png, shell-glyphs/library-6E6E73.png
+summary ok=False fails=['nsh-title', 'nsh-no-night-mode', 'nsh-no-theme-switch', 'nsh-no-spread', 'shell-sidebar', 'shell-source-imported', 'shell-sidebar-toggle', 'shell-clip', 's21-proofs', 'real-support-untouched']
+verify lock released
+DONE:1

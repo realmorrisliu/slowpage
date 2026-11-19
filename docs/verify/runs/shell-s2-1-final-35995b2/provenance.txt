@@ -1,0 +1,17 @@
+Head 35995b298e1cfd44900a68c6e124f5e31bc00140. One scripts/verify run. No source edits. No merge.
+
+Process. At 14:40 CST pid 75399 was already gone. pgrep found no spike-shell and no Slowpage, and no on-screen window of either. Nothing was quit, and there was no unsaved prompt. A leftover /tmp/superreader-spike/fullscreen-exit from 12:39 was removed before launch so a fullscreen test would not be told to exit immediately.
+
+Launch. Doctor passed, including spike-shell-free and the console session. just verify used ~/.local/bin/cargo and did not set CARGO_TARGET_DIR. SR_VERIFY_MAX_LOAD=999 so the wrapper did not wait on load. Recorded load_start 10.78, load_end 26.64, loadavg 26.64 32.92 28.59. Support was the temp directory printed by the script, not ~/Library/Application Support/app.slowpage.reader. That profile stayed 51 files, sha256 5634b968ed65787895a2156ad764348c2d5e66d419a468346e07f04585a2dde5. The release binary this run built is /Users/morris/.cache/cargo-target/SuperReader/release/spike-shell, mtime 14:45:13, sha256 6b2233fb117665b2a977f0ccb6b471f944e946f0c12d1faf4b6fcb3d24501a07. OCR in the suite is Vision accurate, zh-Hans and en-US. No /Applications install. Lock released. No spike-shell left.
+
+Result. summary.json: 72 pass, 41 fail, 11 pending, 124 rows. ok is false. Every row ran. None of these fails is marked waived.
+
+Against the 43 fails on 885718f, these now pass: pdf-highlight-ink, pdf-highlight-zoom-scale, epub-turn, flash-zhaohua, shell-form-fixture, shell-form-parity, shell-shelf-scroll. The zhaohua and plain-zh text rows, the open timings, warm-cached, hyphen-reopen, slide, page-box, text-complete, text-clean, chrome-b-fullscreen-paper, both aqua rows, sidebar-icon, both bold-word rows, the seven alpha rows, and shell-clip still fail. Cold-open and warm-open still carry the suite's own sentence that the miss is shared with native timing. That sentence was not turned into a pass.
+
+New fails against that older summary, left as fails: chrome-b-fullscreen-page wants the page at x=91 and measured x=52. sidebar-page, sidebar-fixed, and sidebar-immersive use content_centered, which requires the page midpoint in the area to the right of the traffic-light bar. The page is centered on the full stage instead (295+509 on a 1100 stage). sidebar-fullscreen measured equal light gaps, 9.0/9.0 in fullscreen and 8.0/8.0 after restore, and failed because the gray left column was not painted. flash-pride counted 268/291/316 and an open frame. These checks were not rebaselined.
+
+b-pride.png from this run is the windowed reader with no gray left strip. The 15 fps drag clips from e1ca943 were not reshot and are not a 50 ms claim. shell-clip in this run still records the fullscreen enter as layout 1440x823 against a 1440x855 window, content 1440x823, card gap 38, chat gap 32, composer gap 50. That snapshot behavior stays open for Morris.
+
+Pending, not fails: alpha-finder-open, smoke-shell-click, open-pdf-from-library, open-pdf-ask, open-pdf-scroll-column, comment-note, comment-ui, alan-spawn, superreader-json, annotations-sqlite, library-search-tantivy.
+
+CI is separate. On this same head, GitHub Actions CI run 44239016702 and Release run 44239016717 succeeded. Those workflows are not this suite.
