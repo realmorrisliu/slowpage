@@ -76,6 +76,8 @@ for name in \
   fullscreen-wrong-book \
   dark-same-file \
   dark-distinct \
+  aqua-under-system-dark \
+  aqua-under-system-dark-became-dark \
   open-panel \
   empty-shelf \
   sha-missing-record \

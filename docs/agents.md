@@ -37,7 +37,7 @@ Collect every check that can run in the same session. One failed row does not st
 `scripts/verify` and `scripts/verify-lock.sh` enforce these. `scripts/harness-check` injects the bad cases and must fail them. `just verify` exits 75, once, when the 1-minute load is not under 8, when the verify lock is held, or when `spike-shell` is already running. `SR_VERIFY_MAX_LOAD` cannot raise 8. Nothing is killed.
 
 - A fullscreen request is not a fullscreen pass. The row needs the fullscreen flag and title from `chrome.json`, the window id and scale from the window tool, and the pixel size from the PNG. Those are compared with the point size and with the earlier windowed frame. A byte-identical copy of the windowed frame is not entered. `chrome.json` does not carry a window id or a pixel size, and the check does not look for them there.
-- A dark row needs a dark appearance. A file that is byte-identical to another state's capture is not that appearance.
+- A row that asks for dark needs a dark appearance. The `window-aqua` rows do not: the system may be dark, and the window stays light Aqua because the launch does not set `SPIKE_APPEARANCE`. A file that is byte-identical to another state's capture is not a distinct state.
 - An Open panel or an empty shelf is not a loaded book. Later page, reopen, and PDF rows stay not executed.
 - A missing fixture, an empty sha, or a mismatched sha is not a pass. A file that does not contain the named chapter is a failure of that check, not a silent success.
 - A workflow must not run `cargo test -p spike-shell` for tests this tree does not contain.

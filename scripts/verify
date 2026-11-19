@@ -4025,16 +4025,18 @@ def aqua_case(out, window_tool, ocr_tool, mouse, name, dark):
         width, _height, rows = decode_png_rows(png)
         pixels_ok, pixel_detail = toolbar_dark_on_white(width, rows)
         placed, _ = icon_placement(body)
-        mode = "dark" if dark else "light"
         mine = png.read_bytes() if png.exists() else b""
         others = [
             sibling.read_bytes()
             for sibling in out.glob("*.png")
             if sibling.is_file() and sibling.resolve() != png.resolve()
         ] if png.exists() else []
-        problems = appearance_problems(mode, appearance, mine, others)
+        # System dark mode does not change this row. The shell stays light Aqua
+        # unless SPIKE_APPEARANCE is set, and child_env clears that variable.
+        problems = appearance_problems("light", appearance, mine, others)
         ok = pixels_ok and placed and not problems
-        detail = f"{mode} appearance {appearance}; {place}; {pixel_detail}"
+        system = "system dark" if dark else "system light"
+        detail = f"{system}; window appearance {appearance}; {place}; {pixel_detail}"
         if problems:
             detail = f"{admission_status(problems)}: {'; '.join(problems)}; {detail}"
             return check(
@@ -4691,6 +4693,12 @@ def harness_self_test():
     distinct = appearance_problems("dark", "NSAppearanceNameDarkAqua", b"abc", [b"def"])
     assert distinct == []
     show_fault("dark-distinct", "pass", "dark appearance and a different file")
+    stayed = appearance_problems("light", "NSAppearanceNameAqua", b"system-dark", [b"other"])
+    assert stayed == [], stayed
+    show_fault("aqua-under-system-dark", "pass", "window stayed light Aqua; SPIKE_APPEARANCE was not set")
+    became = appearance_problems("light", "NSAppearanceNameDarkAqua", b"x", [b"y"])
+    assert admission_status(became) == "fail", became
+    show_fault("aqua-under-system-dark-became-dark", admission_status(became), became)
     panel = reading_surface(["打开", "取消", "pride-se.epub"], 1, None)
     shelf = reading_surface(["全部书籍"], None, None)
     loaded = reading_surface([], 2, None)
