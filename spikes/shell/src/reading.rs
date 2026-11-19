@@ -789,7 +789,16 @@ const SCRIPT: &str = r#"
     post({ hold: offset });
     return offset;
   };
+  function endFollow() {
+    followGen++;
+    followX = 0;
+    queued = 0;
+    busy = false;
+    committing = false;
+    root.style.transform = "none";
+  }
   window.spikeReveal = function (offset) {
+    endFollow();
     const seekOffset = function () {
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
@@ -946,12 +955,7 @@ const SCRIPT: &str = r#"
     window.spikeTurn(delta);
   }, true);
   window.spikeFollowDrop = function () {
-    followGen++;
-    followX = 0;
-    queued = 0;
-    busy = false;
-    committing = false;
-    root.style.transform = "none";
+    endFollow();
   };
   window.spikeFollow = function (offset) {
     if (busy) return;
@@ -1118,6 +1122,38 @@ mod tests {
         assert_eq!(v["again"]["after"], turned);
         assert_eq!(v["ignored"]["scroll"], 400);
         assert_eq!(v["ignored"]["after"], turned);
+    }
+
+    #[test]
+    fn a_reveal_during_the_release_does_not_post() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-release-reveal.js");
+        let drive = dir.join("superreader-release-reveal-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::REVEAL_DURING_RELEASE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["reveal"]["scroll"], 0);
+        assert_eq!(v["reveal"]["unpinned"], serde_json::json!([]));
+        assert_eq!(v["reveal"]["pinned"], 800);
+        assert_eq!(v["drop"]["scroll"], 0);
+        assert_eq!(v["drop"]["posts"], 0);
+        assert_eq!(v["key"]["during"], serde_json::json!(["queued"]));
+        assert_eq!(v["key"]["scroll"], 800);
+        assert_eq!(v["key"]["after"], serde_json::json!(["ok"]));
     }
 
     #[test]
@@ -1446,4 +1482,107 @@ fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
 ignored.after = take();
 
 console.log(JSON.stringify({ key, drop, cancel, again, ignored }));
+"#;
+
+const REVEAL_DURING_RELEASE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  posts.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+  posts.length = 0;
+}
+const seen = [];
+function spy() {
+  const orig = window.spikeTurn;
+  window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+}
+function take() { const out = seen.slice(); seen.length = 0; return out; }
+
+boot();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeReveal(800);
+flush(); flush(); flush();
+const reveal = {
+  scroll: body.scrollLeft,
+  unpinned: posts.filter(function (p) { return p.pinned == null; }).map(function (p) { return p.page; }),
+  pinned: posts.length ? posts[posts.length - 1].pinned : null
+};
+
+boot();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollowDrop();
+flush(); flush(); flush();
+const drop = { scroll: body.scrollLeft, posts: posts.length };
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+fire('keydown', { key: ' ', shiftKey: false, repeat: false, preventDefault(){} });
+const during = take();
+flush(); flush();
+const key = { during, scroll: body.scrollLeft };
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+key.after = take();
+
+console.log(JSON.stringify({ reveal, drop, key }));
 "#;

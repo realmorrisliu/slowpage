@@ -331,7 +331,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     style_window(window, rt);
     // The shelf and the EPUB page share this monitor. A direct file open
     // never engages the shelf, and the page script no longer handles the wheel.
-    install_shelf_wheel();
+    if crate::visit::arms_page_wheel(shell_on()) {
+        install_shelf_wheel();
+    }
     window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
     note_immersive(rt);
     settle_bar(window, rt);
@@ -1162,18 +1164,21 @@ fn install_shelf_wheel() {
         let scroll_y = e.scrollingDeltaY();
         let line_x = e.deltaX();
         let line_y = e.deltaY();
-        if !crate::visit::wheel_scrolls_shelf(shell_on())
-            && crate::web::take_epub_wheel(
+        let scrolls_shelf = crate::visit::wheel_scrolls_shelf(shell_on());
+        let page_took = if scrolls_shelf {
+            false
+        } else {
+            crate::web::take_epub_wheel(
                 phase,
                 momentum,
                 crate::visit::wheel_points(precise, scroll_x, line_x),
                 crate::visit::wheel_points(precise, scroll_y, line_y),
             )
-        {
-            return std::ptr::null_mut();
-        }
-        if !crate::visit::wheel_scrolls_shelf(shell_on()) {
-            return event.as_ptr();
+        };
+        match crate::visit::wheel_owner(scrolls_shelf, page_took) {
+            crate::visit::WheelOwner::Page => return std::ptr::null_mut(),
+            crate::visit::WheelOwner::Through => return event.as_ptr(),
+            crate::visit::WheelOwner::Shelf => {}
         }
         let Some(mtm) = MainThreadMarker::new() else {
             return event.as_ptr();

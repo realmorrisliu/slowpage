@@ -326,6 +326,8 @@ struct State {
     shell_h: f64,
     placed: Option<(i32, i32, i32, i32, String)>,
     placed_zoom: f64,
+    placed_stage_w: f64,
+    placed_stage_h: f64,
     await_hold: bool,
     hold_ready: bool,
     settled: bool,
@@ -649,7 +651,7 @@ impl State {
     }
 
     fn apply_chapter(&mut self, tag: isize) {
-        crate::web::abandon_swipe();
+        crate::web::cancel_swipe();
         let next = {
             let Some(web) = self.web.as_ref() else {
                 return;
@@ -1019,7 +1021,7 @@ impl State {
     }
 
     fn dismiss_web(&mut self) {
-        crate::web::abandon_swipe();
+        crate::web::cancel_swipe();
         crate::web::show_swipe_target(None);
         if let Some(web) = self.web.take() {
             web.dismiss();
@@ -1379,10 +1381,21 @@ impl State {
         if self.web.is_none() {
             return;
         }
-        if self.placed.as_ref() == Some(&key) && (self.placed_zoom - zoom).abs() < 0.01 {
-            return;
+        let fitted_same = self.placed.as_ref() == Some(&key);
+        let zoom_same = (self.placed_zoom - zoom).abs() < 0.01;
+        let stage_same = self.placed_stage_w.round() as i32 == self.stage_w.round() as i32
+            && self.placed_stage_h.round() as i32 == self.stage_h.round() as i32;
+        match crate::visit::place_step(fitted_same, zoom_same, stage_same) {
+            crate::visit::PlaceStep::Hold => return,
+            crate::visit::PlaceStep::Cancel { reflow } => {
+                crate::web::cancel_swipe();
+                self.placed_stage_w = self.stage_w;
+                self.placed_stage_h = self.stage_h;
+                if !reflow {
+                    return;
+                }
+            }
         }
-        crate::web::abandon_swipe();
         let reflowable = self.declared.is_none();
         if self.settled && reflowable && !self.hold_ready {
             self.await_hold = true;
@@ -1716,6 +1729,8 @@ impl Stage {
             shell_h: 0.0,
             placed: None,
             placed_zoom: 1.0,
+            placed_stage_w: 0.0,
+            placed_stage_h: 0.0,
             await_hold: false,
             hold_ready: false,
             settled: false,

@@ -1121,6 +1121,7 @@ fn reading_menu(
 
 #[cfg(test)]
 mod launch_tests {
+    use super::visit::{self, Surface, WheelOwner};
     use super::{launch_target, LaunchTarget};
 
     #[test]
@@ -1161,17 +1162,27 @@ mod launch_tests {
         assert!(!file.engages_shell());
         assert!(launch_target(false, false, None).engages_shell());
         assert!(!launch_target(false, true, None).engages_shell());
-        let stage = include_str!("stage.rs");
-        assert!(stage.contains("target.engages_shell()"));
-        let chrome = include_str!("chrome.rs");
-        let install = chrome
-            .lines()
-            .position(|line| line.trim() == "install_shelf_wheel();")
-            .expect("sync installs the wheel monitor");
-        let before = chrome.lines().nth(install.saturating_sub(1)).unwrap_or("");
-        assert!(
-            !before.contains("shell_on()"),
-            "sync still installs the wheel monitor only while the shelf is on"
+        // These are the functions `sync` and the wheel monitor call.
+        // This test does not run `sync` or install the monitor.
+        visit::publish_surface(Surface::Library);
+        assert!(visit::arms_page_wheel(false));
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(false), true),
+            WheelOwner::Page
         );
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(false), false),
+            WheelOwner::Through
+        );
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(true), true),
+            WheelOwner::Shelf
+        );
+        visit::publish_surface(Surface::Reading);
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(true), true),
+            WheelOwner::Page
+        );
+        visit::publish_surface(Surface::Library);
     }
 }

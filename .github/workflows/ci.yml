@@ -101,6 +101,8 @@ jobs:
             a_trackpad_swipe_follows_cancels_and_commits_once \
             a_key_during_the_release_still_turns \
             a_direct_file_arms_the_wheel_without_the_shelf \
+            a_release_stays_open_until_chapter_or_resize_cancels_it \
+            a_reveal_during_the_release_does_not_post \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -125,7 +127,9 @@ jobs:
             a_title_or_author_query_filters_the_shelf_and_clears \
             a_trackpad_swipe_follows_cancels_and_commits_once \
             a_key_during_the_release_still_turns \
-            a_direct_file_arms_the_wheel_without_the_shelf
+            a_direct_file_arms_the_wheel_without_the_shelf \
+            a_release_stays_open_until_chapter_or_resize_cancels_it \
+            a_reveal_during_the_release_does_not_post
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

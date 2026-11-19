@@ -1098,13 +1098,13 @@ pub fn show_swipe_target(next: Option<WebChapter>) {
         _ => true,
     });
     if changed {
-        abandon_swipe();
+        cancel_swipe();
     }
     SWIPE_SHOWN.with(|shown| *shown.borrow_mut() = next);
 }
 
 /// Clear a live follow so a later finger-up cannot turn. Returns whether a
-/// finger was actually down.
+/// finger was actually down. A finger-up glide stays up: a key queues behind it.
 pub fn abandon_swipe() -> bool {
     let live = SWIPE.with(|swipe| swipe.borrow_mut().abandon());
     if live {
@@ -1113,6 +1113,18 @@ pub fn abandon_swipe() -> bool {
         }
     }
     live
+}
+
+/// Drop a follow or the finger-up glide. A chapter, reveal, return, resize,
+/// reopen, or another book uses this. The glide must not seek or post later.
+pub fn cancel_swipe() -> bool {
+    let drop = SWIPE.with(|swipe| swipe.borrow_mut().cancel_release());
+    if drop {
+        if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
+            web.drop_swipe();
+        }
+    }
+    drop
 }
 
 /// Handle one scroll-wheel sample while an EPUB page is showing.

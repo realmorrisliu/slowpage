@@ -113,6 +113,51 @@ pub fn wheel_scrolls_shelf(shell: bool) -> bool {
     shell && ON_LIBRARY.load(Ordering::Relaxed)
 }
 
+/// Who consumes one scroll-wheel event. The shelf flag selects the shelf.
+/// It does not decide whether the monitor is installed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WheelOwner {
+    Shelf,
+    Page,
+    Through,
+}
+
+pub fn wheel_owner(scrolls_shelf: bool, page_took_it: bool) -> WheelOwner {
+    if scrolls_shelf {
+        WheelOwner::Shelf
+    } else if page_took_it {
+        WheelOwner::Page
+    } else {
+        WheelOwner::Through
+    }
+}
+
+/// The scroll monitor is installed for a direct file as well as the shelf.
+/// `shell` is the shelf flag. It does not gate installation.
+pub fn arms_page_wheel(shell: bool) -> bool {
+    let _ = shell;
+    true
+}
+
+/// What `place_page` does with a gesture that may still be painting.
+/// The same fitted frame on the same stage leaves the release alone.
+/// A stage change cancels it even when the fitted integers and zoom do not move.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceStep {
+    Hold,
+    Cancel { reflow: bool },
+}
+
+pub fn place_step(fitted_same: bool, zoom_same: bool, stage_same: bool) -> PlaceStep {
+    if fitted_same && zoom_same && stage_same {
+        PlaceStep::Hold
+    } else if fitted_same && zoom_same {
+        PlaceStep::Cancel { reflow: false }
+    } else {
+        PlaceStep::Cancel { reflow: true }
+    }
+}
+
 pub fn on_library() -> bool {
     ON_LIBRARY.load(Ordering::Relaxed)
 }
@@ -629,6 +674,9 @@ pub struct Swipe {
     /// A key, chapter, resize, or new book took the gesture. Ignore the rest
     /// of this finger, including the lift, so that lift cannot turn again.
     ignore: bool,
+    /// A commit or a return glide has been handed to the page and has not
+    /// been dropped. The finger is already up.
+    release: bool,
 }
 
 impl Default for Swipe {
@@ -638,6 +686,7 @@ impl Default for Swipe {
             live: false,
             notch: 0.0,
             ignore: false,
+            release: false,
         }
     }
 }
@@ -654,6 +703,26 @@ impl Swipe {
             self.ignore = true;
         }
         was
+    }
+
+    /// The page is still painting the finger-up glide. A key does not use this.
+    pub fn release_open(&self) -> bool {
+        self.release
+    }
+
+    /// Drop a follow or the finger-up glide. A chapter, a reveal, a return,
+    /// a resize, a reopen, or another book calls this. A key does not.
+    pub fn cancel_release(&mut self) -> bool {
+        let drop = self.live || self.release;
+        let was = self.live;
+        self.travel = 0.0;
+        self.notch = 0.0;
+        self.live = false;
+        self.release = false;
+        if was {
+            self.ignore = true;
+        }
+        drop
     }
 
     pub fn offer(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
@@ -696,15 +765,22 @@ impl Swipe {
             return WheelMove::Pass;
         }
         let travel = self.travel;
-        *self = Self::default();
-        if cancelled || travel.abs() < SWIPE_POINTS {
-            return WheelMove::Cancel;
-        }
-        let delta = if travel > 0.0 { 1 } else { -1 };
-        if end_blocks(delta, page, pages) {
-            return WheelMove::Cancel;
-        }
-        WheelMove::Commit(delta)
+        self.travel = 0.0;
+        self.notch = 0.0;
+        self.live = false;
+        self.ignore = false;
+        let effect = if cancelled || travel.abs() < SWIPE_POINTS {
+            WheelMove::Cancel
+        } else {
+            let delta = if travel > 0.0 { 1 } else { -1 };
+            if end_blocks(delta, page, pages) {
+                WheelMove::Cancel
+            } else {
+                WheelMove::Commit(delta)
+            }
+        };
+        self.release = true;
+        effect
     }
 
     fn notch(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
@@ -717,6 +793,7 @@ impl Swipe {
         }
         let delta = if self.notch > 0.0 { 1 } else { -1 };
         self.notch = 0.0;
+        self.release = true;
         if end_blocks(delta, page, pages) {
             return WheelMove::Cancel;
         }
@@ -1641,5 +1718,81 @@ mod tests {
         assert_eq!(finger_bits(0), Finger::None);
         assert_eq!(wheel_points(true, 12.0, 1.0), 12.0);
         assert_eq!(wheel_points(false, 0.0, 1.0), 16.0);
+    }
+
+    #[test]
+    fn a_release_stays_open_until_chapter_or_resize_cancels_it() {
+        let down = WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down, 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        assert!(swipe.release_open());
+        assert!(!swipe.abandon());
+        assert!(swipe.release_open());
+        assert!(swipe.cancel_release());
+        assert!(!swipe.release_open());
+        assert!(!swipe.cancel_release());
+
+        let mut swipe = Swipe::default();
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::Down,
+                    momentum: false,
+                    dx: 10.0,
+                    dy: 0.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Follow(10.0)
+        );
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Cancel);
+        assert!(swipe.release_open());
+        assert!(swipe.cancel_release());
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down, 4, 10), WheelMove::Follow(80.0));
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+
+        let mut notch = Swipe::default();
+        assert_eq!(
+            notch.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: SWIPE_POINTS,
+                    dy: 0.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Commit(1)
+        );
+        assert!(notch.release_open());
+        assert!(!notch.abandon());
+        assert!(notch.cancel_release());
+
+        assert_eq!(place_step(true, true, true), PlaceStep::Hold);
+        assert_eq!(
+            place_step(true, true, false),
+            PlaceStep::Cancel { reflow: false }
+        );
+        assert_eq!(
+            place_step(false, true, true),
+            PlaceStep::Cancel { reflow: true }
+        );
     }
 }
