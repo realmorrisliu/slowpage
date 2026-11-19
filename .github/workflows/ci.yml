@@ -106,6 +106,8 @@ jobs:
             a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
             a_second_finger_key_keeps_the_committed_page \
             a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it \
+            a_long_chapter_commit_is_never_dropped \
+            a_second_commit_and_a_long_chapter_post_every_token \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -135,7 +137,9 @@ jobs:
             a_reveal_during_the_release_does_not_post \
             a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
             a_second_finger_key_keeps_the_committed_page \
-            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it
+            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it \
+            a_long_chapter_commit_is_never_dropped \
+            a_second_commit_and_a_long_chapter_post_every_token
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

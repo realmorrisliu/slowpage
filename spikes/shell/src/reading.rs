@@ -455,9 +455,11 @@ const SCRIPT: &str = r#"
   const root = document.body;
   let busy = false;
   let queued = 0;
+  let queuedToken = 0;
   let shift = 0;
   let followX = 0;
   let followGen = 0;
+  let motion = 0;
   let committing = false;
   let measured = false;
   let layoutReport = null;
@@ -791,8 +793,10 @@ const SCRIPT: &str = r#"
   };
   function endFollow() {
     followGen++;
+    motion++;
     followX = 0;
     queued = 0;
+    queuedToken = 0;
     busy = false;
     committing = false;
     root.style.transform = "none";
@@ -826,36 +830,44 @@ const SCRIPT: &str = r#"
     if (window.spikeJustify) window.spikeJustify.whenVisibleCommitted().then(seekOffset);
     else seekOffset();
   };
-  function settle(frames) {
+  function settle(frames, token) {
     document.documentElement.style.transform = "none";
     const leaf = document.getElementById("spike-leaf");
     if (leaf) leaf.remove();
-    post({ frames: frames });
+    post(token ? { frames: frames, swipe: token } : { frames: frames });
     busy = false;
     window.spikeBusy = false;
     const next = queued;
+    const nextToken = queuedToken;
     queued = 0;
-    if (next) begin(next);
+    queuedToken = 0;
+    if (next) begin(next, nextToken);
   }
   window.spikeTurn = function (delta) {
     // A commit glide is the turn that was already decided. Bumping the
     // generation here kills the only callback that clears `busy` and runs
     // the queued key, so the page stops accepting turns. A return glide has
-    // not committed, and a key cancels it.
+    // not committed, and a key cancels it. The key takes the one queue slot,
+    // so a swipe token waiting in that slot is retired.
     if (!committing) {
       followGen++;
       followX = 0;
       root.style.transform = "none";
+    }
+    if (queuedToken) {
+      var dropped = queuedToken;
+      queuedToken = 0;
+      post({ swipe: dropped, dropped: true });
     }
     delta = delta < 0 ? -1 : 1;
     if (busy) {
       queued = delta;
       return "queued";
     }
-    begin(delta);
+    begin(delta, 0);
     return "ok";
   };
-  function begin(delta) {
+  function begin(delta, token) {
     const box = column();
     const target = box.page + delta;
     if (target < 1 || target > box.pages) {
@@ -867,10 +879,11 @@ const SCRIPT: &str = r#"
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
     window.spikeCover = null;
     busy = true;
-    slide(box, delta);
+    slide(box, delta, token || 0);
   }
-  function slide(box, delta) {
+  function slide(box, delta, token) {
     seek(box.w * (box.page + delta - 1));
+    const live = motion;
     const leaf = document.createElement("div");
     leaf.id = "spike-leaf";
     leaf.style.cssText = "position:fixed;inset:0;z-index:5;pointer-events:none;background:" + PAPER + ";will-change:transform";
@@ -879,6 +892,7 @@ const SCRIPT: &str = r#"
     let last = 0;
     const t0 = performance.now();
     function frame(t) {
+      if (live !== motion) return;
       if (last) frames.push(t - last);
       last = t;
       const u = Math.min(1, (t - t0) / DURATION);
@@ -888,7 +902,8 @@ const SCRIPT: &str = r#"
         requestAnimationFrame(frame);
         return;
       }
-      settle(frames);
+      if (live !== motion) return;
+      settle(frames, token || 0);
     }
     requestAnimationFrame(frame);
   }
@@ -991,15 +1006,20 @@ const SCRIPT: &str = r#"
     if (busy) {
       // A key slide is not a commit. Drop the follow paint and let that slide
       // finish. A commit glide is the turn already decided: cancelling its
-      // frame leaves `busy` set. A second lift queues one page; a cancel does not.
+      // frame leaves `busy` set. A second lift queues one page and keeps that
+      // token for the queued page. A cancel does not.
       if (!committing) {
         followGen++;
         followX = 0;
         root.style.transform = "none";
-      } else if (delta) {
-        queued = delta < 0 ? -1 : 1;
+        return "no";
       }
-      return;
+      if (delta) {
+        queued = delta < 0 ? -1 : 1;
+        queuedToken = token || 0;
+        return "queued";
+      }
+      return "no";
     }
     const from = followX;
     const w = pageWidth();
@@ -1010,7 +1030,7 @@ const SCRIPT: &str = r#"
         followX = 0;
         root.style.transform = "none";
       });
-      return;
+      return "no";
     }
     const step = delta > 0 ? 1 : -1;
     committing = true;
@@ -1023,9 +1043,12 @@ const SCRIPT: &str = r#"
       post(token ? { swipe: token } : null);
       busy = false;
       const next = queued;
+      const nextToken = queuedToken;
       queued = 0;
-      if (next) begin(next);
+      queuedToken = 0;
+      if (next) begin(next, nextToken);
     });
+    return "glide";
   };
   if (window.spikeJustify) {
     window.spikeJustify.install({
@@ -1190,6 +1213,117 @@ mod tests {
         assert_eq!(v["reveal"]["scroll"], 0);
         assert_eq!(v["reveal"]["unpinned"], serde_json::json!([]));
         assert_eq!(v["reveal"]["pinned"], 800);
+    }
+
+    #[test]
+    fn a_second_commit_and_a_long_chapter_post_every_token() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-commit-chain.js");
+        let drive = dir.join("superreader-commit-chain-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::COMMIT_CHAIN_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        let down = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let issue = |swipe: &mut crate::visit::Swipe| {
+            assert_eq!(
+                swipe.offer(down, 4, 400),
+                crate::visit::WheelMove::Follow(80.0)
+            );
+            assert_eq!(swipe.offer(up, 4, 400), crate::visit::WheelMove::Commit(1));
+            swipe.commit_token().expect("token")
+        };
+
+        assert_eq!(v["second"]["first"], "glide");
+        assert_eq!(v["second"]["second"], "queued");
+        assert_eq!(v["second"]["swipes"], serde_json::json!([1, 2]));
+        let mut paired = crate::visit::Swipe::default();
+        let first = issue(&mut paired);
+        paired.note_answer(first, v["second"]["first"].as_str().unwrap());
+        let second = issue(&mut paired);
+        paired.note_answer(second, v["second"]["second"].as_str().unwrap());
+        assert_eq!(
+            crate::visit::swipe_progress(&mut paired, Some(second), 3, 0),
+            Some((3, 0))
+        );
+        assert_eq!(
+            crate::visit::swipe_progress(&mut paired, Some(first), 2, 0),
+            Some((2, 0))
+        );
+        assert_eq!(
+            crate::visit::swipe_progress(&mut paired, Some(first), 2, 0),
+            None
+        );
+
+        assert_eq!(v["key"]["dropped"], serde_json::json!([2]));
+        assert_eq!(v["key"]["swipes"], serde_json::json!([1, null]));
+        let mut keyed = crate::visit::Swipe::default();
+        let flying = issue(&mut keyed);
+        let queued = issue(&mut keyed);
+        keyed.note_answer(flying, "glide");
+        keyed.note_answer(queued, v["key"]["replaced"].as_str().unwrap());
+        keyed.retire(v["key"]["dropped"][0].as_u64().unwrap());
+        assert_eq!(
+            crate::visit::swipe_progress(&mut keyed, Some(queued), 3, 0),
+            None
+        );
+        assert_eq!(
+            crate::visit::swipe_progress(&mut keyed, Some(flying), 2, 0),
+            Some((2, 0))
+        );
+
+        assert_eq!(v["killed"]["before"], serde_json::json!([1]));
+        assert_eq!(v["killed"]["pinned"], 800);
+
+        let swipes = v["long"]["swipes"].as_array().expect("swipes");
+        assert_eq!(swipes.len(), 128);
+        assert_eq!(v["long"]["answers"], "glide");
+        let mut chapter = crate::visit::Swipe::default();
+        for posted in swipes {
+            let token = posted.as_u64().unwrap();
+            let issued = issue(&mut chapter);
+            assert_eq!(issued, token);
+            chapter.note_answer(issued, "glide");
+            let page = token as u32;
+            assert_eq!(
+                crate::visit::swipe_progress(&mut chapter, Some(token), page, 0),
+                Some((page, 0))
+            );
+        }
+        let late = issue(&mut chapter);
+        assert!(chapter.cancel_release());
+        assert_eq!(
+            crate::visit::swipe_progress(&mut chapter, Some(late), 2, 50),
+            None
+        );
+        assert_eq!(
+            crate::visit::swipe_progress(&mut chapter, None, 1, 800),
+            Some((1, 800))
+        );
     }
 
     #[test]
@@ -1733,4 +1867,110 @@ const reveal = {
 };
 
 console.log(JSON.stringify({ space, arrow, other, late, reveal }));
+"#;
+
+const COMMIT_CHAIN_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: 'word', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 80000,
+    appendChild(child){ if (child) child.parentNode = this; }, prepend(){}, remove(){},
+    querySelector(){ return null; }, querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; }, parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+rootEl.scrollWidth = 80000;
+body.scrollWidth = 80000;
+global.document = {
+  createElement: () => el(), documentElement: rootEl, head: el(), body,
+  querySelectorAll: () => [], querySelector: () => null, getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){}, caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  posts.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+  posts.length = 0;
+}
+function swipeOf(list) {
+  return list.map(function (p) { return p.swipe == null ? null : p.swipe; });
+}
+
+boot();
+const firstAnswer = window.spikeFollowEnd(1, 1);
+const secondAnswer = window.spikeFollowEnd(1, 2);
+flush(); flush(); flush();
+const second = { first: firstAnswer, second: secondAnswer, swipes: swipeOf(posts), pages: posts.map(function (p) { return p.page; }) };
+
+boot();
+const queuedAnswer = window.spikeFollowEnd(1, 1);
+const replaced = window.spikeFollowEnd(1, 2);
+fire('keydown', { key: ' ', shiftKey: false, repeat: false, preventDefault(){} });
+const dropped = posts.filter(function (p) { return p.dropped; }).map(function (p) { return p.swipe; });
+flush(); flush(); flush();
+const kept = posts.filter(function (p) { return !p.dropped; });
+const key = { queuedAnswer, replaced, dropped, swipes: swipeOf(kept), pages: kept.map(function (p) { return p.page; }) };
+
+boot();
+window.spikeFollowEnd(1, 1);
+window.spikeFollowEnd(1, 2);
+flush();
+window.spikeFollowDrop();
+flush(); flush();
+const beforeReveal = posts.slice();
+window.spikeReveal(800);
+flush(); flush(); flush();
+const killed = {
+  before: swipeOf(beforeReveal),
+  pages: beforeReveal.map(function (p) { return p.page; }),
+  pinned: posts.length ? posts[posts.length - 1].pinned : null
+};
+
+boot();
+const answers = [];
+for (let i = 1; i <= 128; i++) {
+  answers.push(window.spikeFollowEnd(1, i));
+  flush();
+  flush();
+}
+const swipes = posts.map(function (p) { return p.swipe; }).filter(function (s) { return s != null; });
+const long = { answers: answers[0], count: swipes.length, first: swipes[0], last: swipes[swipes.length - 1], swipes: swipes };
+
+console.log(JSON.stringify({ second, key, killed, long }));
 "#;

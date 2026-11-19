@@ -261,6 +261,12 @@ define_class!(
             let body: Retained<NSString> = unsafe { msg_send![message, body] };
             let text = body.to_string();
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                if value["dropped"].as_bool() == Some(true) {
+                    if let Some(token) = value["swipe"].as_u64() {
+                        SWIPE.with(|swipe| swipe.borrow_mut().retire(token));
+                    }
+                    return;
+                }
                 if value["kind"] == "breaks" {
                     let plans = crate::breaks::plans_from_json(&value);
                     let algo = value["algo"].as_str().unwrap_or("");
@@ -575,6 +581,11 @@ fn eval(web: &AnyObject, js: &str, inbox: Rc<RefCell<Inbox>>, href: String, turn
         let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
             return;
         };
+        if let Some(answer) = parsed["answer"].as_str() {
+            let token = parsed["swipe"].as_u64().unwrap_or(0);
+            SWIPE.with(|swipe| swipe.borrow_mut().note_answer(token, answer));
+            return;
+        }
         let mut inbox = inbox.borrow_mut();
         if let (Some(page), Some(pages)) = (parsed["page"].as_u64(), parsed["pages"].as_u64()) {
             inbox.pages = Some((page as usize, pages as usize));
@@ -919,7 +930,9 @@ impl WebChapter {
         let (web, _, href) = self.shown();
         eval(
             &web,
-            &format!("window.spikeFollowEnd&&window.spikeFollowEnd({delta},{token})"),
+            &format!(
+                "(function(){{var answer=(window.spikeFollowEnd&&window.spikeFollowEnd({delta},{token}))||\"no\";return JSON.stringify({{answer:answer,swipe:{token}}});}})()"
+            ),
             self.inbox.clone(),
             href,
             delta != 0,

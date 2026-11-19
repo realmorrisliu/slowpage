@@ -679,11 +679,13 @@ pub struct Swipe {
     /// clears this. Navigation clears it. A new finger does not.
     release: bool,
     next_id: u64,
-    /// Tokens at or below this were retired by navigation. A post of one
-    /// does not change the stored page.
+    /// Tokens at or below this were retired by navigation.
     floor: u64,
-    /// Bit `token - floor` is set while that commit's post may still apply.
-    outstanding: u64,
+    /// The glide the page is running. Its post carries this token.
+    flying: Option<u64>,
+    /// The one queued page. A newer commit replaces it. A key that takes
+    /// the slot retires it. There is no window of old commits.
+    queued: Option<u64>,
     /// The commit just handed to the page. The wheel command reads it once.
     last_commit: Option<u64>,
 }
@@ -698,7 +700,8 @@ impl Default for Swipe {
             release: false,
             next_id: 0,
             floor: 0,
-            outstanding: 0,
+            flying: None,
+            queued: None,
             last_commit: None,
         }
     }
@@ -711,7 +714,7 @@ impl Swipe {
         let was = self.live;
         // A finger that started during an open commit is not that commit.
         // Dropping the page paint would cancel the page already handed over.
-        let drop_paint = was && self.outstanding == 0;
+        let drop_paint = was && self.flying.is_none();
         self.travel = 0.0;
         self.notch = 0.0;
         self.live = false;
@@ -725,28 +728,68 @@ impl Swipe {
         self.last_commit
     }
 
-    /// The commit glide finished and reported `token`. This is the write-back.
-    /// A token navigation already cleared, or a token already applied, does
-    /// not change the stored page. An older commit still applies after a
-    /// newer one was issued.
+    /// The page accepted or refused the token it was just given.
+    /// `glide` and `queued` are the only answers that keep it.
+    pub fn note_answer(&mut self, token: u64, answer: &str) {
+        if token == 0 || token <= self.floor {
+            return;
+        }
+        match answer {
+            "glide" => {
+                if self.queued == Some(token) {
+                    self.queued = None;
+                }
+                self.flying = Some(token);
+            }
+            "queued" => {
+                if self.flying == Some(token) {
+                    self.flying = None;
+                }
+                self.queued = Some(token);
+            }
+            _ => {
+                if self.flying == Some(token) {
+                    self.flying = None;
+                }
+                if self.queued == Some(token) {
+                    self.queued = None;
+                }
+            }
+        }
+    }
+
+    /// The commit glide finished and reported `token`. A token the page
+    /// refused, replaced, or navigation retired does not change the stored page.
+    /// Either of the two slots may arrive first. A repeat does not apply.
     pub fn take_commit_post(&mut self, token: u64) -> bool {
-        if token <= self.floor || token > self.next_id {
+        if !self.holds(token) {
             return false;
         }
-        let bit = token - self.floor;
-        if bit >= 64 {
-            return false;
+        self.clear_token(token);
+        true
+    }
+
+    /// The page dropped this token without turning for it. A key taking the
+    /// one queue slot uses this. The column is not moved here.
+    pub fn retire(&mut self, token: u64) {
+        self.clear_token(token);
+    }
+
+    fn holds(&self, token: u64) -> bool {
+        token > self.floor && (self.flying == Some(token) || self.queued == Some(token))
+    }
+
+    fn clear_token(&mut self, token: u64) {
+        if self.flying == Some(token) {
+            self.flying = None;
         }
-        let mask = 1u64 << bit;
-        if self.outstanding & mask == 0 {
-            return false;
+        if self.queued == Some(token) {
+            self.queued = None;
         }
-        self.outstanding &= !mask;
-        if self.outstanding == 0 {
+        if self.flying.is_none() && self.queued.is_none() {
             self.release = false;
             self.last_commit = None;
         }
-        true
     }
 
     /// The page is still painting the finger-up glide. A key does not use this.
@@ -757,14 +800,15 @@ impl Swipe {
     /// Drop a follow or the finger-up glide. A chapter, a reveal, a return,
     /// a resize, a reopen, or another book calls this. A key does not.
     pub fn cancel_release(&mut self) -> bool {
-        let drop = self.live || self.release || self.outstanding != 0;
+        let drop = self.live || self.release || self.flying.is_some() || self.queued.is_some();
         let was = self.live;
         self.travel = 0.0;
         self.notch = 0.0;
         self.live = false;
         self.release = false;
         self.floor = self.next_id;
-        self.outstanding = 0;
+        self.flying = None;
+        self.queued = None;
         self.last_commit = None;
         if was {
             self.ignore = true;
@@ -777,13 +821,15 @@ impl Swipe {
             if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
                 let next_id = self.next_id;
                 let floor = self.floor;
-                let outstanding = self.outstanding;
+                let flying = self.flying;
+                let queued = self.queued;
                 let last_commit = self.last_commit;
                 let release = self.release;
                 *self = Self::default();
                 self.next_id = next_id;
                 self.floor = floor;
-                self.outstanding = outstanding;
+                self.flying = flying;
+                self.queued = queued;
                 self.last_commit = last_commit;
                 self.release = release;
             }
@@ -859,16 +905,19 @@ impl Swipe {
         effect
     }
 
-    /// Each commit gets its own token. A later commit does not retire the
-    /// earlier one. The post of a token is what clears that commit.
+    /// A commit while one glide is flying replaces the single queued token.
+    /// The page posts that token only if it kept the slot. A refused answer
+    /// removes it. Nothing here remembers commits that have already posted.
     fn hand_glide(&mut self, effect: &WheelMove) {
         if matches!(effect, WheelMove::Commit(_)) {
             self.next_id = self.next_id.saturating_add(1);
-            let bit = self.next_id - self.floor;
-            if bit < 64 {
-                self.outstanding |= 1u64 << bit;
-                self.last_commit = Some(self.next_id);
+            let id = self.next_id;
+            if self.flying.is_none() {
+                self.flying = Some(id);
+            } else {
+                self.queued = Some(id);
             }
+            self.last_commit = Some(id);
         }
         self.release = true;
     }
@@ -2023,5 +2072,43 @@ mod tests {
         assert!(swipe.release_open());
         assert!(swipe.cancel_release());
         assert_eq!(swipe_progress(&mut swipe, Some(second), 3, 0), None);
+    }
+
+    #[test]
+    fn a_long_chapter_commit_is_never_dropped() {
+        let down = WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mut swipe = Swipe::default();
+        for n in 1u64..=128 {
+            assert_eq!(swipe.offer(down, 4, 400), WheelMove::Follow(80.0));
+            assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
+            let token = swipe.commit_token().expect("token");
+            assert_eq!(token, n);
+            swipe.note_answer(token, "glide");
+            let page = n as u32;
+            assert_eq!(
+                swipe_progress(&mut swipe, Some(token), page, 0),
+                Some((page, 0))
+            );
+        }
+        let again = swipe.commit_token();
+        assert_eq!(again, None);
+        assert_eq!(swipe.offer(down, 4, 400), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
+        let late = swipe.commit_token().expect("late");
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, Some(late), 2, 50), None);
+        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
+        assert_eq!(swipe_progress(&mut swipe, Some(1), 2, 0), None);
     }
 }
