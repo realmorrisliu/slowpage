@@ -598,11 +598,16 @@ mod tests {
         let spine = [
             "/OEBPS/chapter.xhtml".to_string(),
             "/OEBPS/empty.xhtml".to_string(),
+            "/OEBPS/next.xhtml".to_string(),
         ];
         let kept = crate::visit::opened_place(&spine, &resume_href(&file, path), 4, 800);
         assert_eq!(kept.page, 4);
         assert_eq!(kept.offset, 800);
         assert_eq!(kept.index, 0);
+        assert_eq!(
+            crate::visit::chapter_target(&resume_href(&file, path), &spine[0], 4, 800),
+            (4, 800)
+        );
 
         record_progress(&file, path, 4, Some(10), 800, "/gone.xhtml").unwrap();
         let dropped = crate::visit::opened_place(&spine, &resume_href(&file, path), 4, 800);
@@ -628,6 +633,26 @@ mod tests {
         assert_eq!(valid.offset, 20);
 
         record_progress(&file, path, 4, Some(10), 800, "/OEBPS/chapter.xhtml").unwrap();
+        let next = "/OEBPS/next.xhtml";
+        let waiting = crate::visit::step_restore(true, None, None, 4, None, false);
+        assert!(!waiting.write);
+        let (page, offset) = crate::visit::chapter_target(&resume_href(&file, path), next, 4, 800);
+        assert_eq!((page, offset), (1, 0));
+        record_progress(&file, path, page, Some(10), offset, next).unwrap();
+        assert_eq!(resume_href(&file, path), next);
+        assert_eq!(resume_page(&file, path), 1);
+        assert_eq!(resume_offset(&file, path), 0);
+        let reopened = crate::visit::opened_place(
+            &spine,
+            &resume_href(&file, path),
+            resume_page(&file, path),
+            resume_offset(&file, path),
+        );
+        assert_eq!(reopened.index, 2);
+        assert_eq!(reopened.page, 1);
+        assert_eq!(reopened.offset, 0);
+
+        record_progress(&file, path, 4, Some(10), 800, "/OEBPS/chapter.xhtml").unwrap();
         let missed = crate::visit::step_restore(false, Some(0), None, 1, Some(0), true);
         assert!(!missed.write);
         let empty = "/OEBPS/empty.xhtml";
@@ -635,10 +660,12 @@ mod tests {
             &resume_href(&file, path),
             empty
         ));
-        record_progress(&file, path, 4, Some(10), 800, empty).unwrap();
+        let (page, offset) = crate::visit::chapter_target(&resume_href(&file, path), empty, 4, 800);
+        assert_eq!((page, offset), (1, 0));
+        record_progress(&file, path, page, Some(10), offset, empty).unwrap();
         assert_eq!(resume_href(&file, path), empty);
-        assert_eq!(resume_page(&file, path), 4);
-        assert_eq!(resume_offset(&file, path), 800);
+        assert_eq!(resume_page(&file, path), 1);
+        assert_eq!(resume_offset(&file, path), 0);
         let back = crate::visit::opened_place(
             &spine,
             &resume_href(&file, path),
@@ -646,8 +673,8 @@ mod tests {
             resume_offset(&file, path),
         );
         assert_eq!(back.index, 1);
-        assert_eq!(back.page, 4);
-        assert_eq!(back.offset, 800);
+        assert_eq!(back.page, 1);
+        assert_eq!(back.offset, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

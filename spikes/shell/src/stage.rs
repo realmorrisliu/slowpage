@@ -1157,14 +1157,22 @@ impl State {
             } else {
                 let href = web.href();
                 if crate::visit::changed_chapter(&self.saved_href, &href) {
+                    let (page, offset) = crate::visit::chapter_target(
+                        &self.saved_href,
+                        &href,
+                        self.saved_page,
+                        self.saved_sentence,
+                    );
                     let path = self.book_path.clone();
+                    self.saved_page = page;
+                    self.saved_sentence = offset;
                     self.saved_href = href.clone();
                     let _ = crate::settings::record_progress(
                         &crate::settings::path(),
                         &path,
-                        self.saved_page,
+                        page,
                         self.page_total,
-                        self.saved_sentence,
+                        offset,
                         &href,
                     );
                 }

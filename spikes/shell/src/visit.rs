@@ -408,6 +408,16 @@ pub fn changed_chapter(stored_href: &str, href: &str) -> bool {
     !href.is_empty() && href != stored_href
 }
 
+/// Page and offset that belong with `href` before that chapter reports its own pin.
+/// A different chapter opens at the start. A stored row with no href keeps its place.
+pub fn chapter_target(stored_href: &str, href: &str, page: u32, offset: u32) -> (u32, u32) {
+    if !stored_href.is_empty() && changed_chapter(stored_href, href) {
+        (1, 0)
+    } else {
+        (page, offset)
+    }
+}
+
 pub fn place_changed(
     stored_page: u32,
     stored_offset: u32,
@@ -871,6 +881,13 @@ mod tests {
         assert!(changed_chapter(chapter, empty));
         assert!(!changed_chapter(empty, empty));
         assert!(!changed_chapter(chapter, ""));
+        assert_eq!(chapter_target(chapter, next, 4, 800), (1, 0));
+        assert_eq!(chapter_target(chapter, empty, 4, 800), (1, 0));
+        assert_eq!(chapter_target(chapter, chapter, 4, 800), (4, 800));
+        assert_eq!(chapter_target(chapter, "", 4, 800), (4, 800));
+        assert_eq!(chapter_target("", chapter, 4, 800), (4, 800));
+        let waiting = step_restore(true, None, None, 4, None, false);
+        assert!(!waiting.write);
         assert!(place_changed(1, 0, chapter, 1, 0, next));
         assert!(!place_changed(1, 0, next, 1, 0, next));
         assert!(!place_changed(4, 800, chapter, 4, 800, ""));
