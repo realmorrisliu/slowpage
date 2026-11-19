@@ -1,0 +1,16 @@
+{
+  "clicked": true,
+  "reader": {
+    "bar_w": 78.0,
+    "close_w": 14.0,
+    "lights": 1.0,
+    "mode": "epub",
+    "page": 1,
+    "pages": 3,
+    "path": "/var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/superreader-form-58m24w9v/apple/Pride and Prejudice.epub",
+    "product": false,
+    "toolbar": false,
+    "window_title": "Slowpage"
+  },
+  "library": true
+}

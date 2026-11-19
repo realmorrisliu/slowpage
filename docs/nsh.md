@@ -1,6 +1,6 @@
-# NSH 0.5.0
+# NSH 0.5.1
 
-The shell is pinned at NSH 0.5.0, published on 2026-11-11 as tag `v0.5.0`, commit `f4d68f7`. crates.io reports `0.5.0` as the max stable version of `nsh-core`. A nightly after that tag is not the pin. The license is Apache-2.0.
+The shell is pinned at NSH 0.5.1, published on 2026-11-14 as tag `v0.5.1`, commit `224d9a7`. 0.5.1 is a bug-fix release of 0.5.0 with no API change, so the 0.5.0 notes below still describe this shell. crates.io reports `0.5.1` as the max stable version of `nsh-core`. A nightly after that tag is not the pin. The license is Apache-2.0.
 
 The app stays a Rust root. `spikes/shell/nsh.json` names `SpikeApp`. Headless checks stay in `spikes/shell/shell.test.tsx`, run by `nsh test`.
 

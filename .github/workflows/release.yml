@@ -189,7 +189,26 @@ jobs:
             hdiutil attach "dist/${{ steps.bundle.outputs.name }}-0.1.0-alpha.1.dmg" -mountpoint "$mount" -nobrowse -readonly >/dev/null
             echo "codesign verify dmg app"
             codesign --verify --deep --strict --verbose=2 "$mount/${{ steps.bundle.outputs.name }}.app"
-            hdiutil detach "$mount" >/dev/null
+            # codesign --deep keeps the volume busy. Same detach as make-dmg.sh.
+            attempt=1
+            detached=0
+            while [ "$attempt" -le 5 ]; do
+              if hdiutil detach "$mount" >/dev/null; then
+                detached=1
+                break
+              fi
+              echo "hdiutil detach busy at ${mount}, retry ${attempt}" >&2
+              sleep "$attempt"
+              attempt=$((attempt + 1))
+            done
+            if [ "$detached" -ne 1 ]; then
+              echo "hdiutil detach still busy at ${mount}; forcing" >&2
+              hdiutil detach -force "$mount" >/dev/null
+            fi
+            if hdiutil info | grep -F "$mount" >/dev/null; then
+              echo "volume still mounted at ${mount}" >&2
+              exit 1
+            fi
             rmdir "$mount" || true
             echo "spctl dmg"
             spctl -a -vv -t install "dist/${{ steps.bundle.outputs.name }}-0.1.0-alpha.1.dmg"

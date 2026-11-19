@@ -1,0 +1,15 @@
+Head 1b33c341d67d3c1e09a35c973e1a3149939c7c0e. One scripts/verify after the fullscreen-enter fix. No merge.
+
+The run started once at 1-minute load 40.17. The max was set to 999 so the wrapper did not loop. It ended at load 15.71. Support was the temp directory printed by the script. No file under the real Application Support directory is newer than 2026-11-17. The lock is gone and no spike-shell is left.
+
+The release binary is /Users/morris/.cache/cargo-target/SuperReader/release/spike-shell, mtime 15:25:16, sha256 58815f450df16d5e71d4ea20fe8d8208795b5c21684efee975611b1af0ac4af1. ~/.local/bin/cargo was used. CARGO_TARGET_DIR was not set.
+
+summary.json: 82 pass, 31 fail, 11 pending, 124 rows. ok is false. verified-head is this head.
+
+The enter frame is a windowed 1440 by 855 with content 1440 by 855 and content_top 0. Close and zoom both sit at y 824. shell-clip, the form fixture, parity, shelf geometry, and shelf scroll pass. chrome-b-fullscreen-page is 478 by 733 at 52,48, which is the centered page. sidebar-page, sidebar-fixed, sidebar-immersive, sidebar-fullscreen, and sidebar-centered pass. The fullscreen row records no gray column and equal light gaps, 9.0/9.0 then 8.0/8.0.
+
+The 31 fails are not rebaselined. They are the zhaohua and plain-zh rows, cold and warm open, slide, page-box, text-complete, text-clean, chrome-b-fullscreen-paper (24 of 15060 samples), both aqua rows, sidebar-icon, both bold-word rows, alpha-empty, alpha-epub-reopen, and the three alpha PDF rows. epub-turn's detail is an empty page label. It passed on the previous head. This diff does not change page turns.
+
+Pending stays pending: alpha-finder-open, smoke-shell-click, open-pdf-from-library, open-pdf-ask, open-pdf-scroll-column, comment-note, comment-ui, alan-spawn, superreader-json, annotations-sqlite, library-search-tantivy.
+
+CI is separate. On this head, GitHub Actions CI run 44258419947 and Release run 44258420303 succeeded. Those workflows are not this suite. The fullscreen animation between the scored frames is still Morris's to judge.

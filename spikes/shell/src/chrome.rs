@@ -8,10 +8,11 @@ use nsh_platform_macos::objc2::{
 };
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSButton, NSColor, NSFont, NSFontWeightRegular, NSImage, NSImageAlignment, NSImageScaling,
-    NSImageSymbolConfiguration, NSImageView, NSLineBreakMode, NSScreen, NSTextField,
-    NSTitlebarSeparatorStyle, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode,
-    NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem, NSView, NSWindow, NSWindowButton,
+    NSButton, NSColor, NSColorSpace, NSEvent, NSEventMask, NSFont, NSFontWeightRegular, NSImage,
+    NSImageAlignment, NSImageScaling, NSImageSymbolConfiguration, NSImageView, NSLineBreakMode,
+    NSScreen, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSToolbarDelegate,
+    NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem,
+    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowButton,
     NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
@@ -19,7 +20,7 @@ use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
 use crate::icons;
 
 pub const SIDE: f64 = 52.0;
-pub const TOP: f64 = 48.0;
+pub const TOP: f64 = crate::tokens::CHROME_H as f64;
 pub const FIT: f64 = 0.88;
 
 #[derive(Clone, Copy, Debug)]
@@ -67,6 +68,7 @@ pub struct Runtime {
     pub full: Cell<bool>,
     pub product: Cell<bool>,
     fullscreen_sent: Cell<bool>,
+    fullscreen_exit_sent: Cell<bool>,
     pub lights: Cell<f64>,
     ratio_key: Cell<(i32, i32)>,
     page: Cell<PageBox>,
@@ -74,11 +76,16 @@ pub struct Runtime {
     styled: Cell<bool>,
     entering: Cell<bool>,
     field: RefCell<Option<Retained<NSTextField>>>,
+    hover_title: RefCell<Option<Retained<NSTextField>>>,
+    contents_button: RefCell<Option<Retained<NSButton>>>,
     contents_bar: RefCell<Option<Retained<ContentsBar>>>,
     icon_gap: Cell<f64>,
     icon_dy: Cell<f64>,
     pub design_visible: Cell<(f64, f64)>,
     pub bar_w: Cell<f64>,
+    pub lights_visible: Cell<bool>,
+    pub content_top: Cell<f64>,
+    pub stage_h: Cell<f64>,
     pub bar_dirty: Cell<bool>,
     bar_seen: Cell<f64>,
     bar_stable: Cell<u8>,
@@ -102,6 +109,7 @@ impl Default for Runtime {
             full: Cell::new(false),
             product: Cell::new(false),
             fullscreen_sent: Cell::new(false),
+            fullscreen_exit_sent: Cell::new(false),
             lights: Cell::new(0.0),
             ratio_key: Cell::new((0, 0)),
             page: Cell::new(PageBox {
@@ -118,11 +126,16 @@ impl Default for Runtime {
             styled: Cell::new(false),
             entering: Cell::new(false),
             field: RefCell::new(None),
+            hover_title: RefCell::new(None),
+            contents_button: RefCell::new(None),
             contents_bar: RefCell::new(None),
             icon_gap: Cell::new(f64::NAN),
             icon_dy: Cell::new(f64::NAN),
             design_visible: Cell::new((0.0, 0.0)),
             bar_w: Cell::new(0.0),
+            lights_visible: Cell::new(false),
+            content_top: Cell::new(0.0),
+            stage_h: Cell::new(0.0),
             bar_dirty: Cell::new(true),
             bar_seen: Cell::new(0.0),
             bar_stable: Cell::new(0),
@@ -157,9 +170,15 @@ pub fn centered_bar_width(close_min_x: f64, zoom_max_x: f64) -> f64 {
     zoom_max_x + close_min_x
 }
 
-/// Horizontal origin of a page centered in the area from the bar's right edge
-/// to the window's right edge. `None` when there is no bar or the page does
-/// not fit in that area.
+/// Horizontal origin of the reader page. The side mats are equal. The
+/// traffic-light row is not a column, and it does not push the page right.
+pub fn reader_page_x(left: f64, ix: f64) -> f64 {
+    left + ix
+}
+
+/// Where a page would sit if it were kept clear of a left bar. The reader
+/// does not use this. The test keeps it to show the shift that was removed.
+#[cfg(test)]
 pub fn content_page_x(stage_w: f64, page_w: f64, bar: f64) -> Option<f64> {
     if bar <= 1.0 || page_w <= 0.0 || stage_w <= bar + 1.0 || page_w > stage_w - bar + 0.5 {
         return None;
@@ -302,11 +321,28 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     }
     let _release = Release(&rt.entering);
     rt.page.set(page);
+    // `set_level` replaces the collection behavior with `MoveToActiveSpace`.
+    // The green button and `toggleFullScreen:` both no-op without
+    // `FullScreenPrimary`, so put the bit back on every sync, not only the
+    // first style.
+    keep_fullscreen_primary(window);
     style_window(window, rt);
+    if shell_on() {
+        install_shelf_wheel();
+    }
+    window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
     note_immersive(rt);
     settle_bar(window, rt);
     let fullscreen = window.styleMask().contains(NSWindowStyleMask::FullScreen);
-    if !fullscreen && !rt.laying_out.get() {
+    // The pin branch below may mark the window shown. Fullscreen has to see
+    // the previous sync, so the toggle is not in the same turn as orderFront.
+    let armed = rt.shown.get();
+    if hold_pinned_frame(
+        fullscreen,
+        rt.fullscreen_sent.get(),
+        rt.fullscreen_exit_sent.get(),
+    ) && !rt.laying_out.get()
+    {
         if let Some((width, height)) = pinned_frame() {
             if let Some(screen) = window
                 .screen()
@@ -324,17 +360,42 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
             }
         }
     }
+    // Full screen changes the window frame without resizing the content view.
+    // The stage then stays at the old height and both panels stop short.
+    // Fitting from inside layout re-enters AppKit, so only the pump does it.
+    // A live resize is already changing the frame; fitting there fights the
+    // drag and can stall the tracking loop. Enter waits until a later turn
+    // so the published shelf is the fitted one, not the 32pt-short first frame.
+    let was_fitted = content_is_fitted(window);
+    if !rt.laying_out.get() && !window.inLiveResize() {
+        fit_full_content(window);
+    }
+    let stable_fit = was_fitted && content_is_fitted(window);
     note_fullscreen_hook(window, rt);
+    request_fullscreen(window, rt, fullscreen, armed, stable_fit);
     if fullscreen {
-        paint_lights(window, 1.0);
-        rt.lights.set(1.0);
-        rt.full.set(true);
         let shown = hover_target(window);
-        place_contents(window, rt, shown);
-        place_title(window, rt, shown);
+        if shell_on() {
+            // The shell covers the screen, so AppKit's fullscreen title bar
+            // never receives the hover. Put the buttons on the content view
+            // while the pointer is at the top, and hide them otherwise.
+            place_fullscreen_lights(window, shown > 0.5);
+            rt.lights.set(shown);
+            clear_shell_chrome(window);
+        } else {
+            paint_lights(window, 1.0);
+            rt.lights.set(1.0);
+            place_contents(window, rt, shown);
+            place_title(window, rt, shown);
+        }
+        rt.full.set(true);
         write_json(window, rt, true);
         return;
     }
+    // layout() publishes the new style mask before sync, so full is already
+    // false on the exit frame. Put any reparented buttons back whenever this
+    // window is not fullscreen. An empty home list is a no-op.
+    restore_fullscreen_lights();
     if rt.full.replace(false) {
         rt.settled.set(false);
         rt.stable.set(0);
@@ -405,16 +466,28 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     rt.lights.set(next);
     paint_lights(window, next);
     if shell_on() {
-        if let Some(toolbar) = window.toolbar() {
-            clear_contents(&toolbar);
-        }
+        clear_shell_chrome(window);
     } else {
         place_contents(window, rt, next);
         place_title(window, rt, next);
     }
-    if rt.settled.get() && !rt.fullscreen_sent.get() && flag("SPIKE_FULLSCREEN") {
-        window.toggleFullScreen(None);
-        rt.fullscreen_sent.set(true);
+    // A shell window opens at SPIKE_WINDOW. The reader settle loop does not
+    // run while the shell is on, and the fullscreen flag waits for settled.
+    if shell_on() && !rt.settled.get() {
+        rt.settled.set(true);
+    }
+    if shell_on() && window.isVisible() {
+        rt.shown.set(true);
+    }
+    // After a fullscreen exit the buttons are back in the title bar. AppKit
+    // then lays the reader toolbar out and can leave the zoom button on the
+    // system row while close and minimize sit in the 48pt bar. Align to the
+    // shared center, for the reader and the shelf, once that restore is done.
+    align_traffic_centers(window);
+    // settle_bar stored the buttons before this nudge. Write the frames
+    // the buttons actually have, or the green one still reads 8pt high.
+    if let Some(measured) = measure_traffic_bar(window) {
+        *rt.traffic.borrow_mut() = Some(measured);
     }
     write_json(window, rt, false);
 }
@@ -429,23 +502,382 @@ pub fn paint_paper_layer(view: &AnyObject) {
     }
 }
 
+fn keep_fullscreen_primary(window: &NSWindow) {
+    let current = window.collectionBehavior();
+    if !current.contains(NSWindowCollectionBehavior::FullScreenPrimary) {
+        window.setCollectionBehavior(current | NSWindowCollectionBehavior::FullScreenPrimary);
+    }
+}
+
 fn style_window(window: &NSWindow, rt: &Runtime) {
     if rt.styled.replace(true) {
         return;
     }
     apply_appearance(window);
+    let mask = window.styleMask();
+    if !mask.contains(NSWindowStyleMask::FullSizeContentView) {
+        window.setStyleMask(mask.union(NSWindowStyleMask::FullSizeContentView));
+    }
     window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
     window.setMovableByWindowBackground(true);
-    window.setCollectionBehavior(
-        window.collectionBehavior() | NSWindowCollectionBehavior::FullScreenPrimary,
-    );
+    keep_fullscreen_primary(window);
     window.makeKeyAndOrderFront(None);
+    expose_window(window);
     let mtm = MainThreadMarker::from(&*window);
     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
     unsafe {
         let _: () = msg_send![&*app, activateIgnoringOtherApps: true];
     }
     rt.mark_bar_dirty();
+}
+
+/// How far each window-space center must move to share one vertical center.
+/// The shared center is the median, so the button AppKit left on a different
+/// row moves to the other two, and a row that already agrees is not shifted.
+pub(crate) fn traffic_center_deltas(centers: &[f64]) -> Vec<f64> {
+    if centers.len() < 2 || centers.iter().any(|center| !center.is_finite()) {
+        return vec![0.0; centers.len()];
+    }
+    let mut ordered: Vec<f64> = centers.to_vec();
+    ordered.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let shared = ordered[ordered.len() / 2];
+    centers.iter().map(|center| shared - center).collect()
+}
+
+/// The three system buttons, in window coordinates, onto one center.
+/// A button outside the title-bar band is left where it is: fullscreen parks
+/// one there, and a fixed green-only offset would not survive the next layout.
+fn align_traffic_centers(window: &NSWindow) {
+    if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
+        return;
+    }
+    let top = window.frame().size.height;
+    if !top.is_finite() || top < TOP {
+        return;
+    }
+    let band = f64::from(crate::tokens::CHROME_H) + 16.0;
+    let mut buttons = Vec::new();
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ] {
+        let Some(button) = window.standardWindowButton(kind) else {
+            continue;
+        };
+        let frame = button_window_frame(&button);
+        if frame.size.height < 1.0 || frame.size.width < 1.0 {
+            continue;
+        }
+        let mid = frame.origin.y + frame.size.height / 2.0;
+        let from_top = top - mid;
+        if !from_top.is_finite() || !(-1.0..=band).contains(&from_top) {
+            continue;
+        }
+        buttons.push((button, mid));
+    }
+    if buttons.len() < 2 {
+        return;
+    }
+    let deltas = traffic_center_deltas(&buttons.iter().map(|(_, mid)| *mid).collect::<Vec<_>>());
+    for ((button, _), delta) in buttons.iter().zip(deltas) {
+        if !delta.is_finite() || delta.abs() <= 0.5 {
+            continue;
+        }
+        let view = view_of(button);
+        let Some(parent) = (unsafe { view.superview() }) else {
+            continue;
+        };
+        let frame = button_window_frame(button);
+        let shifted = NSPoint::new(frame.origin.x, frame.origin.y + delta);
+        let local: NSPoint = unsafe {
+            msg_send![
+                &*parent,
+                convertPoint: shifted,
+                fromView: std::ptr::null::<NSView>()
+            ]
+        };
+        button.setFrameOrigin(local);
+    }
+}
+
+thread_local! {
+    static LIGHT_HOME: RefCell<Vec<(Retained<NSButton>, Retained<NSView>, NSRect)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+fn view_of(button: &NSButton) -> &NSView {
+    let view: &NSView = unsafe { &*std::ptr::from_ref(button).cast::<NSView>() };
+    view
+}
+
+fn place_fullscreen_lights(window: &NSWindow, show: bool) {
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let height = content.frame().size.height;
+    for (index, kind) in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let Some(button) = window.standardWindowButton(kind) else {
+            continue;
+        };
+        let view = view_of(&button);
+        if !show {
+            unsafe {
+                let _: () = msg_send![&*button, setAlphaValue: 0.0_f64];
+                let _: () = msg_send![&*button, setHidden: true];
+            }
+            continue;
+        }
+        LIGHT_HOME.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let known = slot
+                .iter()
+                .any(|(saved, _, _)| std::ptr::eq(saved.as_ref(), &*button));
+            if !known {
+                if let Some(parent) = unsafe { view.superview() } {
+                    if !std::ptr::eq::<NSView>(&*parent, &*content) {
+                        // The frame is in the title-bar view. Reparenting
+                        // keeps it, so the exit path has to put this back.
+                        slot.push((button.clone(), parent, view.frame()));
+                    }
+                }
+            }
+        });
+        content.addSubview(view);
+        let x = 9.0 + index as f64 * 22.0;
+        let button_h = 14.0;
+        let y = height - (f64::from(crate::tokens::chrome_center()) + button_h / 2.0);
+        view.setFrame(NSRect::new(NSPoint::new(x, y), NSSize::new(14.0, 14.0)));
+        unsafe {
+            let _: () = msg_send![&*button, setHidden: false];
+            let _: () = msg_send![&*button, setAlphaValue: 1.0_f64];
+            let _: () = msg_send![&*button, setEnabled: true];
+        }
+    }
+}
+
+fn restore_fullscreen_lights() {
+    LIGHT_HOME.with(|slot| {
+        for (button, parent, frame) in slot.borrow_mut().drain(..) {
+            let view = view_of(&button);
+            parent.addSubview(view);
+            view.setFrame(frame);
+        }
+    });
+}
+
+/// A full-size content view fills the window frame. A child that kept the
+/// previous frame is the unused band under the shelf and the chat.
+fn fit_full_content(window: &NSWindow) {
+    if !window
+        .styleMask()
+        .contains(NSWindowStyleMask::FullSizeContentView)
+    {
+        return;
+    }
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let frame = window.frame();
+    let current = content.frame();
+    let before = view_box(Some(&content));
+    if content_needs_fit(
+        frame.size.width as f64,
+        frame.size.height as f64,
+        before.0,
+        before.1,
+        before.2,
+        before.3,
+    ) {
+        note_fit("content", &frame, current);
+        content.setFrame(NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(frame.size.width, frame.size.height),
+        ));
+    }
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let bounds = content.bounds();
+    let Some(child) = filling_child(&content) else {
+        return;
+    };
+    let child_box = view_box(Some(&child));
+    if child_needs_fit(
+        bounds.size.width as f64,
+        bounds.size.height as f64,
+        child_box.0,
+        child_box.1,
+        child_box.2,
+        child_box.3,
+    ) {
+        note_fit("child", &bounds, child.frame());
+        child.setFrame(NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(bounds.size.width, bounds.size.height),
+        ));
+    }
+}
+
+pub fn content_size(window: &NSWindow) -> Option<(f64, f64)> {
+    let view = window.contentView()?;
+    let size = view.bounds().size;
+    let width = size.width as f64;
+    let height = size.height as f64;
+    if width > 2.0 && height > 2.0 {
+        Some((width, height))
+    } else {
+        None
+    }
+}
+
+fn view_box(view: Option<&NSView>) -> (f64, f64, f64, f64) {
+    let Some(view) = view else {
+        return (0.0, 0.0, 0.0, 0.0);
+    };
+    let frame = view.frame();
+    (
+        frame.origin.x as f64,
+        frame.origin.y as f64,
+        frame.size.width as f64,
+        frame.size.height as f64,
+    )
+}
+
+fn filling_child(content: &NSView) -> Option<Retained<NSView>> {
+    let children = content.subviews();
+    let mut best: Option<Retained<NSView>> = None;
+    let mut area = 0.0;
+    for index in 0..children.count() {
+        let child = children.objectAtIndex(index);
+        let frame = child.frame();
+        let next = frame.size.width as f64 * frame.size.height as f64;
+        if next > area {
+            area = next;
+            best = Some(child);
+        }
+    }
+    best
+}
+
+fn content_is_fitted(window: &NSWindow) -> bool {
+    let Some(content) = window.contentView() else {
+        return false;
+    };
+    let frame = window.frame().size;
+    let (x, y, width, height) = view_box(Some(&content));
+    !content_needs_fit(frame.width as f64, frame.height as f64, x, y, width, height)
+}
+
+fn content_needs_fit(
+    window_w: f64,
+    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
+) -> bool {
+    if window_w < 2.0 || window_h < 2.0 || content_w < 2.0 || content_h < 2.0 {
+        return false;
+    }
+    content_x.abs() > 0.5
+        || content_y.abs() > 0.5
+        || (content_w - window_w).abs() > 0.5
+        || (content_h - window_h).abs() > 0.5
+}
+
+fn child_needs_fit(
+    parent_w: f64,
+    parent_h: f64,
+    child_x: f64,
+    child_y: f64,
+    child_w: f64,
+    child_h: f64,
+) -> bool {
+    if parent_w < 2.0 || parent_h < 2.0 || child_w < parent_w * 0.5 || child_h < 2.0 {
+        return false;
+    }
+    child_x.abs() > 0.5
+        || child_y.abs() > 0.5
+        || (child_w - parent_w).abs() > 0.5
+        || (child_h - parent_h).abs() > 0.5
+}
+
+fn note_fit(kind: &str, target: &NSRect, before: NSRect) {
+    let body = serde_json::json!({
+        "kind": kind,
+        "target_w": target.size.width as f64,
+        "target_h": target.size.height as f64,
+        "before_x": before.origin.x as f64,
+        "before_y": before.origin.y as f64,
+        "before_w": before.size.width as f64,
+        "before_h": before.size.height as f64,
+    });
+    let _ = std::fs::create_dir_all("/tmp/superreader-spike");
+    let _ = std::fs::write(
+        format!("/tmp/superreader-spike/content-fit-{kind}.json"),
+        body.to_string(),
+    );
+}
+
+fn content_window_frame(view: &NSView) -> NSRect {
+    let frame = view.frame();
+    match unsafe { view.superview() } {
+        Some(parent) => parent.convertRect_toView(frame, None),
+        None => frame,
+    }
+}
+
+/// Window frame, content rect, and the stage view, in points. The shell's
+/// available height is whichever of these the layout actually fills.
+pub fn write_bounds(stage: &NSView) {
+    let Some(window) = stage.window() else {
+        return;
+    };
+    let frame = window.frame();
+    let layout = window.contentLayoutRect();
+    let content = window.contentView().map(|view| content_window_frame(&view));
+    let parent = unsafe { stage.superview() }.map(|view| view.bounds().size);
+    let stage_bounds = stage.bounds().size;
+    let screen = window.screen().map(|screen| {
+        serde_json::json!({
+            "frame_w": screen.frame().size.width as f64,
+            "frame_h": screen.frame().size.height as f64,
+            "visible_w": screen.visibleFrame().size.width as f64,
+            "visible_h": screen.visibleFrame().size.height as f64,
+            "scale": screen.backingScaleFactor() as f64,
+        })
+    });
+    let body = serde_json::json!({
+        "scale": window.backingScaleFactor() as f64,
+        "fullscreen": window.styleMask().contains(NSWindowStyleMask::FullScreen),
+        "window": rect_json(frame),
+        "content_layout": rect_json(layout),
+        "content": content.map(rect_json),
+        "stage_w": stage_bounds.width as f64,
+        "stage_h": stage_bounds.height as f64,
+        "parent_w": parent.map(|size| size.width as f64),
+        "parent_h": parent.map(|size| size.height as f64),
+        "screen": screen,
+    });
+    let _ = std::fs::create_dir_all("/tmp/superreader-spike");
+    let _ = std::fs::write("/tmp/superreader-spike/bounds.json", body.to_string());
+}
+
+fn rect_json(rect: NSRect) -> serde_json::Value {
+    serde_json::json!({
+        "x": rect.origin.x as f64,
+        "y": rect.origin.y as f64,
+        "w": rect.size.width as f64,
+        "h": rect.size.height as f64,
+    })
 }
 
 fn button_window_frame(button: &NSButton) -> NSRect {
@@ -593,6 +1025,169 @@ fn note_fullscreen_hook(window: &NSWindow, rt: &Runtime) {
     rt.bar_fullscreen_sent.set(true);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FullscreenDecision {
+    enter: bool,
+    exit: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FullscreenInput {
+    is_full: bool,
+    want: bool,
+    exit_file: bool,
+    enter_sent: bool,
+    exit_sent: bool,
+    window_ready: bool,
+    /// `fullscreen-arm` is `0` while the driver still needs the windowed frame.
+    hold_arm: bool,
+    /// The content view already filled the window on the previous turn.
+    /// A view fitted in this same turn is not ready: the shelf has not
+    /// published that height yet, and fullscreen would snapshot the short one.
+    content_fitted: bool,
+    /// The reader settle loop has stopped calling `setFrame`. Entering before
+    /// that lets the next frame cancel `toggleFullScreen:`, and `enter_sent`
+    /// then never tries again.
+    frame_settled: bool,
+}
+
+fn fullscreen_decision(input: FullscreenInput) -> FullscreenDecision {
+    let none = FullscreenDecision {
+        enter: false,
+        exit: false,
+    };
+    if !input.want {
+        return none;
+    }
+    if input.exit_file {
+        if input.is_full && !input.exit_sent {
+            return FullscreenDecision {
+                enter: false,
+                exit: true,
+            };
+        }
+        return none;
+    }
+    if input.hold_arm || !input.content_fitted {
+        return none;
+    }
+    if input.is_full || !input.window_ready || input.enter_sent || !input.frame_settled {
+        return none;
+    }
+    FullscreenDecision {
+        enter: true,
+        exit: false,
+    }
+}
+
+/// A pinned window size must not be reapplied while fullscreen is in progress.
+/// The exit file is what returns the window to that size.
+fn hold_pinned_frame(is_full: bool, enter_sent: bool, exit_sent: bool) -> bool {
+    if is_full {
+        return false;
+    }
+    if enter_sent && !exit_sent {
+        return false;
+    }
+    true
+}
+
+fn request_fullscreen(
+    window: &NSWindow,
+    rt: &Runtime,
+    is_full: bool,
+    armed: bool,
+    content_fitted: bool,
+) {
+    let decision = fullscreen_decision(FullscreenInput {
+        is_full,
+        want: flag("SPIKE_FULLSCREEN"),
+        exit_file: std::path::Path::new("/tmp/superreader-spike/fullscreen-exit").is_file(),
+        enter_sent: rt.fullscreen_sent.get(),
+        exit_sent: rt.fullscreen_exit_sent.get(),
+        window_ready: armed && window.isVisible() && window.isKeyWindow(),
+        hold_arm: file_flag("/tmp/superreader-spike/fullscreen-arm") == Some(false),
+        content_fitted,
+        frame_settled: rt.settled.get(),
+    });
+    if decision.enter {
+        window.toggleFullScreen(None);
+        rt.fullscreen_sent.set(true);
+    } else if decision.exit {
+        window.toggleFullScreen(None);
+        rt.fullscreen_exit_sent.set(true);
+    }
+}
+
+fn shelf_event_window(event: &NSEvent, mtm: MainThreadMarker) -> Option<Retained<NSWindow>> {
+    if let Some(window) = event.window(mtm) {
+        return Some(window);
+    }
+    // A scroll posted with CGEvent reaches this monitor before AppKit has
+    // attached a window. The cursor was warped onto the shelf, so the key
+    // window is the one that should move.
+    objc2_app_kit::NSApplication::sharedApplication(mtm).keyWindow()
+}
+
+fn shelf_event_point(event: &NSEvent, window: &NSWindow, mtm: MainThreadMarker) -> NSPoint {
+    if event.window(mtm).is_some() {
+        return event.locationInWindow();
+    }
+    let mouse = NSEvent::mouseLocation();
+    let frame = window.frame();
+    NSPoint::new(mouse.x - frame.origin.x, mouse.y - frame.origin.y)
+}
+
+fn install_shelf_wheel() {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let block = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        let e = unsafe { event.as_ref() };
+        if !shell_on() {
+            return event.as_ptr();
+        }
+        let Some(mtm) = MainThreadMarker::new() else {
+            return event.as_ptr();
+        };
+        let Some(window) = shelf_event_window(e, mtm) else {
+            return event.as_ptr();
+        };
+        let Some(content) = window.contentView() else {
+            return event.as_ptr();
+        };
+        let height = content.frame().size.height;
+        if !height.is_finite() || height <= 1.0 {
+            return event.as_ptr();
+        }
+        let point = shelf_event_point(e, &window, mtm);
+        let x = point.x as f32;
+        let y = (height - point.y) as f32;
+        if !crate::form::shelf_hit_contains(x, y) {
+            return event.as_ptr();
+        }
+        let mut dy = e.scrollingDeltaY();
+        if dy.abs() < 0.01 {
+            dy = e.deltaY() * 16.0;
+        }
+        if dy.abs() < 0.01 {
+            return event.as_ptr();
+        }
+        crate::form::nudge_shelf(-dy as f32);
+        std::ptr::null_mut()
+    });
+    let monitor = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::ScrollWheel, &block)
+    };
+    std::mem::forget(monitor);
+}
+
+fn expose_window(window: &NSWindow) {
+    let title = NSString::from_str("Slowpage");
+    let _: () = unsafe { msg_send![window, setAccessibilityTitle: &*title] };
+}
+
 fn pinned_frame() -> Option<(f64, f64)> {
     let raw = std::fs::read_to_string("/tmp/superreader-spike/shell-frame").ok()?;
     let mut parts = raw.split_whitespace();
@@ -691,6 +1286,10 @@ fn place_title(window: &NSWindow, rt: &Runtime, alpha: f64) {
     if !shown.is_empty() && !rt.product.get() {
         window.setTitle(&NSString::from_str(&shown));
     }
+    // The toolbar field is created only after the contents icon exists. The
+    // hover label does not wait for that, and a hidden title bar does not
+    // draw the toolbar item anyway.
+    place_hover_title(window, rt, &shown, alpha);
     let Some(field) = rt.field.borrow().clone() else {
         return;
     };
@@ -706,6 +1305,140 @@ fn place_title(window: &NSWindow, rt: &Runtime, alpha: f64) {
         let _: () = msg_send![&*field, setAlignment: objc2_app_kit::NSTextAlignment(1)];
         let _: () = msg_send![&*field, setAlphaValue: alpha];
         let _: () = msg_send![&*field, setHidden: alpha < 0.02];
+    }
+}
+
+/// The contents control in window coordinates. Its leading edge is 26pt past
+/// the zoom button, and it shares that button's vertical center.
+pub(crate) fn contents_button_frame(
+    zoom_x: f64,
+    zoom_y: f64,
+    zoom_w: f64,
+    zoom_h: f64,
+    icon: f64,
+) -> (f64, f64, f64, f64) {
+    let x = zoom_x + zoom_w + 26.0;
+    let y = zoom_y + (zoom_h - icon) / 2.0;
+    (x, y, icon, icon)
+}
+
+fn place_contents_button(window: &NSWindow, rt: &Runtime, alpha: f64) {
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let Some(zoom) = window.standardWindowButton(NSWindowButton::ZoomButton) else {
+        return;
+    };
+    let Some(image) = icons::contents_image() else {
+        return;
+    };
+    image.setTemplate(false);
+    let mtm = MainThreadMarker::from(&*window);
+    let existing = rt.contents_button.borrow().clone();
+    let button = if let Some(existing) = existing {
+        existing
+    } else {
+        let created = unsafe { NSButton::buttonWithImage_target_action(&image, None, None, mtm) };
+        created.setBordered(false);
+        created.setImageScaling(NSImageScaling::ScaleNone);
+        let label = NSString::from_str("Contents");
+        unsafe {
+            let _: () = msg_send![&*created, setAccessibilityLabel: &*label];
+        }
+        let view: Retained<NSView> = created.clone().into_super().into_super();
+        view.setIdentifier(Some(&NSString::from_str(CONTENTS_ID)));
+        *rt.contents_button.borrow_mut() = Some(created.clone());
+        created
+    };
+    button.setImage(Some(&image));
+    let zoom_frame = button_window_frame(&zoom);
+    let (x, y, width, height) = contents_button_frame(
+        zoom_frame.origin.x,
+        zoom_frame.origin.y,
+        zoom_frame.size.width,
+        zoom_frame.size.height,
+        image.size().width.max(18.0),
+    );
+    let host = content_window_frame(&content);
+    let local_x = x - host.origin.x;
+    let local_bottom = y - host.origin.y;
+    let flipped: bool = unsafe { msg_send![&*content, isFlipped] };
+    let local_y = if flipped {
+        content.bounds().size.height - local_bottom - height
+    } else {
+        local_bottom
+    };
+    let _ = mtm;
+    button.setFrame(NSRect::new(
+        NSPoint::new(local_x, local_y),
+        NSSize::new(width, height),
+    ));
+    button.setAlphaValue(alpha);
+    button.setHidden(alpha < 0.02);
+    button.setEnabled(alpha >= 0.9);
+    content.addSubview(&button);
+}
+
+/// The book title's frame in the content view. Width leaves the traffic lights
+/// clear. The 18-point row sits against the top. A flipped content view counts
+/// y from that top; an ordinary one counts y from the bottom.
+pub(crate) fn hover_title_frame(
+    content_w: f64,
+    content_h: f64,
+    flipped: bool,
+) -> (f64, f64, f64, f64) {
+    let width = (content_w - 180.0).max(40.0);
+    let x = (content_w - width) / 2.0;
+    let y = if flipped { 18.0 } else { content_h - 36.0 };
+    (x, y, width, 18.0)
+}
+
+fn place_hover_title(window: &NSWindow, rt: &Runtime, shown: &str, alpha: f64) {
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let mtm = MainThreadMarker::from(&*window);
+    let existing = rt.hover_title.borrow().clone();
+    let field = if let Some(existing) = existing {
+        existing
+    } else {
+        let created = NSTextField::labelWithString(&NSString::from_str(""), mtm);
+        created.setTextColor(Some(&NSColor::colorWithRed_green_blue_alpha(
+            0.36, 0.33, 0.29, 1.0,
+        )));
+        created.setBezeled(false);
+        created.setBordered(false);
+        created.setDrawsBackground(false);
+        created.setEditable(false);
+        created.setSelectable(false);
+        *rt.hover_title.borrow_mut() = Some(created.clone());
+        created
+    };
+    // The page view is added after the first sync. Re-adding keeps the label
+    // above that view. A hidden title bar still does not draw the toolbar item.
+    content.addSubview(&field);
+    let face = NSString::from_str(title_face(shown));
+    if let Some(font) = NSFont::fontWithName_size(&face, 13.0) {
+        unsafe {
+            let _: () = msg_send![&*field, setFont: &*font];
+        }
+    }
+    let flipped: bool = unsafe { msg_send![&*content, isFlipped] };
+    let (x, y, width, height) = hover_title_frame(
+        content.bounds().size.width,
+        content.bounds().size.height,
+        flipped,
+    );
+    unsafe {
+        let value = NSString::from_str(shown);
+        let _: () = msg_send![&*field, setStringValue: &*value];
+        let _: () = msg_send![&*field, setAlignment: objc2_app_kit::NSTextAlignment(1)];
+        let _: () = msg_send![&*field, setAlphaValue: alpha];
+        let _: () = msg_send![&*field, setHidden: alpha < 0.02];
+        let _: () = msg_send![
+            &*field,
+            setFrame: NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+        ];
     }
 }
 
@@ -783,13 +1516,22 @@ pub const TOOLBAR_ORDER: [&str; 5] = [
 ];
 
 fn place_contents(window: &NSWindow, rt: &Runtime, alpha: f64) {
+    if std::env::var("SPIKE_ICON").ok().as_deref() == Some("0") {
+        if let Some(button) = rt.contents_button.borrow().clone() {
+            button.setHidden(true);
+        }
+        if let Some(toolbar) = window.toolbar() {
+            clear_contents(&toolbar);
+        }
+        return;
+    }
+    // The hidden title bar does not draw the toolbar item, so the lights stay
+    // and the contents control does not. The same list glyph is placed on the
+    // content view, 26pt past the zoom button.
+    place_contents_button(window, rt, alpha);
     let Some(toolbar) = window.toolbar() else {
         return;
     };
-    if std::env::var("SPIKE_ICON").ok().as_deref() == Some("0") {
-        clear_contents(&toolbar);
-        return;
-    }
     // Inserting the item while the lights are faded puts it in the
     // traffic-light row, and it stays there after they return. Wait until
     // the buttons are shown, which is the placement that leaves 26 pt.
@@ -806,6 +1548,17 @@ fn place_contents(window: &NSWindow, rt: &Runtime, alpha: f64) {
     }
     if let Some(view) = item_view(&toolbar, CONTENTS_ID) {
         record_gap(window, rt, &view);
+    }
+}
+
+/// The library title is the card header. A window title or a reader toolbar
+/// item would sit in that band while the window is windowed and vanish in
+/// fullscreen.
+fn clear_shell_chrome(window: &NSWindow) {
+    window.setTitle(&NSString::from_str(""));
+    expose_window(window);
+    if let Some(toolbar) = window.toolbar() {
+        clear_contents(&toolbar);
     }
 }
 
@@ -1028,7 +1781,52 @@ fn icon_item(
     item
 }
 
+fn observe_lights(window: &NSWindow, stage_h: f64) -> (bool, f64) {
+    let frame = window.frame().size;
+    let top = window
+        .contentView()
+        .map(|view| {
+            let content = content_window_frame(&view);
+            crate::tokens::content_top(frame.height, content.size.height, content.origin.y, stage_h)
+        })
+        .unwrap_or(0.0);
+    let buttons = [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ]
+    .map(|kind| light_box(window, kind, frame.height));
+    let shown = crate::tokens::lights_shown(&buttons, frame.width as f32, frame.height as f32);
+    (shown, top)
+}
+
+fn light_box(window: &NSWindow, kind: NSWindowButton, window_h: f64) -> crate::tokens::LightBox {
+    let Some(button) = window.standardWindowButton(kind) else {
+        return crate::tokens::LightBox {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            shown: false,
+        };
+    };
+    let hidden: bool = unsafe { msg_send![&*button, isHidden] };
+    let alpha: f64 = unsafe { msg_send![&*button, alphaValue] };
+    let rect = button_window_frame(&button);
+    let y = window_h - (rect.origin.y + rect.size.height);
+    crate::tokens::LightBox {
+        x: rect.origin.x as f32,
+        y: y as f32,
+        w: rect.size.width as f32,
+        h: rect.size.height as f32,
+        shown: !hidden && alpha > 0.5,
+    }
+}
+
 fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
+    let (visible, top) = observe_lights(window, rt.stage_h.get());
+    rt.lights_visible.set(visible);
+    rt.content_top.set(top);
     let page = rt.page.get();
     let frame = window.frame();
     let lights = rt.traffic.borrow().unwrap_or(TrafficLights {
@@ -1046,9 +1844,14 @@ fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
         zoom_max_y: 0.0,
         width: 0.0,
     });
+    let content = view_box(window.contentView().as_deref());
     let mut body = serde_json::json!({
         "window_w": frame.size.width,
         "window_h": frame.size.height,
+        "content_x": content.0,
+        "content_y": content.1,
+        "content_w": content.2,
+        "content_h": content.3,
         "page_x": page.x,
         "page_y": page.y,
         "page_w": page.w,
@@ -1059,6 +1862,8 @@ fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
         "side": SIDE,
         "fullscreen": fullscreen,
         "lights": rt.lights.get(),
+        "lights_visible": rt.lights_visible.get(),
+        "content_top": rt.content_top.get(),
         "ratio_w": page.ratio_w,
         "ratio_h": page.ratio_h,
         "title": rt.title.borrow().clone(),
@@ -1121,6 +1926,9 @@ fn button_frame(window: &NSWindow, kind: NSWindowButton) -> serde_json::Value {
 }
 
 fn icon_frame(window: &NSWindow) -> serde_json::Value {
+    if let Some(button) = rt_contents_button(window) {
+        return view_frame(&button);
+    }
     let Some(toolbar) = window.toolbar() else {
         return serde_json::Value::Null;
     };
@@ -1128,6 +1936,17 @@ fn icon_frame(window: &NSWindow) -> serde_json::Value {
         return serde_json::Value::Null;
     };
     view_frame(&view)
+}
+
+fn rt_contents_button(window: &NSWindow) -> Option<Retained<NSView>> {
+    let content = window.contentView()?;
+    for sub in content.subviews().iter() {
+        let ident = sub.identifier();
+        if ident.as_deref().map(NSString::to_string).as_deref() == Some(CONTENTS_ID) {
+            return Some(sub.clone());
+        }
+    }
+    None
 }
 
 fn view_frame(view: &NSView) -> serde_json::Value {
@@ -1177,6 +1996,87 @@ mod tests {
     }
 
     #[test]
+    fn full_content_fits_the_window_and_ignores_a_matched_frame() {
+        assert!(!content_needs_fit(1440.0, 855.0, 0.0, 0.0, 1440.0, 855.0));
+        assert!(!content_needs_fit(578.0, 528.0, 0.0, 0.0, 578.2, 528.0));
+        assert!(content_needs_fit(1512.0, 949.0, 0.0, 0.0, 1440.0, 855.0));
+        assert!(!content_needs_fit(1512.0, 949.0, 0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_short_root_is_fitted_and_a_traffic_button_is_not() {
+        assert!(child_needs_fit(1512.0, 949.0, 0.0, 0.0, 1440.0, 855.0));
+        assert!(!child_needs_fit(1512.0, 949.0, 0.0, 0.0, 1512.0, 949.0));
+        assert!(!child_needs_fit(1512.0, 949.0, 12.0, 900.0, 14.0, 14.0));
+    }
+
+    #[test]
+    fn fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice() {
+        let idle = FullscreenInput {
+            is_full: false,
+            want: true,
+            exit_file: false,
+            enter_sent: false,
+            exit_sent: false,
+            window_ready: false,
+            hold_arm: false,
+            content_fitted: true,
+            frame_settled: true,
+        };
+        assert_eq!(
+            fullscreen_decision(idle),
+            FullscreenDecision {
+                enter: false,
+                exit: false,
+            }
+        );
+        let ready = FullscreenInput {
+            window_ready: true,
+            ..idle
+        };
+        assert!(fullscreen_decision(ready).enter);
+        let unsettled = FullscreenInput {
+            frame_settled: false,
+            ..ready
+        };
+        assert!(!fullscreen_decision(unsettled).enter);
+        assert!(!fullscreen_decision(unsettled).exit);
+        let short = FullscreenInput {
+            content_fitted: false,
+            ..ready
+        };
+        assert!(!fullscreen_decision(short).enter);
+        assert!(!fullscreen_decision(short).exit);
+        let held = FullscreenInput {
+            hold_arm: true,
+            ..ready
+        };
+        assert!(!fullscreen_decision(held).enter);
+        assert!(!fullscreen_decision(held).exit);
+        let sent = FullscreenInput {
+            enter_sent: true,
+            ..ready
+        };
+        assert_eq!(
+            fullscreen_decision(sent),
+            FullscreenDecision {
+                enter: false,
+                exit: false,
+            }
+        );
+        let inside = FullscreenInput {
+            is_full: true,
+            exit_file: true,
+            enter_sent: true,
+            ..ready
+        };
+        assert!(fullscreen_decision(inside).exit);
+        assert!(!hold_pinned_frame(false, true, false));
+        assert!(hold_pinned_frame(false, true, true));
+        assert!(!hold_pinned_frame(true, true, false));
+    }
+
+    #[test]
     fn spike_window_parses_a_frame_and_rejects_a_partial_one() {
         assert_eq!(parse_spike_window("640x960"), Some((640.0, 960.0)));
         assert_eq!(parse_spike_window(" 700 x 800 "), Some((700.0, 800.0)));
@@ -1202,6 +2102,39 @@ mod tests {
     }
 
     #[test]
+    fn the_contents_control_sits_26pt_past_the_zoom_button() {
+        let (x, y, width, height) = contents_button_frame(40.0, 800.0, 14.0, 16.0, 18.0);
+        close(x, 80.0);
+        close(y, 799.0);
+        close(width, 18.0);
+        close(height, 18.0);
+        let zoom_mid = 800.0 + 8.0;
+        let icon_mid = y + height / 2.0;
+        close(icon_mid, zoom_mid);
+    }
+
+    #[test]
+    fn the_hover_title_is_centered_and_clears_the_lights() {
+        let (x, y, width, height) = hover_title_frame(582.0, 781.0, false);
+        close(width, 402.0);
+        close(x, 90.0);
+        close(y, 745.0);
+        close(height, 18.0);
+        let (fx, fy, _, _) = hover_title_frame(582.0, 781.0, true);
+        close(fx, x);
+        close(fy, 18.0);
+        assert!(x >= 70.0, "the title must clear the traffic lights");
+    }
+
+    #[test]
+    fn the_reader_page_is_not_pushed_aside_for_the_traffic_lights() {
+        let (_, _, left, _) = content_box(582.0, 781.0);
+        close(reader_page_x(left, 0.0), SIDE);
+        let pushed = content_page_x(582.0, 478.0, 82.0).unwrap();
+        assert!(pushed > reader_page_x(left, 0.0) + 20.0);
+    }
+
+    #[test]
     fn the_page_is_centered_in_the_area_beside_the_bar() {
         let x = content_page_x(1100.0, 400.0, 98.0).unwrap();
         let page_mid = x + 200.0;
@@ -1209,6 +2142,22 @@ mod tests {
         close(page_mid, area_mid);
         assert!(content_page_x(1100.0, 400.0, 0.0).is_none());
         assert!(content_page_x(200.0, 180.0, 98.0).is_none());
+    }
+
+    #[test]
+    fn the_high_button_joins_the_other_two_centers() {
+        // Window y grows upward. The zoom button in the reader shot sits
+        // about 8pt closer to the top, so its center is 8pt greater.
+        let deltas = traffic_center_deltas(&[806.0, 806.0, 814.0]);
+        assert!(deltas[0].abs() <= 0.5);
+        assert!(deltas[1].abs() <= 0.5);
+        close(deltas[2], -8.0);
+        let agreed = traffic_center_deltas(&[806.0, 806.0, 806.2]);
+        assert!(agreed.iter().all(|delta| delta.abs() <= 0.5));
+        assert!(
+            traffic_center_deltas(&[806.0]).is_empty()
+                || traffic_center_deltas(&[806.0]) == vec![0.0]
+        );
     }
 
     #[test]

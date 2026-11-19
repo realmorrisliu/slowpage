@@ -1,0 +1,62 @@
+[
+  {
+    "id": "cover.0",
+    "title": "Pride and Prejudice",
+    "token": "7D8C6A",
+    "plate_rgb": "7D8C6A",
+    "sample": "#808B6D",
+    "token_delta": 3,
+    "plate_delta": 3,
+    "title_frame": true,
+    "author_frame": true,
+    "ink": false
+  },
+  {
+    "id": "cover.1",
+    "title": "\u4e09\u4f53",
+    "token": "16212B",
+    "plate_rgb": "16212B",
+    "sample": "#18212A",
+    "token_delta": 2,
+    "plate_delta": 2,
+    "title_frame": true,
+    "author_frame": true,
+    "ink": false
+  },
+  {
+    "id": "cover.2",
+    "title": "The Art of Computer Programming",
+    "token": "EEE6D3",
+    "plate_rgb": "2F4F3E",
+    "sample": "#EDE6D5",
+    "token_delta": 2,
+    "plate_delta": 190,
+    "title_frame": true,
+    "author_frame": true,
+    "ink": false
+  },
+  {
+    "id": "cover.3",
+    "title": "Moby-Dick",
+    "token": "1F3A57",
+    "plate_rgb": "1F3A57",
+    "sample": "#253955",
+    "token_delta": 6,
+    "plate_delta": 6,
+    "title_frame": true,
+    "author_frame": true,
+    "ink": false
+  },
+  {
+    "id": "cover.4",
+    "title": "\u671d\u82b1\u5915\u62fe",
+    "token": "B4553C",
+    "plate_rgb": "B4553C",
+    "sample": "#A85A43",
+    "token_delta": 12,
+    "plate_delta": 12,
+    "title_frame": true,
+    "author_frame": true,
+    "ink": false
+  }
+]

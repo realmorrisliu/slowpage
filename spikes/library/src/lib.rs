@@ -4,7 +4,12 @@ mod apple;
 mod calibre;
 mod cover;
 mod disk;
+mod plate;
+mod shelf_grid;
 mod snapshot;
+
+pub use plate::{plate_color, png_center_rgb};
+pub use shelf_grid::{row_width, shelf_grid, ShelfGrid};
 
 use std::path::{Path, PathBuf};
 

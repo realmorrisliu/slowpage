@@ -11,6 +11,7 @@ mod reading;
 mod settings;
 mod shelf;
 mod stage;
+mod tokens;
 mod web;
 
 use std::path::{Path, PathBuf};
@@ -161,7 +162,9 @@ fn stream_import(
                     );
                 }
                 spike_library::ImportStep::Finished(done) => {
-                    catalog.set(attach_pdf_covers(base.admit(source, done)));
+                    let next = attach_pdf_covers(base.admit(source, done));
+                    shelf::stamp_form(&next);
+                    catalog.set(next);
                     return;
                 }
             }
@@ -186,7 +189,9 @@ fn stream_import(
                     }
                     spike_library::ImportStep::Finished(done) => {
                         if epoch.get() == ticket {
-                            catalog.set(attach_pdf_covers(base.admit(source, done)));
+                            let next = attach_pdf_covers(base.admit(source.clone(), done));
+                            shelf::stamp_form(&next);
+                            catalog.set(next);
                         }
                         return;
                     }
@@ -282,7 +287,39 @@ fn launch_title() -> Option<String> {
 /// The shelf is the open flow for the installed app and for fixture launches.
 /// Reader-forcing `SPIKE_*` launches and a dropped file skip it.
 pub fn launches_full() -> bool {
-    !reader_forcing_launch() && launch_title().is_none()
+    matches!(
+        launch_target(launch_title().is_some(), reader_forcing_launch(), None),
+        LaunchTarget::Shelf
+    )
+}
+
+/// Where a launch opens.
+///
+/// `docs/design/shell/spec.md` Commands: "Launch opens Full. The sidebar is
+/// shown and the chat panel is open." A stored place does not open the book
+/// by itself. That place is what an explicit file, and the shelf's 继续阅读
+/// row, resume. The row is not the S3 reading form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchTarget {
+    Shelf,
+    File { page: u32 },
+    Forced,
+}
+
+pub fn launch_target(
+    explicit_file: bool,
+    reader_forcing: bool,
+    stored_page: Option<u32>,
+) -> LaunchTarget {
+    if explicit_file {
+        return LaunchTarget::File {
+            page: stored_page.filter(|page| *page >= 1).unwrap_or(1),
+        };
+    }
+    if reader_forcing {
+        return LaunchTarget::Forced;
+    }
+    LaunchTarget::Shelf
 }
 
 pub fn shelf_launch() -> bool {
@@ -307,6 +344,9 @@ pub fn SpikeApp() -> impl IntoElement {
     title_bar.height = Some(px(chrome::TOP as f32));
     let mut attributes = WindowAttributes::default();
     attributes.title_bar = Some(title_bar);
+    if launches_full() {
+        attributes.min_size = Some(Some(crate::tokens::window_min()));
+    }
     current_window().set(attributes);
     let stage = element_ref();
     let title = signal(String::new());
@@ -366,7 +406,7 @@ pub fn SpikeApp() -> impl IntoElement {
         width: 1280.0,
         height: 800.0,
     });
-    let shell_traffic = signal(0.0_f64);
+    let shell_chrome = signal(form::chrome_off());
     let bars_row = signal(shell_on);
     let dropped = stage.clone();
     on_key("1", {
@@ -455,13 +495,57 @@ pub fn SpikeApp() -> impl IntoElement {
         let shell_library = shell_library.clone();
         let history = history.clone();
         move || {
-            shell_library.set(shelf::project(
-                &catalog.get(),
-                shell_selected.get(),
-                &history.get(),
-            ));
+            let _tick = history.get();
+            let rows = settings::load_history(&settings::path());
+            let mut shelf = shelf::project(&catalog.get(), shell_selected.get(), &rows);
+            let settings_path = settings::path();
+            shelf.lists = settings::load_lists(&settings_path)
+                .into_iter()
+                .map(|row| form::BookList {
+                    label: row.label,
+                    count: row.count,
+                    color: row.color,
+                })
+                .collect();
+            shelf.chat = settings::load_chat(&settings_path)
+                .into_iter()
+                .map(|row| form::ChatLine {
+                    kind: row.kind,
+                    text: row.text,
+                })
+                .collect();
+            shell_library.set(shelf);
         }
     });
+    if std::env::var("SUPERREADER_FORM_FIXTURE").ok().as_deref() == Some("1") {
+        if let Some(root) = env_path("SUPERREADER_LIBRARY") {
+            stream_import(
+                app_owner,
+                catalog.clone(),
+                epoch.clone(),
+                root_scope(root),
+                SourceName::AppleBooks,
+            );
+        }
+        if let Some(root) = env_path("SUPERREADER_CALIBRE") {
+            stream_import(
+                app_owner,
+                catalog.clone(),
+                epoch.clone(),
+                root_scope(root),
+                SourceName::Calibre,
+            );
+        }
+        if let Some(root) = env_path("SUPERREADER_FOLDER") {
+            stream_import(
+                app_owner,
+                catalog.clone(),
+                epoch.clone(),
+                root_scope(root),
+                SourceName::Folder("~/Books".into()),
+            );
+        }
+    }
     let drop_screen = screen.clone();
     let drop_variant = variant.clone();
     view()
@@ -559,7 +643,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             let trim_id = trim_id.clone();
                             let empty = empty.clone();
                             let shell_window = shell_window.clone();
-                            let shell_traffic = shell_traffic.clone();
+                            let shell_chrome = shell_chrome.clone();
                             let history = history.clone();
                             move |event: &NativeEvent| {
                                 if event.name.as_ref() != "status" {
@@ -591,11 +675,19 @@ pub fn SpikeApp() -> impl IntoElement {
                                         shell_window.set(form::Window { width, height });
                                     }
                                 }
+                                let mut chrome = shell_chrome.get();
                                 if let Some(span) = event.data["bar_w"].as_f64() {
                                     if span > 1.0 {
-                                        shell_traffic.set(span);
+                                        chrome.bar = span as f32;
                                     }
                                 }
+                                if let Some(shown) = event.data["lights_visible"].as_bool() {
+                                    chrome.lights = shown;
+                                }
+                                if let Some(top) = event.data["content_top"].as_f64() {
+                                    chrome.top = top as f32;
+                                }
+                                shell_chrome.set(chrome);
                                 if let Some(id) = event.data["trim"].as_str() {
                                     if id != trim_id.get() {
                                         trim_id.set(id.to_string());
@@ -611,7 +703,7 @@ pub fn SpikeApp() -> impl IntoElement {
                     let shell_form = shell_form.clone();
                     let shell_selected = shell_selected.clone();
                     let shell_window = shell_window.clone();
-                    let shell_traffic = shell_traffic.clone();
+                    let shell_chrome = shell_chrome.clone();
                     let shell_library = shell_library.clone();
                     let import_apple = import_apple.clone();
                     let import_calibre = import_calibre.clone();
@@ -626,7 +718,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             shell_form,
                             shell_selected,
                             shell_window,
-                            shell_traffic,
+                            shell_chrome,
                             shell_library,
                             source_menu,
                             move |peer| match peer {
@@ -784,4 +876,40 @@ fn reading_menu(
     );
     menus.push(MenuItem::submenu("View", view_items));
     menus
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::{launch_target, LaunchTarget};
+
+    #[test]
+    fn a_stored_page_does_not_open_the_shelf_launch() {
+        assert_eq!(launch_target(false, false, Some(2)), LaunchTarget::Shelf);
+        assert_eq!(launch_target(false, false, None), LaunchTarget::Shelf);
+    }
+
+    #[test]
+    fn an_explicit_file_resumes_its_stored_page() {
+        assert_eq!(
+            launch_target(true, false, Some(2)),
+            LaunchTarget::File { page: 2 }
+        );
+        assert_eq!(
+            launch_target(true, true, Some(4)),
+            LaunchTarget::File { page: 4 }
+        );
+        assert_eq!(
+            launch_target(true, false, None),
+            LaunchTarget::File { page: 1 }
+        );
+        assert_eq!(
+            launch_target(true, false, Some(0)),
+            LaunchTarget::File { page: 1 }
+        );
+    }
+
+    #[test]
+    fn a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place() {
+        assert_eq!(launch_target(false, true, Some(2)), LaunchTarget::Forced);
+    }
 }

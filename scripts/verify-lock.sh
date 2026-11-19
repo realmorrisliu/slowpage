@@ -3,7 +3,19 @@
 set -eu -o pipefail
 
 LOCK_DIR=/tmp/superreader-verify.lock
-MAX_LOAD="${SR_VERIFY_MAX_LOAD:-8}"
+PRESCRIBED_LOAD=8
+
+prescribed_ceiling() {
+  local requested="${1:-$PRESCRIBED_LOAD}"
+  awk -v r="$requested" -v p="$PRESCRIBED_LOAD" 'BEGIN {
+    r += 0
+    p += 0
+    if (r <= 0) r = p
+    print (r < p ? r : p)
+  }'
+}
+
+MAX_LOAD="$(prescribed_ceiling "${SR_VERIFY_MAX_LOAD:-$PRESCRIBED_LOAD}")"
 LOCK_DIR_MIN_AGE_SEC=60
 VERIFY_CHILD_PID=
 
@@ -126,20 +138,31 @@ acquire_lock() {
   done
 }
 
-wait_for_load() {
+refuse_high_load() {
   local load
-  while true; do
-    load=$(one_min_load)
-    if awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
-      break
-    fi
-    echo "waiting for load < ${MAX_LOAD} (now ${load})"
-    pause 10
-  done
+  load=$(one_min_load)
+  if awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
+    echo "verify starting: 1m loadavg=${load} (max ${MAX_LOAD})"
+    return 0
+  fi
+  echo "not started: 1m loadavg=${load} is not under the prescribed ceiling ${MAX_LOAD}. SR_VERIFY_MAX_LOAD cannot raise it. No process was killed."
+  exit 75
 }
 
+if [[ "${SR_VERIFY_LOCK_SELF_TEST:-}" == "1" ]]; then
+  ceiling="$(prescribed_ceiling "${SR_VERIFY_MAX_LOAD:-$PRESCRIBED_LOAD}")"
+  load="${SR_VERIFY_LOCK_TEST_LOAD:-0}"
+  echo "ceiling ${ceiling}"
+  if awk -v l="$load" -v m="$ceiling" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
+    echo "admit"
+    exit 0
+  fi
+  echo "refuse: 1m loadavg=${load} is not under the prescribed ceiling ${ceiling}. SR_VERIFY_MAX_LOAD cannot raise it."
+  exit 75
+fi
+
 acquire_lock
-wait_for_load
+refuse_high_load
 
 while pgrep -fl '/spike-shell$' >/dev/null; do
   echo "waiting for spike-shell to exit"

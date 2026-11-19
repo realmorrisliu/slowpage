@@ -1,0 +1,14 @@
+ts	phase	decision	why	evidence	result
+2026-11-17T07:05:14Z	start	Mac verify of Shell S2.1, evidence only	the user asked for a fresh score of the adaptive form and no app edits	PR 53	open
+2026-11-17T07:11:31Z	handback	wrote summary.json	the numbers are this run	docs/verify/runs/shell-s2-1/summary.json	fail
+2026-11-17T07:29:05Z	rescore	plate centers in full-form.png, not the white accessibility sample	the first sample sat above the caption on the card	docs/verify/runs/shell-s2-1/covers.json	pass
+2026-11-17T07:29:05Z	rescore	Page Down reveals the last shelf row	a negative wheel left the last row as a sliver and a lower-grid wheel moved 0 pixels	docs/verify/runs/shell-s2-1/shelf-last-row.png	pass
+2026-11-17T07:29:05Z	rescore	wide chat toggle returns when the second click waits	the first pair read the layout before the panel came back	docs/verify/runs/shell-s2-1/chat-retry.json	pass
+2026-11-17T07:29:05Z	rescore	fullscreen hover still has no traffic lights in the capture	pointer at the top of the screen, window diff 0, top pixel EFEEF1	docs/verify/runs/shell-s2-1/fullscreen-retry.json	fail
+2026-11-17T07:29:05Z	rescore	removed 21 glyph pngs the run added under the real support dir	settings.json was not rewritten	summary.json real-profile-untouched	fail
+2026-11-17T07:32:03Z	review	cover plates fail on the token hex	Middlemarch is 14 channels off #C8A24C, so a pass would hide the miss	docs/verify/runs/shell-s2-1/covers.json	fail
+2026-11-17T07:32:03Z	review	shelf scroll stays a pass	Page Down moved the shelf and the last row is fully visible. The wheel on the lower grid moved 0 pixels and that limit stays in the detail	docs/verify/runs/shell-s2-1/shelf-last-row.png	pass
+2026-11-17T08:58:35Z	start	Mac real-app verify 5 of shell S2.1 at 56da8f7	the operator asked for numbered proofs on the PR branch and no product edits	agent bc-3a074ff5-5111-57c4-862b-c0ed6c916197; prior rows 2026-11-17T07:05:14Z through 2026-11-17T07:32:03Z	open
+2026-11-17T09:24:46Z	retry	second pass for page down, chat, and fullscreen	the first driver raised when screencapture lost the window id during the zoom transition	retry.py	open
+2026-11-17T09:44:04Z	retry	hover lights and the restored title bar	40pt raised lights to 1.0; away vs hover changed 38 rows, all in the top 112px; Ctrl-Command-F restored AX frames at delta 0, inset 6, gaps 9/9	docs/verify/runs/shell-s2-1/exit-numbers.json	pass
+2026-11-17T09:44:04Z	retry	real support dir gained 21 glyph pngs during nsh	the temp nsh-support glyphs stayed at 15:05, so this nsh launch did not use the override; later launches wrote only their temp dirs	docs/verify/runs/shell-s2-1/support-after.json	fail

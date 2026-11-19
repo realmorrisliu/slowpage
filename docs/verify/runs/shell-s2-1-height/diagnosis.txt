@@ -1,0 +1,36 @@
+Height measurement, 2026-11-18 09:40–09:58 CST. Not a preflight and not the full suite.
+Head under test for the product change is the working tree on 48dd79c. The binary is
+~/.cache/cargo-target/SuperReader/release/spike-shell
+sha256 a95596b14f1720d57fe3b40776061f426698d95b2d2efe5d53d4d17b56ac387b.
+Backing scale is 2. The screen is 1512×982 points. A requested 1440×900 window is
+1440×855 because of the menu bar. True fullscreen is 1512×949 (PNG 3024×1898).
+The real profile stayed 51 files, inode 900769011.
+
+Before, at the same fullscreen window 1512×949:
+  NSWindow frame 1512×949, reader stage 1440×855.
+  Shelf card bottom gap 100pt, chat 94pt, composer 112pt.
+  Pixels at 2×: both the shelf column and the chat column stop 99pt above the window.
+  before-fullscreen.png sha256 3ea1b3ebb3181090.
+  contentLayoutRect is 1440×823 in the windowed frame (32pt title-bar report). The
+  content view itself is the full window. That 32pt is not a bottom inset.
+
+The shelf was using the reader stage as its window height. Full screen grows the
+content view to 1512×949 and leaves the stage view at the previous 1440×855, so the
+card and the chat both stop at the old frame. The layout file's own window is derived
+from the card, so it still said 1440×855 and hid the band.
+
+After, same window sizes:
+  default 1440×855, PNG 2880×1710, sha256 0b1333c1230682d9 (unchanged).
+    card gap 6pt, chat gap 0, composer gap 18. Pixel gap about 5pt.
+  minimum 578×528, PNG 1156×1056, sha256 ac369e5217841732 (unchanged).
+    card gap 6pt. Chat is closed at this width.
+  fullscreen 1512×949, content view 1512×949 at origin 0,0.
+    card [226, 6, 960, 937] gap 6pt. Chat height 949, gap 0. Composer gap 18.
+    after-fullscreen.png sha256 9622798c2a7ae4b4.
+    Shelf column pixel gap 5.5pt, chat column 5.0pt (the scanner treats the last
+    gray edge pixel as background; the frame gap is the 6pt inset).
+  The reader stage view is still 1440×855. The shell no longer takes its height
+  from that view.
+
+The 6pt card gap is the approved INSET. The 18pt composer gap is COMPOSER_INSET.
+The minimum window size was not changed.

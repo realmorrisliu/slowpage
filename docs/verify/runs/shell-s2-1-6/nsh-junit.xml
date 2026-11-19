@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nsh test" tests="9" failures="0" errors="0" skipped="0" time="75.798">
+  <testsuite name="shell.test.tsx" tests="9" failures="0" errors="0" skipped="0" time="2.949">
+    <testcase classname="shell.test.tsx" name="no spike title" time="0.200"/>
+    <testcase classname="shell.test.tsx" name="no night mode" time="0.116"/>
+    <testcase classname="shell.test.tsx" name="no theme switch" time="0.125"/>
+    <testcase classname="shell.test.tsx" name="no spread" time="0.132"/>
+    <testcase classname="shell.test.tsx" name="full form lists the sidebar groups and the chat field" time="0.136"/>
+    <testcase classname="shell.test.tsx" name="an imported source appears under 来源" time="0.332"/>
+    <testcase classname="shell.test.tsx" name="添加来源 adds a second source and PDF filters the grid" time="0.832"/>
+    <testcase classname="shell.test.tsx" name="继续阅读 lists opened books with the latest first" time="0.656"/>
+    <testcase classname="shell.test.tsx" name="sidebar toggle hides and shows the sidebar" time="0.420"/>
+  </testsuite>
+</testsuites>

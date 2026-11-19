@@ -94,6 +94,36 @@ fn starts_bit(word_starts: bool) -> u8 {
     u8::from(word_starts)
 }
 
+/// Where the plan already on a paragraph came from. A later layout pass
+/// recounts that origin. An unmarked paragraph adds nothing, so a pass that
+/// never read a plan still reports no source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakOrigin {
+    Cached,
+    Live,
+}
+
+pub fn recount_kept(origin: Option<BreakOrigin>, hits: u32, live: u32) -> (u32, u32) {
+    match origin {
+        Some(BreakOrigin::Live) => (hits, live.saturating_add(1)),
+        Some(BreakOrigin::Cached) => (hits.saturating_add(1), live),
+        None => (hits, live),
+    }
+}
+
+pub fn reported_break_source(hits: u32, live: u32) -> Option<&'static str> {
+    if hits == 0 && live == 0 {
+        return None;
+    }
+    if live == 0 {
+        return Some("cached");
+    }
+    if hits == 0 {
+        return Some("live");
+    }
+    Some("mixed")
+}
+
 pub fn tenth(px: f64) -> i32 {
     (px * 10.0).round() as i32
 }
@@ -575,5 +605,27 @@ mod tests {
         with["plans"][0]["starts"] = serde_json::json!(1);
         assert!(plans_from_json(&with)[0].key.word_starts);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported() {
+        let (hits, live) = (0..32).fold((0, 0), |(hits, live), _| {
+            recount_kept(Some(BreakOrigin::Cached), hits, live)
+        });
+        assert_eq!(reported_break_source(hits, live), Some("cached"));
+        assert_eq!(live, 0);
+        let (hits, live) = (0..32).fold((0, 0), |(hits, live), _| {
+            recount_kept(Some(BreakOrigin::Live), hits, live)
+        });
+        assert_eq!(reported_break_source(hits, live), Some("live"));
+        assert_eq!(hits, 0);
+        assert_eq!(live, 32);
+        let (hits, live) = recount_kept(None, 0, 0);
+        assert_eq!(reported_break_source(hits, live), None);
+        let source = include_str!("../../justify/justify.js");
+        assert!(source.contains("p.setAttribute(\"data-kp-from\", \"cached\")"));
+        assert!(source.contains("p.setAttribute(\"data-kp-from\", \"live\")"));
+        assert!(source.contains("if (from === \"live\") cacheLive += 1;"));
+        assert!(source.contains("else if (from === \"cached\") cacheHits += 1;"));
     }
 }
