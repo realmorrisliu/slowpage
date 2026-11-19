@@ -1,0 +1,57 @@
+#!/bin/sh
+# Offline checks for the gates that previously reported a pass they had not earned.
+# Does not launch the app and does not compile.
+set -eu
+cd "$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+
+run_lock() {
+  # shellcheck disable=SC2086
+  SR_VERIFY_LOCK_SELF_TEST=1 SR_VERIFY_MAX_LOAD="$1" SR_VERIFY_LOCK_TEST_LOAD="$2" \
+    bash scripts/verify-lock.sh >/tmp/harness-lock.out 2>/tmp/harness-lock.err
+}
+
+expect_lock() {
+  requested=$1
+  load=$2
+  want=$3
+  set +e
+  run_lock "$requested" "$load"
+  code=$?
+  set -e
+  if [ "$code" -ne "$want" ]; then
+    echo "lock gate: SR_VERIFY_MAX_LOAD=$requested load=$load exited $code, want $want" >&2
+    cat /tmp/harness-lock.out >&2 || true
+    exit 1
+  fi
+  echo "lock SR_VERIFY_MAX_LOAD=$requested load=$load exit $code"
+  cat /tmp/harness-lock.out
+}
+
+expect_lock 999 51.23 75
+expect_lock 999 1 0
+expect_lock 4 5 75
+expect_lock 4 3.9 0
+
+python3 scripts/verify --harness
+
+if grep -n "waiting for load" scripts/verify-lock.sh scripts/verify >/dev/null; then
+  echo "a load wait loop is still present" >&2
+  exit 1
+fi
+
+if ! grep -n "scripts/harness-check" .github/workflows/ci.yml >/dev/null; then
+  echo "CI does not run scripts/harness-check" >&2
+  exit 1
+fi
+
+python3 - << 'PY'
+import pathlib, sys
+workflow = pathlib.Path(".github/workflows/ci.yml").read_text()
+rust = "\n".join(path.read_text(errors="replace") for path in pathlib.Path("spikes").rglob("*.rs"))
+if "cargo test -p spike-shell" in workflow and "fn a_stored_page_does_not_open_the_shelf_launch" not in rust:
+    print("CI runs spike-shell tests that are not in this tree", file=sys.stderr)
+    sys.exit(1)
+print("ci does not claim spike-shell tests that this tree does not contain")
+PY
+
+echo "harness-check passed"

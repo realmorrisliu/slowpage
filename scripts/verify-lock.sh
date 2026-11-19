@@ -3,15 +3,22 @@
 set -eu -o pipefail
 
 LOCK_DIR=/tmp/superreader-verify.lock
-MAX_LOAD="${SR_VERIFY_MAX_LOAD:-8}"
+PRESCRIBED_LOAD=8
 LOCK_DIR_MIN_AGE_SEC=60
 VERIFY_CHILD_PID=
 
-# Non-interactive stdin makes `read -t` return immediately; a fifo keeps `read` blocking.
-_verify_pause_fifo=$(mktemp -u "${LOCK_DIR}.pause.XXXXXX")
-mkfifo "$_verify_pause_fifo"
-exec 3<>"$_verify_pause_fifo"
-rm -f "$_verify_pause_fifo"
+# A caller may lower the ceiling. A value above 8, including 999, stays 8.
+prescribed_ceiling() {
+  local requested="${1:-$PRESCRIBED_LOAD}"
+  awk -v r="$requested" -v p="$PRESCRIBED_LOAD" 'BEGIN {
+    r += 0
+    p += 0
+    if (r <= 0) r = p
+    print (r < p ? r : p)
+  }'
+}
+
+MAX_LOAD="$(prescribed_ceiling "${SR_VERIFY_MAX_LOAD:-$PRESCRIBED_LOAD}")"
 
 pause() {
   local i
@@ -103,48 +110,50 @@ on_signal() {
   exit "$code"
 }
 
+if [[ "${SR_VERIFY_LOCK_SELF_TEST:-}" == "1" ]]; then
+  ceiling="$(prescribed_ceiling "${SR_VERIFY_MAX_LOAD:-$PRESCRIBED_LOAD}")"
+  load="${SR_VERIFY_LOCK_TEST_LOAD:-0}"
+  echo "ceiling ${ceiling}"
+  if awk -v l="$load" -v m="$ceiling" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
+    echo "admit"
+    exit 0
+  fi
+  echo "refuse: 1m loadavg=${load} is not under the prescribed ceiling ${ceiling}. SR_VERIFY_MAX_LOAD cannot raise it."
+  exit 75
+fi
+
 trap on_shell_exit EXIT
 trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
 
 acquire_lock() {
-  while true; do
-    if clear_stale_lock; then
-      continue
-    fi
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
-      local branch
-      branch=$(git branch --show-current 2>/dev/null || echo unknown)
-      printf '%s\n' "$$" >"$LOCK_DIR/pid"
-      printf '%s\n' "$branch" >"$LOCK_DIR/branch"
-      date -u +%Y-%m-%dT%H:%M:%SZ >"$LOCK_DIR/started"
-      echo "verify lock acquired: $LOCK_DIR"
-      break
-    fi
-    echo "waiting for verify lock (held by $(lock_holder))"
-    sleep 30
-  done
-}
-
-wait_for_load() {
-  local load
-  while true; do
-    load=$(one_min_load)
-    if awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
-      break
-    fi
-    echo "waiting for load < ${MAX_LOAD} (now ${load})"
-    pause 10
-  done
+  clear_stale_lock || true
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    local branch
+    branch=$(git branch --show-current 2>/dev/null || echo unknown)
+    printf '%s\n' "$$" >"$LOCK_DIR/pid"
+    printf '%s\n' "$branch" >"$LOCK_DIR/branch"
+    date -u +%Y-%m-%dT%H:%M:%SZ >"$LOCK_DIR/started"
+    echo "verify lock acquired: $LOCK_DIR"
+    return 0
+  fi
+  echo "not started: verify lock is held by $(lock_holder). No process was killed."
+  exit 75
 }
 
 acquire_lock
-wait_for_load
-
-while pgrep -fl '/spike-shell$' >/dev/null; do
-  echo "waiting for spike-shell to exit"
-  pause 30
-done
+load=$(one_min_load)
+if ! awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN { exit (l+0 < m+0) ? 0 : 1 }'; then
+  echo "not started: 1m loadavg=${load} is not under the prescribed ceiling ${MAX_LOAD}. SR_VERIFY_MAX_LOAD cannot raise it. No process was killed."
+  release_lock
+  exit 75
+fi
+if pgrep -fl '/spike-shell$' >/dev/null; then
+  echo "not started: spike-shell is already running. No process was killed."
+  pgrep -fl '/spike-shell$' || true
+  release_lock
+  exit 75
+fi
 
 load=$(one_min_load)
 echo "verify starting: 1m loadavg=${load} (max ${MAX_LOAD})"
@@ -155,6 +164,10 @@ fi
 
 status=0
 if [[ "${SR_VERIFY_STUB:-}" == "1" ]]; then
+  _verify_pause_fifo=$(mktemp -u "${LOCK_DIR}.pause.XXXXXX")
+  mkfifo "$_verify_pause_fifo"
+  exec 3<>"$_verify_pause_fifo"
+  rm -f "$_verify_pause_fifo"
   (
     echo "verify stub: scripts/verify $*"
     echo "verify stub start $(date -u +%Y-%m-%dT%H:%M:%SZ)"

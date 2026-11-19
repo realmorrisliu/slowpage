@@ -4025,9 +4025,26 @@ def aqua_case(out, window_tool, ocr_tool, mouse, name, dark):
         width, _height, rows = decode_png_rows(png)
         pixels_ok, pixel_detail = toolbar_dark_on_white(width, rows)
         placed, _ = icon_placement(body)
-        ok = pixels_ok and aqua_appearance(appearance) and placed
         mode = "dark" if dark else "light"
+        mine = png.read_bytes() if png.exists() else b""
+        others = [
+            sibling.read_bytes()
+            for sibling in out.glob("*.png")
+            if sibling.is_file() and sibling.resolve() != png.resolve()
+        ] if png.exists() else []
+        problems = appearance_problems(mode, appearance, mine, others)
+        ok = pixels_ok and placed and not problems
         detail = f"{mode} appearance {appearance}; {place}; {pixel_detail}"
+        if problems:
+            detail = f"{admission_status(problems)}: {'; '.join(problems)}; {detail}"
+            return check(
+                check_id,
+                "window-chrome",
+                "window",
+                admission_status(problems),
+                detail,
+                png.name if png.exists() else None,
+            )
         if dark and png.exists():
             shots = ROOT / "docs" / "verify" / "aqua"
             shots.mkdir(parents=True, exist_ok=True)
@@ -4213,6 +4230,41 @@ def run_chrome(out, window_tool, ocr_tool):
                         f"{name}.png",
                     ))
                 if png.exists() and fullscreen and isinstance(body, dict):
+                    windowed_png = out / "b-pride.png"
+                    same_bytes = (
+                        windowed_png.is_file() and png.read_bytes() == windowed_png.read_bytes()
+                    )
+                    problems = admit_reader_fullscreen(
+                        body,
+                        {
+                            "pid": body.get("pid"),
+                            "window_id": body.get("window_id"),
+                            "reader_window_id": body.get("reader_window_id"),
+                            "book": book,
+                            "scale": body.get("scale") or 0,
+                            "px_w": body.get("px_w") or 0,
+                            "px_h": body.get("px_h") or 0,
+                            "same_bytes": same_bytes,
+                        },
+                        {"w": body.get("windowed_w") or 0, "h": body.get("windowed_h") or 0},
+                    )
+                    if problems:
+                        detail = "not executed: " + "; ".join(problems)
+                        status = admission_status(problems)
+                        for check_id in (
+                            "chrome-b-fullscreen-footer",
+                            "chrome-b-fullscreen-page",
+                            "chrome-b-fullscreen-paper",
+                        ):
+                            rows.append(check(
+                                check_id,
+                                "window-chrome",
+                                "window",
+                                status,
+                                detail,
+                                f"{name}.png",
+                            ))
+                        continue
                     footer = footer_ok(lines, png)
                     rows.append(check(
                         "chrome-b-fullscreen-footer",
@@ -4379,6 +4431,241 @@ def skipped(reason):
 
 
 LOCK_DIR = Path("/tmp/superreader-verify.lock")
+PRESCRIBED_LOAD = 8.0
+
+
+def title_has_book(book, title):
+    text = title or ""
+    if book == "pride":
+        return "Pride" in text
+    if book == "zhaohua":
+        return "朝花" in text
+    return bool(book) and book.lower() in text.lower()
+
+
+def admit_reader_fullscreen(chrome, capture, windowed):
+    """A fullscreen pass needs the flag, the same window, the native size, and the book.
+
+    The request that asked for fullscreen is not an argument. A copied windowed
+    frame is not an entered fullscreen.
+    """
+    problems = []
+    if not isinstance(chrome, dict) or chrome.get("fullscreen") is not True:
+        problems.append("fullscreen flag was not set")
+    try:
+        chrome_pid = int(chrome.get("pid")) if isinstance(chrome, dict) else None
+    except (TypeError, ValueError):
+        chrome_pid = None
+    try:
+        reader_pid = int(capture.get("pid"))
+    except (TypeError, ValueError):
+        reader_pid = None
+    if chrome_pid is None or chrome_pid != reader_pid:
+        problems.append("chrome pid is not the reader process")
+    window_id = capture.get("window_id")
+    reader_window = capture.get("reader_window_id")
+    if window_id is None or window_id != reader_window:
+        problems.append("capture window is not the reader window")
+    if not title_has_book(
+        capture.get("book") or "",
+        (chrome or {}).get("title") if isinstance(chrome, dict) else "",
+    ):
+        problems.append("loaded book is not the requested book")
+    try:
+        native_w = float(chrome.get("window_w") or 0) if isinstance(chrome, dict) else 0.0
+        native_h = float(chrome.get("window_h") or 0) if isinstance(chrome, dict) else 0.0
+        scale = float(capture.get("scale") or 0)
+        px_w = float(capture.get("px_w") or 0)
+        px_h = float(capture.get("px_h") or 0)
+    except (TypeError, ValueError):
+        native_w = native_h = scale = px_w = px_h = 0.0
+    if native_w < 2 or native_h < 2 or scale <= 0 or px_w < 2 or px_h < 2:
+        problems.append("native size was not recorded")
+    elif abs(px_w - native_w * scale) > 2 or abs(px_h - native_h * scale) > 2:
+        problems.append("capture size does not match the native window")
+    if (
+        isinstance(windowed, dict)
+        and abs(native_w - float(windowed.get("w") or 0)) < 2
+        and abs(native_h - float(windowed.get("h") or 0)) < 2
+    ):
+        problems.append("fullscreen window is still the windowed size")
+    if capture.get("same_bytes"):
+        problems.append("fullscreen capture matches the windowed frame")
+    return problems
+
+
+def appearance_problems(requested, appearance, this_bytes, blocked):
+    problems = []
+    name = str(appearance or "")
+    if requested == "dark":
+        if "Dark" not in name:
+            problems.append(f"appearance is {name or 'missing'}, not dark")
+    elif requested == "light":
+        if "Aqua" not in name or "Dark" in name:
+            problems.append(f"appearance is {name or 'missing'}, not light aqua")
+    else:
+        problems.append("appearance was not requested")
+    if this_bytes and this_bytes in set(blocked or ()):
+        problems.append("capture is the same file as another state")
+    return problems
+
+
+def reading_surface(names, webkit_page=None, pdf_ax_page=None):
+    """Open panel, empty shelf, or a book whose page is actually shown."""
+    text = "\n".join(str(name) for name in (names or []))
+    named_file = any(str(name).endswith((".epub", ".pdf")) for name in (names or []))
+    panel = ("打开" in text and "取消" in text) or (named_file and ("打开" in text or "Open" in text))
+    if panel:
+        return "open_panel"
+    if isinstance(webkit_page, int) and webkit_page > 0:
+        return "book_loaded"
+    if isinstance(pdf_ax_page, int) and pdf_ax_page > 0:
+        return "book_loaded"
+    return "empty_shelf"
+
+
+def admit_recorded_fixture(path, record):
+    """Missing file or a wrong sha is not a pass. The chapter text is separate."""
+    import hashlib
+
+    record = record if isinstance(record, dict) else {}
+    expected = str(record.get("sha256") or "")
+    chapter = str(record.get("chapter") or "")
+    try:
+        minimum = int(record.get("min_chars") or 1500)
+    except (TypeError, ValueError):
+        minimum = 1500
+    if not expected:
+        return False, "not executed: fixture has no recorded sha256"
+    if not Path(path).is_file():
+        return False, "not executed: recorded fixture is not on disk"
+    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    if digest != expected:
+        return False, "not executed: fixture sha256 does not match the record"
+    text = Path(path).read_bytes().decode("utf-8", "replace")
+    collapsed = re.sub(r"\s+", "", re.sub(r"(?is)<[^>]+>", "", text))
+    if chapter and (chapter not in collapsed or len(collapsed) < minimum):
+        return False, f"fail: fixture does not contain {chapter} at {minimum} characters"
+    return True, f"sha256 {digest}"
+
+
+def admission_status(problems):
+    if not problems:
+        return "pass"
+    pending_marks = (
+        "was not set",
+        "was not recorded",
+        "still the windowed",
+        "matches the windowed",
+        "same file",
+        "missing",
+        "is not the reader",
+        "chrome pid",
+        "not executed",
+    )
+    if any(any(mark in item for mark in pending_marks) for item in problems):
+        return "pending"
+    return "fail"
+
+
+def harness_self_test():
+    copied = admit_reader_fullscreen(
+        {"fullscreen": False, "pid": 7, "window_w": 582, "window_h": 781, "title": "Pride and Prejudice"},
+        {
+            "pid": 7,
+            "window_id": 4,
+            "reader_window_id": 4,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 1164,
+            "px_h": 1562,
+            "same_bytes": True,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert admission_status(copied) == "pending", copied
+    assert "fullscreen flag was not set" in copied
+    assert "fullscreen capture matches the windowed frame" in copied
+    assert "fullscreen window is still the windowed size" in copied
+    entered = admit_reader_fullscreen(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
+        {
+            "pid": 7,
+            "window_id": 9,
+            "reader_window_id": 9,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 3024,
+            "px_h": 1898,
+            "same_bytes": False,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert entered == [], entered
+    wrong_book = admit_reader_fullscreen(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "全部书籍"},
+        {
+            "pid": 7,
+            "window_id": 9,
+            "reader_window_id": 9,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 3024,
+            "px_h": 1898,
+            "same_bytes": False,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert admission_status(wrong_book) == "fail", wrong_book
+    dark_same = appearance_problems("dark", "NSAppearanceNameAqua", b"abc", [b"abc"])
+    assert admission_status(dark_same) != "pass"
+    assert any("not dark" in item for item in dark_same)
+    assert any("same file" in item for item in dark_same)
+    assert appearance_problems("dark", "NSAppearanceNameDarkAqua", b"abc", [b"def"]) == []
+    assert reading_surface(["打开", "取消", "pride-se.epub"], 1, None) == "open_panel"
+    assert reading_surface(["全部书籍"], None, None) == "empty_shelf"
+    assert reading_surface([], 2, None) == "book_loaded"
+    old = os.environ.get("SR_VERIFY_MAX_LOAD")
+    os.environ["SR_VERIFY_MAX_LOAD"] = "999"
+    try:
+        assert load_ceiling() == PRESCRIBED_LOAD
+    finally:
+        if old is None:
+            os.environ.pop("SR_VERIFY_MAX_LOAD", None)
+        else:
+            os.environ["SR_VERIFY_MAX_LOAD"] = old
+    missing, detail = admit_recorded_fixture(Path("/tmp/does-not-exist-harness.epub"), {"sha256": ""})
+    assert not missing and "sha256" in detail and "not executed" in detail
+    import hashlib
+    import zipfile
+    from io import BytesIO
+
+    chapter = "<html><body><p>范愛農" + ("文" * 1500) + "</p></body></html>"
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as book:
+        book.writestr("chapter.xhtml", chapter)
+    raw = buffer.getvalue()
+    digest = hashlib.sha256(raw).hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "book.epub"
+        path.write_bytes(raw)
+        bad, bad_detail = admit_recorded_fixture(path, {"sha256": "0" * 64, "chapter": "范愛農"})
+        assert not bad and "not executed" in bad_detail
+        assert digest
+    stored = BytesIO()
+    with zipfile.ZipFile(stored, "w") as book:
+        info = zipfile.ZipInfo("chapter.xhtml")
+        info.compress_type = zipfile.ZIP_STORED
+        book.writestr(info, chapter)
+    stored_raw = stored.getvalue()
+    stored_digest = hashlib.sha256(stored_raw).hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "stored.epub"
+        path.write_bytes(stored_raw)
+        short, short_detail = admit_recorded_fixture(
+            path, {"sha256": stored_digest, "chapter": "不存在的章", "min_chars": 1500}
+        )
+        assert not short and short_detail.startswith("fail:"), short_detail
 
 
 def hold_verify_lock():
@@ -4422,9 +4709,8 @@ def hold_verify_lock():
         try:
             LOCK_DIR.mkdir()
         except FileExistsError:
-            print("waiting for verify lock", flush=True)
-            time.sleep(30)
-            continue
+            print("not started: verify lock is held. No process was killed.", flush=True)
+            raise SystemExit(75)
         break
     (LOCK_DIR / "pid").write_text(f"{os.getpid()}\n")
     branch = subprocess.run(
@@ -4436,28 +4722,36 @@ def hold_verify_lock():
     (LOCK_DIR / "branch").write_text((branch.stdout or "unknown").strip() + "\n")
     (LOCK_DIR / "started").write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n")
     atexit.register(release)
-    while True:
-        load = one_minute_load()
-        ceiling = load_ceiling()
-        if load < ceiling:
-            print(f"verify starting: 1m loadavg={load:.2f}", flush=True)
-            while True:
-                held = subprocess.run(["pgrep", "-fl", "/spike-shell$"], capture_output=True, text=True)
-                if held.returncode != 0:
-                    break
-                print("waiting for spike-shell to exit", flush=True)
-                time.sleep(30)
-            return load
-        print(f"waiting for load < {ceiling} (now {load:.2f})", flush=True)
-        time.sleep(30)
+    load = one_minute_load()
+    ceiling = load_ceiling()
+    if load >= ceiling:
+        print(
+            f"not started: 1m loadavg={load:.2f} is not under the prescribed ceiling {ceiling:g}. "
+            "SR_VERIFY_MAX_LOAD cannot raise it. No process was killed.",
+            flush=True,
+        )
+        raise SystemExit(75)
+    held = subprocess.run(["pgrep", "-fl", "/spike-shell$"], capture_output=True, text=True)
+    if held.returncode == 0:
+        print("not started: spike-shell is already running. No process was killed.", flush=True)
+        print(held.stdout or "", flush=True)
+        raise SystemExit(75)
+    print(f"verify starting: 1m loadavg={load:.2f}", flush=True)
+    return load
 
 
 def load_ceiling():
-    raw = os.environ.get("SR_VERIFY_MAX_LOAD", "8").strip() or "8"
+    """The prescribed ceiling is 8. A caller can lower it, not raise it."""
+    raw = os.environ.get("SR_VERIFY_MAX_LOAD", "").strip()
+    if not raw:
+        return PRESCRIBED_LOAD
     try:
-        return float(raw)
+        asked = float(raw)
     except ValueError:
-        return 8.0
+        return PRESCRIBED_LOAD
+    if asked <= 0:
+        return PRESCRIBED_LOAD
+    return min(asked, PRESCRIBED_LOAD)
 
 
 def one_minute_load():
@@ -5600,9 +5894,14 @@ def main():
     parser = argparse.ArgumentParser(description="Score the SuperReader spike.")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--harness", action="store_true")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--subset", choices=["cache", "alpha", "shelf"])
     args = parser.parse_args()
+    if args.harness:
+        harness_self_test()
+        print("harness self-test passed")
+        return 0
     if args.doctor:
         rows = doctor()
         for row in rows:
