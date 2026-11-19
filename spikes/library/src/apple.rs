@@ -310,13 +310,14 @@ fn stored_path(raw: &str) -> Option<PathBuf> {
     }
 }
 
-/// Absolute paths must sit under a root. A relative name uses the first root
-/// that already has the file or its iCloud placeholder, then the first root.
+/// Absolute paths must sit under a root. A relative name prefers a real file
+/// over an iCloud placeholder, then the first root.
 fn locate_under_roots(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     if path.is_absolute() {
         return resolve_under_roots(path, roots);
     }
     let mut first = None;
+    let mut placeholder = None;
     for root in roots {
         let joined = root.join(path);
         if !joined.starts_with(root) {
@@ -325,25 +326,43 @@ fn locate_under_roots(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
         if first.is_none() {
             first = Some(joined.clone());
         }
-        if on_disk(&joined) {
-            return Some(joined);
+        match placed(&joined) {
+            Place::File => return Some(joined),
+            Place::Placeholder if placeholder.is_none() => placeholder = Some(joined),
+            Place::Placeholder | Place::Absent => {}
         }
     }
-    first
+    placeholder.or(first)
 }
 
-fn on_disk(path: &Path) -> bool {
+enum Place {
+    File,
+    Placeholder,
+    Absent,
+}
+
+fn placed(path: &Path) -> Place {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
+        return Place::Absent;
     };
     if name.ends_with(".icloud") {
-        return path.exists();
+        return if path.is_file() {
+            Place::Placeholder
+        } else {
+            Place::Absent
+        };
     }
     if path.exists() {
-        return true;
+        return Place::File;
     }
-    path.parent()
+    if path
+        .parent()
         .is_some_and(|parent| parent.join(format!(".{name}.icloud")).is_file())
+    {
+        Place::Placeholder
+    } else {
+        Place::Absent
+    }
 }
 
 fn drain(mut cursor: Cursor) -> Catalog {
