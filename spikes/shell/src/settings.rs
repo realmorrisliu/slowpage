@@ -3639,6 +3639,7 @@ mod tests {
         assert_eq!(resume_offset(&file, book), 0);
         assert!(!resume_caret(&file, book));
         assert!(pictures.measured.is_none());
+        let svg_reader = pictures.clone();
         let (first_wait, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -3662,15 +3663,31 @@ mod tests {
         assert!(!first_apply.paint);
         assert!(!first_apply.wrote);
         assert!(lost);
+        assert_eq!(
+            crate::visit::found_figure(kept.clone(), lost),
+            None,
+            "a loss is not noted back onto the reader"
+        );
         let (retry_saw, retry_lost) = crate::visit::figure_flags(&kept, lost);
-        picture_tick.awaiting = true;
+        assert!(
+            !picture_tick.awaiting,
+            "the first align already ended the wait"
+        );
         picture_tick.figure = retry_saw;
         picture_tick.figure_lost = retry_lost;
+        picture_tick.fitted_same = true;
         let retry = crate::visit::layout_frame(&mut pictures, picture_tick);
         assert_eq!(retry.draw, crate::visit::Draw::Align, "{retry:?}");
-        assert_eq!(pictures.figure_misses, 1);
+        assert_eq!(pictures.figure_misses, 1, "{retry:?}");
         assert_eq!(pictures.figure.as_deref(), Some("img#pic"));
+        assert!(crate::visit::spent_figure_loss(retry_lost, retry.draw));
         crate::visit::drop_figure_mail(&mut kept, &mut lost);
+        picture_tick.figure = false;
+        picture_tick.figure_lost = false;
+        picture_tick.fitted_same = false;
+        let still = crate::visit::layout_frame(&mut pictures, picture_tick);
+        assert_eq!(still.draw, crate::visit::Draw::Align, "{still:?}");
+        assert_eq!(pictures.figure_misses, 1);
         let (second_wait, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -3691,6 +3708,7 @@ mod tests {
             &mut store,
         );
         assert!(!second_apply.wrote);
+        assert!(picture_tick.fitted_same == false && !picture_tick.awaiting);
         let (give_saw, give_lost) = crate::visit::figure_flags(&kept, lost);
         picture_tick.figure = give_saw;
         picture_tick.figure_lost = give_lost;
@@ -3701,20 +3719,22 @@ mod tests {
             "{gave_up:?}"
         );
         assert!(pictures.figure.is_none());
+        assert_eq!(pictures.figure_misses, 2);
         assert_eq!(pictures.sample_misses, 2);
+        assert!(crate::visit::spent_figure_loss(give_lost, gave_up.draw));
+        crate::visit::drop_figure_mail(&mut kept, &mut lost);
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
         assert!(!resume_caret(&file, book));
-        picture_tick.awaiting = false;
         picture_tick.figure = false;
         picture_tick.figure_lost = false;
-        picture_tick.fitted_same = false;
         let skipped_figure = crate::visit::layout_frame(&mut pictures, picture_tick);
         assert_eq!(
             skipped_figure.draw,
             crate::visit::Draw::Move { reveal: None },
             "{skipped_figure:?}"
         );
+        assert!(pictures.figure.is_none(), "a spent loss is not noted again");
         let _ = read_frame(
             &mut stdin,
             &mut stdout,
@@ -3723,31 +3743,34 @@ mod tests {
         let (indexed_posts, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
-            &format!("now {}", crate::visit::hold_eval(10, pictures.probe)),
+            &format!("now {}", crate::visit::hold_eval(10, svg_reader.probe)),
         );
         let indexed = indexed_posts
             .iter()
             .find(|post| post["figure"] == "svg@0")
             .expect("svg post");
+        let mut svg_kept = None;
+        let mut svg_lost = false;
+        let mut svg_reader = svg_reader;
         let indexed_apply = route_figure(
-            &mut pictures,
-            &mut kept,
-            &mut lost,
+            &mut svg_reader,
+            &mut svg_kept,
+            &mut svg_lost,
             indexed,
             "ch.xhtml",
             &mut store,
         );
         assert!(!indexed_apply.paint);
         assert!(!indexed_apply.wrote);
-        assert_eq!(kept.as_deref(), Some("svg@0"));
-        assert!(!lost);
-        let (svg_saw, svg_lost) = crate::visit::figure_flags(&kept, lost);
-        picture_tick.awaiting = true;
-        picture_tick.figure = svg_saw;
-        picture_tick.figure_lost = svg_lost;
-        let svg_draw = crate::visit::layout_frame(&mut pictures, picture_tick);
+        assert_eq!(svg_kept.as_deref(), Some("svg@0"));
+        assert!(!svg_lost);
+        let (svg_saw, svg_lost_flag) = crate::visit::figure_flags(&svg_kept, svg_lost);
+        let mut svg_tick = fitted_tick(false, false);
+        svg_tick.figure = svg_saw;
+        svg_tick.figure_lost = svg_lost_flag;
+        let svg_draw = crate::visit::layout_frame(&mut svg_reader, svg_tick);
         assert_eq!(svg_draw.draw, crate::visit::Draw::Align, "{svg_draw:?}");
-        assert_eq!(pictures.figure.as_deref(), Some("svg@0"));
+        assert_eq!(svg_reader.figure.as_deref(), Some("svg@0"));
         assert!(!resume_caret(&file, book));
         let mut turned = taken;
         let mut turned_mail = taken_mail;
@@ -3846,7 +3869,7 @@ mod tests {
         let applied = crate::visit::handle_page(reader, post, href, store);
         let known = reader.figure.clone();
         crate::visit::keep_message_figure(kept, lost, post, reader.probe, known.as_deref());
-        crate::visit::remember_figure(reader, kept.clone());
+        crate::visit::remember_figure(reader, crate::visit::found_figure(kept.clone(), *lost));
         applied
     }
 

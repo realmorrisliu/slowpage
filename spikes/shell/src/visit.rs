@@ -1262,6 +1262,21 @@ pub fn figure_flags(id: &Option<String>, lost: bool) -> (bool, bool) {
     (id.is_some() && !lost, lost)
 }
 
+/// A missed lookup is not a new element. Noting it would put the id back
+/// after the frame had dropped it.
+pub fn found_figure(id: Option<String>, lost: bool) -> Option<String> {
+    if lost {
+        None
+    } else {
+        id
+    }
+}
+
+/// The loss was applied. A resting frame has not read it yet.
+pub fn spent_figure_loss(lost: bool, draw: Draw) -> bool {
+    lost && !matches!(draw, Draw::Rest)
+}
+
 fn clear_resume(reader: &mut Reader) {
     reader.jump_href.clear();
     reader.jump_offset = None;
