@@ -61,3 +61,19 @@ Ran on this cloud VM. `just` is not installed here, so the `test` recipe in the 
 `cargo test --manifest-path spikes/Cargo.toml -p spike-epub --lib` passed 6 tests and failed `fixtures_open_on_chapter_text` because `/tmp/superreader-fixtures/pride-se.epub` is not on this VM. That test is outside this diff.
 
 Apple Books on a Mac, the user's library, `just verify`, the shell GUI, an Alan process, `cargo deny`, and a shell build were not run. The chrono advisory in `deny.toml` is still an ignore. CI for this pull request was not polled.
+
+## Cloud and series rows
+
+Recorded against main `6ad10945cd3932b77257c26ddbfcfea78e0c9b42`, the squash of pull request 64. Open pull request 65 owns `spikes/shell/**`, `docs/roadmap.md`, the shell verify feature, `.github/workflows/**`, `Cargo.lock`, and the root `Cargo.toml`. This slice is based on `6ad10945`, not on pull request 65.
+
+A cloud book with no file was labeled Missing. An unowned series row with no file was listed as a missing book. [BookMinder's Apple Books notes](https://github.com/palimondo/BookMinder/blob/master/docs/apple_books.md) record `ZSTATE` 3 as a cloud book, 6 as a cloud sample that is not downloaded, and 5 as a series or unowned title. That note is one observed library, not an Apple document. Databases without `ZSTATE` keep the previous labels.
+
+A file that is already an EPUB or PDF still opens, including when `ZSTATE` is 3 or 5. A store id still returns before any disk read. An audiobook stays an audiobook. The source sqlite bytes do not change. A second import matches the first. `open`, `Scope`, `Import`, and `Book` stay as they are.
+
+This slice does not decrypt FairPlay, play audiobooks, search, sort, filter, write Calibre, import annotations, or open a shelf row in the reader. Search and filters need the shell. Annotation import still has no confirmed schema. Alan issue 1078 is still open.
+
+Dalibre at `aff3eb5e66b1bd0287bfc42b46e93b6fcc2d7151` remains GPL-3.0 or later. No source is copied. Its catalog filters books that are already loaded, and this slice does not add that. The part used here is the same rule as last time. A catalog row is not an openable file until the file is on disk.
+
+This branch owns `spikes/library/src/apple.rs`, `spikes/library/src/tests.rs`, and `docs/harness/parallel-readiness.md`. Pull request 65 does not edit those paths. Either line can merge to `main` first.
+
+It is done when `cloud_and_series_rows_do_not_look_like_missing_files` passes on a fixture folder and the public catalog API is unchanged. That fixture is not Apple Books on a Mac.
