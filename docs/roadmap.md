@@ -136,3 +136,17 @@ Gate: confirm [alan issue 1078](https://github.com/realmorrisliu/alan/issues/107
 ## Distribution
 
 WKWebView _setBackgroundColor: SPI, revisit before any Mac App Store build.
+
+## S3 shelf return
+
+Goal. A cover or **继续阅读** opens the existing reader. Escape or Command-[ returns to the library while editing is idle and immersive is off. The shelf scroll and the reading page stay. **继续阅读** lists the book just opened first.
+
+Scope. The visit is library or reading. The library form unmounts while reading, and the existing title and footer show. Shelf scroll is the offset the shelf already records, restored when the form mounts again. The page stays in settings history.
+
+Non-goals. No margin layout, no new motion, no PDF page architecture, and no immersive enter path.
+
+Observable. The EPUB fixture Plain Essay and the PDF fixture Field Guide keep scroll and page across leave. **继续阅读** follows `opened_at`. Editing focus and immersive Escape do not leave the book.
+
+Evidence. `spikes/shell/src/visit.rs` tests. The headless `shell.test.tsx` case leaves the reader between the two opens. macOS CI runs the visit tests. `smoke-shell-click` stays pending because no window was driven.
+
+Not run. Mac GUI, smoothness, frames, animation, and PDF runtime loading.

@@ -12,6 +12,7 @@ mod settings;
 mod shelf;
 mod stage;
 mod tokens;
+mod visit;
 mod web;
 
 use std::path::{Path, PathBuf};
@@ -35,12 +36,6 @@ pub use chrome::shell_opening_size;
 pub use web::mark_process_start;
 
 pub use stage::register;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Screen {
-    Shelf,
-    Reader,
-}
 
 const READER_FORCE_KEYS: &[&str] = &[
     "SPIKE_MODE",
@@ -356,7 +351,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let shelf_on = shelf_launch();
     let catalog = signal(empty_catalog());
     let epoch = signal(0_u64);
-    let screen = signal(Screen::Shelf);
+    let visit = signal(visit::Visit::shelf());
     effect({
         let trim_id = trim_id.clone();
         let bold_on = bold_on.clone();
@@ -453,6 +448,20 @@ pub fn SpikeApp() -> impl IntoElement {
         let stage = stage.clone();
         move |_| stage.command("page", json!(1))
     });
+    let leave_keys = KeyOptions {
+        when: nsh_core::keymap::When::NotEditing,
+        ..KeyOptions::default()
+    };
+    on_key_with("escape", leave_keys, {
+        let visit = visit.clone();
+        let shell_form = shell_form.clone();
+        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Escape)
+    });
+    on_key_with("mod+[", leave_keys, {
+        let visit = visit.clone();
+        let shell_form = shell_form.clone();
+        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Back)
+    });
     let import_apple = {
         let catalog = catalog.clone();
         let epoch = epoch.clone();
@@ -489,6 +498,15 @@ pub fn SpikeApp() -> impl IntoElement {
         shell_selected.get(),
         &history.get(),
     ));
+    effect({
+        let visit = visit.clone();
+        let history = history.clone();
+        move || {
+            if visit.get().surface == visit::Surface::Library {
+                history.set(settings::load_history(&settings::path()));
+            }
+        }
+    });
     effect({
         let catalog = catalog.clone();
         let shell_selected = shell_selected.clone();
@@ -546,14 +564,18 @@ pub fn SpikeApp() -> impl IntoElement {
             );
         }
     }
-    let drop_screen = screen.clone();
+    let drop_visit = visit.clone();
+    let drop_title = title.clone();
     let drop_variant = variant.clone();
+    let root_visit = visit.clone();
     view()
         .flex_1()
-        .bg(if shell_on {
-            rgb(form::FIELD_HEX).to_hsla()
-        } else {
-            rgb(reading::paper_u32()).to_hsla()
+        .bg(move || {
+            if visit::paper_background(shell_on, root_visit.get().surface) {
+                rgb(reading::paper_u32()).to_hsla()
+            } else {
+                rgb(form::FIELD_HEX).to_hsla()
+            }
         })
         .on_file_drop(move |event: &FileDropEvent| {
             if let Some(path) = event
@@ -563,9 +585,14 @@ pub fn SpikeApp() -> impl IntoElement {
             {
                 if shelf_on {
                     if let Some(cmd) = spike_library::dropped_open(std::path::Path::new(&path)) {
-                        drop_variant.set(cmd.title().to_string());
+                        let name = cmd.title().to_string();
+                        drop_variant.set(name.clone());
+                        drop_title.set(name);
                     }
-                    drop_screen.set(Screen::Reader);
+                    let page = settings::resume_page(&settings::path(), &path);
+                    let mut current = drop_visit.get();
+                    current.scroll = form::shelf_scroll();
+                    drop_visit.set(visit::open_cover(&current, &path, page));
                 }
                 dropped.command("open", json!(path));
             }
@@ -573,7 +600,8 @@ pub fn SpikeApp() -> impl IntoElement {
         .child(when(
             {
                 let bars_row = bars_row.clone();
-                move || !shell_on && !bars_row.get()
+                let visit = visit.clone();
+                move || visit::show_reader_chrome(shell_on, bars_row.get(), visit.get().surface)
             },
             {
                 let title = title.clone();
@@ -699,53 +727,73 @@ pub fn SpikeApp() -> impl IntoElement {
                             }
                         }),
                 )
-                .child(when(move || shell_on, {
-                    let shell_form = shell_form.clone();
-                    let shell_selected = shell_selected.clone();
-                    let shell_window = shell_window.clone();
-                    let shell_chrome = shell_chrome.clone();
-                    let shell_library = shell_library.clone();
-                    let import_apple = import_apple.clone();
-                    let import_calibre = import_calibre.clone();
-                    let import_folder = import_folder.clone();
-                    let stage = stage.clone();
-                    let history = history.clone();
-                    let source_menu = source_menu.clone();
-                    move || {
-                        let stage_open = stage.clone();
-                        let history_open = history.clone();
-                        form::mount(
-                            shell_form,
-                            shell_selected,
-                            shell_window,
-                            shell_chrome,
-                            shell_library,
-                            source_menu,
-                            move |peer| match peer {
-                                form::Peer::AppleBooks => import_apple(),
-                                form::Peer::Calibre => import_calibre(),
-                                form::Peer::AddFolder => import_folder(),
-                            },
-                            move |path| {
-                                // The headless runner never builds the native stage, so
-                                // the open command does not write history there. Record
-                                // the click here, then let the stage replace the row
-                                // with the real page and total when it opens.
-                                let settings_path = settings::path();
-                                let page = settings::resume_page(&settings_path, &path);
-                                let _ = settings::record_open(
-                                    &settings_path,
-                                    &path,
-                                    page,
-                                    None,
-                                    next_opened_at(&settings_path),
-                                );
-                                stage_open.command("open", json!(path));
-                                history_open.set(settings::load_history(&settings::path()));
-                            },
-                        )
-                    }
-                })),
+                .child(when(
+                    {
+                        let visit = visit.clone();
+                        move || visit::show_library(shell_on, visit.get().surface)
+                    },
+                    {
+                        let shell_form = shell_form.clone();
+                        let shell_selected = shell_selected.clone();
+                        let shell_window = shell_window.clone();
+                        let shell_chrome = shell_chrome.clone();
+                        let shell_library = shell_library.clone();
+                        let import_apple = import_apple.clone();
+                        let import_calibre = import_calibre.clone();
+                        let import_folder = import_folder.clone();
+                        let stage = stage.clone();
+                        let history = history.clone();
+                        let source_menu = source_menu.clone();
+                        let visit = visit.clone();
+                        let title = title.clone();
+                        let variant = variant.clone();
+                        move || {
+                            let stage_open = stage.clone();
+                            let history_open = history.clone();
+                            let visit_open = visit.clone();
+                            let title_open = title.clone();
+                            let variant_open = variant.clone();
+                            let library_open = shell_library.clone();
+                            form::mount(
+                                shell_form,
+                                shell_selected,
+                                shell_window,
+                                shell_chrome,
+                                shell_library,
+                                source_menu,
+                                move |peer| match peer {
+                                    form::Peer::AppleBooks => import_apple(),
+                                    form::Peer::Calibre => import_calibre(),
+                                    form::Peer::AddFolder => import_folder(),
+                                },
+                                move |path| {
+                                    // The headless runner never builds the native stage, so
+                                    // the open command does not write history there. Record
+                                    // the click here, then let the stage replace the row
+                                    // with the real page and total when it opens.
+                                    let settings_path = settings::path();
+                                    let page = settings::resume_page(&settings_path, &path);
+                                    let _ = settings::record_open(
+                                        &settings_path,
+                                        &path,
+                                        page,
+                                        None,
+                                        next_opened_at(&settings_path),
+                                    );
+                                    let mut current = visit_open.get();
+                                    current.scroll = form::shelf_scroll();
+                                    visit_open.set(visit::open_cover(&current, &path, page));
+                                    if let Some(name) = cover_title(&library_open.get(), &path) {
+                                        title_open.set(name);
+                                    }
+                                    variant_open.set(String::new());
+                                    stage_open.command("open", json!(path));
+                                    history_open.set(settings::load_history(&settings::path()));
+                                },
+                            )
+                        }
+                    },
+                )),
         )
         .child(when(move || show_text.get(), {
             let html = html.clone();
@@ -760,7 +808,8 @@ pub fn SpikeApp() -> impl IntoElement {
         .child(when(
             {
                 let bars_row = bars_row.clone();
-                move || !shell_on && !bars_row.get()
+                let visit = visit.clone();
+                move || visit::show_reader_chrome(shell_on, bars_row.get(), visit.get().surface)
             },
             {
                 let left = left.clone();
@@ -792,6 +841,30 @@ fn listen_for_opens() {
             }
         }
     });
+}
+
+fn apply_leave(visit: &Signal<visit::Visit>, form: &Signal<form::Form>, key: visit::LeaveKey) {
+    let immersion = if matches!(form.get(), form::Form::Immersive) {
+        visit::Immersion::On
+    } else {
+        visit::Immersion::Off
+    };
+    if visit::leave_key(key, visit::Focus::Idle, immersion, visit.get().surface)
+        == visit::KeyEffect::LeaveBook
+    {
+        let next = visit::leave_to_library(&visit.get());
+        form::restore_shelf_scroll(next.scroll);
+        visit.set(next);
+    }
+}
+
+fn cover_title(library: &form::LibraryIn, path: &str) -> Option<String> {
+    library
+        .continue_reading
+        .iter()
+        .chain(library.covers.iter())
+        .find(|card| card.open_path.as_deref() == Some(path))
+        .map(|card| card.title.clone())
 }
 
 fn choose_book(stage: ElementRef) {
