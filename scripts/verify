@@ -5266,30 +5266,106 @@ def gate_provided_binaries() -> None:
     provided_binary(*MEASURE_ENV)
 
 
-def provided_binary_self_test() -> None:
-    keys = SHELL_ENV + MEASURE_ENV
-    saved = {key: os.environ.get(key) for key in keys}
+def _set_prebuilt_env(path_env: str, sha_env: str, source_env: str, path: Path, sha: str, source: str) -> None:
+    for key in SHELL_ENV + MEASURE_ENV:
+        os.environ.pop(key, None)
+    os.environ[path_env] = str(path)
+    os.environ[sha_env] = sha
+    os.environ[source_env] = source
+    reset_provided_cache()
+
+
+def _refuse_prebuilt(label: str, reason: str, path_env: str, sha_env: str, source_env: str, path: Path, sha: str, source: str) -> None:
+    _set_prebuilt_env(path_env, sha_env, source_env, path, sha, source)
     try:
-        reset_provided_cache()
-        for key in keys:
-            os.environ.pop(key, None)
-        with tempfile.TemporaryDirectory() as tmp:
-            binary = Path(tmp) / "spike-shell"
-            binary.write_bytes(b"not-a-real-shell")
-            binary.chmod(0o755)
-            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-            os.environ["SR_VERIFY_SHELL"] = str(binary)
-            os.environ["SR_VERIFY_SHELL_SHA"] = "0" * 64
-            os.environ["SR_VERIFY_SHELL_SOURCE"] = git_head()
+        provided_binary(path_env, sha_env, source_env)
+    except SystemExit as exc:
+        message = str(exc)
+        assert "cargo" not in message, message
+        if reason == "wrong_sha":
+            assert "sha256" in message and "!=" in message, message
+        else:
+            assert message.startswith("product Rust differs"), message
+            assert "Rebuild the candidate" in message, message
+    else:
+        raise AssertionError(f"{label} {reason} was accepted")
+    print(f"prebuilt {label} {reason} rejected", flush=True)
+
+
+def _prove_refusal_before_work(binary: Path) -> None:
+    """Wrong sha exits from main before doctor, cargo build, or the app."""
+    global doctor, build, launch, hold_verify_lock, one_minute_load, self_test
+    ran: list[str] = []
+    saved_fns = {
+        "doctor": doctor,
+        "build": build,
+        "launch": launch,
+        "hold_verify_lock": hold_verify_lock,
+        "one_minute_load": one_minute_load,
+        "self_test": self_test,
+    }
+    saved_argv = sys.argv[:]
+
+    def stop(name: str):
+        def wrapped(*_args, **_kwargs):
+            ran.append(name)
+            raise AssertionError(f"{name} ran")
+
+        return wrapped
+
+    doctor = stop("doctor")
+    build = stop("build")
+    launch = stop("launch")
+    hold_verify_lock = stop("hold_verify_lock")
+    one_minute_load = stop("one_minute_load")
+    self_test = stop("self_test")
+    try:
+        _set_prebuilt_env(*SHELL_ENV, binary, "0" * 64, git_head())
+        for argv, lines in (
+            (["verify", "--doctor"], ("prebuilt rejected_before_doctor",)),
+            (["verify"], ("prebuilt rejected_before_build", "prebuilt rejected_before_app")),
+        ):
+            sys.argv = argv
             reset_provided_cache()
             try:
-                provided_binary(*SHELL_ENV)
+                main()
             except SystemExit as exc:
                 message = str(exc)
                 assert "sha256" in message and "!=" in message, message
                 assert "cargo" not in message, message
             else:
-                raise AssertionError("wrong sha was accepted")
+                raise AssertionError(f"{argv} accepted a wrong sha")
+            assert ran == [], ran
+            for line in lines:
+                print(line, flush=True)
+    finally:
+        doctor = saved_fns["doctor"]
+        build = saved_fns["build"]
+        launch = saved_fns["launch"]
+        hold_verify_lock = saved_fns["hold_verify_lock"]
+        one_minute_load = saved_fns["one_minute_load"]
+        self_test = saved_fns["self_test"]
+        sys.argv = saved_argv
+        reset_provided_cache()
+
+
+def provided_binary_self_test() -> None:
+    keys = SHELL_ENV + MEASURE_ENV
+    saved = {key: os.environ.get(key) for key in keys}
+    saved_target = globals()["cargo_target_dir"]
+    try:
+        reset_provided_cache()
+        for key in keys:
+            os.environ.pop(key, None)
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "prebuilt"
+            binary.write_bytes(b"not-a-real-shell")
+            binary.chmod(0o755)
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            head = git_head()
+            pairs = (("shell", SHELL_ENV), ("measure", MEASURE_ENV))
+            for label, env in pairs:
+                _refuse_prebuilt(label, "wrong_sha", *env, binary, "0" * 64, head)
             older = subprocess.run(
                 ["git", "rev-list", "--max-count=40", "HEAD"],
                 cwd=ROOT,
@@ -5303,30 +5379,31 @@ def provided_binary_self_test() -> None:
                     mismatch = sha
                     break
             assert mismatch, "no ancestor with different product Rust"
-            os.environ["SR_VERIFY_SHELL_SHA"] = digest
-            os.environ["SR_VERIFY_SHELL_SOURCE"] = mismatch
-            reset_provided_cache()
-            try:
-                provided_binary(*SHELL_ENV)
-            except SystemExit as exc:
-                message = str(exc)
-                assert message.startswith("product Rust differs"), message
-                assert "Rebuild the candidate" in message, message
-                assert "cargo" not in message, message
-            else:
-                raise AssertionError("changed product Rust was accepted")
-            os.environ["SR_VERIFY_SHELL_SOURCE"] = git_head()
-            reset_provided_cache()
-            info = provided_binary(*SHELL_ENV)
-            assert info is not None
-            assert info["sha256"] == digest
-            assert info["source"] == git_head()
-            for key in SHELL_ENV:
+            for label, env in pairs:
+                _refuse_prebuilt(label, "product_mismatch", *env, binary, digest, mismatch)
+            for label, env in pairs:
+                _set_prebuilt_env(*env, binary, digest, head)
+                info = provided_binary(*env)
+                assert info is not None
+                assert info["sha256"] == digest
+                assert info["source"] == head
+                print(f"prebuilt {label} correct_source accepted", flush=True)
+            _prove_refusal_before_work(binary)
+            for key in keys:
                 os.environ.pop(key, None)
             reset_provided_cache()
             assert provided_binary(*SHELL_ENV) is None
             assert provided_binary(*MEASURE_ENV) is None
+
+            def fake_target() -> Path:
+                return Path("/cargo-default")
+
+            globals()["cargo_target_dir"] = fake_target
+            assert release_bin("spike-shell") == Path("/cargo-default/release/spike-shell")
+            assert release_bin("spike-measure") == Path("/cargo-default/release/spike-measure")
+            print("prebuilt unset cargo_default", flush=True)
     finally:
+        globals()["cargo_target_dir"] = saved_target
         reset_provided_cache()
         for key, value in saved.items():
             if value is None:
@@ -10323,6 +10400,7 @@ def main():
     parser = argparse.ArgumentParser(description="Score the SuperReader spike.")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--prebuilt-self-test", action="store_true")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument(
         "--subset",
@@ -10330,6 +10408,11 @@ def main():
         help="preflight launches only the shell form: 1440, minimum, fullscreen enter/settle/exit, accessibility titles, and the shelf wheel",
     )
     args = parser.parse_args()
+    gate_provided_binaries()
+    if args.prebuilt_self_test:
+        provided_binary_self_test()
+        print("prebuilt-self-test passed", flush=True)
+        return 0
     if args.doctor:
         rows = doctor()
         for row in rows:
@@ -10339,7 +10422,6 @@ def main():
         self_test()
         print("self-test passed")
         return 0
-    gate_provided_binaries()
     try:
         self_test()
     except Exception as exc:

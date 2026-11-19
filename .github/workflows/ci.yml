@@ -206,9 +206,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 40
       - name: Reject fast model ids in agent text
         working-directory: ${{ github.workspace }}
         run: sh scripts/lint-no-fast-models.sh
+      - name: Prebuilt binary sha and source gate
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          python3 -u scripts/verify --prebuilt-self-test | tee "$log"
+          for line in \
+            "prebuilt shell wrong_sha rejected" \
+            "prebuilt measure wrong_sha rejected" \
+            "prebuilt shell product_mismatch rejected" \
+            "prebuilt measure product_mismatch rejected" \
+            "prebuilt shell correct_source accepted" \
+            "prebuilt measure correct_source accepted" \
+            "prebuilt rejected_before_doctor" \
+            "prebuilt rejected_before_build" \
+            "prebuilt rejected_before_app" \
+            "prebuilt unset cargo_default"
+          do
+            grep -F "$line" "$log"
+          done
 
   bold-word-starts-ip:
     runs-on: macos-latest
