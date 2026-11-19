@@ -456,7 +456,7 @@ const SCRIPT: &str = r#"
   let busy = false;
   let queued = 0;
   let queuedToken = 0;
-  let queuedChase = false;
+  let queuedSource = "";
   let shift = 0;
   let followX = 0;
   let followGen = 0;
@@ -831,54 +831,66 @@ const SCRIPT: &str = r#"
     if (window.spikeJustify) window.spikeJustify.whenVisibleCommitted().then(seekOffset);
     else seekOffset();
   };
-  function settle(frames, token, chase) {
+  function settle(frames, token, source) {
     document.documentElement.style.transform = "none";
     const leaf = document.getElementById("spike-leaf");
     if (leaf) leaf.remove();
     const extra = token ? { frames: frames, swipe: token } : { frames: frames };
-    if (chase) extra.chase = true;
+    if (token) source = "user";
+    if (source === "restore") extra.chase = true;
     else if (!token) extra.kind = "turn";
     post(extra);
     busy = false;
     window.spikeBusy = false;
     const next = queued;
     const nextToken = queuedToken;
-    const nextChase = queuedChase;
+    const nextSource = queuedSource;
     queued = 0;
     queuedToken = 0;
-    queuedChase = false;
-    if (next) begin(next, nextToken, nextChase);
+    queuedSource = "";
+    if (next) begin(next, nextToken, nextSource);
   }
-  window.spikeTurn = function (delta, chase) {
+  window.spikeTurn = function (delta, source) {
     // A commit glide is the turn that was already decided. Bumping the
     // generation here kills the only callback that clears `busy` and runs
     // the queued key, so the page stops accepting turns. A return glide has
     // not committed, and a key cancels it. The key takes the one queue slot,
     // so a swipe token waiting in that slot is retired.
-    if (!committing) {
+    if (source !== "restore") source = "user";
+    if (!committing && source !== "restore") {
       followGen++;
       followX = 0;
       root.style.transform = "none";
     }
-    if (queuedToken) {
+    if (source !== "restore" && queuedToken) {
       var dropped = queuedToken;
       queuedToken = 0;
+      queuedSource = "";
       post({ swipe: dropped, dropped: true });
     }
     delta = delta < 0 ? -1 : 1;
     if (busy) {
+      if (source === "restore") {
+        if (committing && !queuedToken && !queued) {
+          queued = delta;
+          queuedSource = "restore";
+          return "queued";
+        }
+        return "no";
+      }
       queued = delta;
-      queuedChase = !!chase;
+      queuedSource = "user";
       return "queued";
     }
-    begin(delta, 0, chase);
+    begin(delta, 0, source);
     return "ok";
   };
-  function begin(delta, token, chase) {
+  function begin(delta, token, source) {
+    if (source !== "restore") source = "user";
     const box = column();
     const target = box.page + delta;
     if (target < 1 || target > box.pages) {
-      if (chase) post({ frames: [], chase: true });
+      if (source === "restore") post({ frames: [], chase: true });
       else post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
       return;
     }
@@ -887,9 +899,9 @@ const SCRIPT: &str = r#"
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
     window.spikeCover = null;
     busy = true;
-    slide(box, delta, token || 0, !!chase);
+    slide(box, delta, token || 0, source);
   }
-  function slide(box, delta, token, chase) {
+  function slide(box, delta, token, source) {
     seek(box.w * (box.page + delta - 1));
     const live = motion;
     const leaf = document.createElement("div");
@@ -911,7 +923,7 @@ const SCRIPT: &str = r#"
         return;
       }
       if (live !== motion) return;
-      settle(frames, token || 0, chase);
+      settle(frames, token || 0, source);
     }
     requestAnimationFrame(frame);
   }
@@ -1025,6 +1037,7 @@ const SCRIPT: &str = r#"
       if (delta) {
         queued = delta < 0 ? -1 : 1;
         queuedToken = token || 0;
+        queuedSource = "user";
         return "queued";
       }
       return "no";
@@ -1052,9 +1065,11 @@ const SCRIPT: &str = r#"
       busy = false;
       const next = queued;
       const nextToken = queuedToken;
+      const nextSource = queuedSource;
       queued = 0;
       queuedToken = 0;
-      if (next) begin(next, nextToken, false);
+      queuedSource = "";
+      if (next) begin(next, nextToken, nextSource);
     });
     return "glide";
   };

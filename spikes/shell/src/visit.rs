@@ -1000,6 +1000,9 @@ pub struct Reader {
     pub hold: Option<u32>,
     /// One reveal `poll_web` may run. A later poll does not invent another.
     pub reveal: Option<u32>,
+    /// The one column walk started by a page-only resume. It ends when the
+    /// shown column reaches it, or when a reader turn or a resize takes over.
+    pub walk: Option<u32>,
 }
 
 impl Default for Reader {
@@ -1018,8 +1021,36 @@ impl Default for Reader {
             back: None,
             hold: None,
             reveal: None,
+            walk: None,
         }
     }
+}
+
+/// Who asked the page to turn. The script posts this source. Frames do not
+/// choose it, and `web.turn` does not default every caller to a restore.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnSource {
+    /// Poll walking a stored page. `SPIKE_TURN` and `SPIKE_PLAY` are the host
+    /// moving columns, so they use this too.
+    Restore,
+    /// A shell key, a shell edge, a page key, or a page edge.
+    User,
+}
+
+/// The eval `web.turn` runs. Tests send this string; they do not pick a flag.
+pub fn turn_command(delta: i32, source: TurnSource) -> String {
+    let source = match source {
+        TurnSource::Restore => "restore",
+        TurnSource::User => "user",
+    };
+    format!("window.spikeTurn({delta},\"{source}\")")
+}
+
+/// The eval `release_swipe` runs. The page's answer is in the returned JSON.
+pub fn release_command(delta: i32, token: u64) -> String {
+    format!(
+        "(function(){{var answer=(window.spikeFollowEnd&&window.spikeFollowEnd({delta},{token}))||\"no\";return JSON.stringify({{answer:answer,swipe:{token}}});}})()"
+    )
 }
 
 /// The script message, parsed once. Absent fields stay absent.
@@ -1099,6 +1130,7 @@ fn clear_resume(reader: &mut Reader) {
     reader.pending = 0;
     reader.hold = None;
     reader.reveal = None;
+    reader.walk = None;
 }
 
 /// Accept a script message. The place changes only after `write_place`
@@ -1225,6 +1257,9 @@ pub fn handle_page(
     if write {
         reader.place = place;
     }
+    if reader.walk.is_some_and(|target| shown >= target) {
+        reader.walk = None;
+    }
     Apply {
         accepted: true,
         paint: true,
@@ -1274,6 +1309,9 @@ pub fn handle_chapter(
     reader.jump_offset = nav.jump_offset;
     reader.awaiting = nav.awaiting;
     reader.reveal = None;
+    if !matches!(nav.go, ChapterMove::Stay) {
+        reader.walk = None;
+    }
     let reveal = match nav.go {
         ChapterMove::Reveal { offset } => Some(offset),
         _ => None,
@@ -1308,6 +1346,13 @@ pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str) {
     reader.hold = None;
     reader.back = None;
     reader.reveal = None;
+    reader.walk = resume_walk(page, offset);
+}
+
+/// A resize, or a shell key that has already taken the page, ends the walk.
+/// The saved row is not written here.
+pub fn stop_walk(reader: &mut Reader) {
+    reader.walk = None;
 }
 
 pub fn open_resume(reader: &mut Reader, store: &dyn PlaceFile) {
@@ -1330,6 +1375,26 @@ pub fn resume_walk(page: u32, offset: u32) -> Option<u32> {
 /// still short of `resume_walk`. A turn already in flight is not repeated.
 pub fn resume_turn(target: Option<u32>, shown: u32, pages: u32, turning: bool) -> bool {
     target.is_some_and(|target| pages > 1 && shown < target && !turning)
+}
+
+/// One poll. Reaching the stored column ends the walk. The command is the
+/// restore eval, or nothing when the walk is over or a turn is in flight.
+pub struct ResumePoll {
+    pub walk: Option<u32>,
+    pub command: Option<String>,
+}
+
+pub fn poll_resume(walk: Option<u32>, shown: u32, pages: u32, turning: bool) -> ResumePoll {
+    let walk = match walk {
+        Some(target) if shown >= target => None,
+        other => other,
+    };
+    let command = if resume_turn(walk, shown, pages, turning) {
+        Some(turn_command(1, TurnSource::Restore))
+    } else {
+        None
+    };
+    ResumePoll { walk, command }
 }
 
 pub fn take_reveal(reader: &mut Reader) -> Option<u32> {

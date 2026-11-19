@@ -328,7 +328,6 @@ struct State {
     play_at: Option<Instant>,
     turn_pending: bool,
     seen_frames: usize,
-    goto: Option<usize>,
     title_settled: bool,
     chrome: Rc<crate::chrome::Runtime>,
 }
@@ -425,11 +424,11 @@ impl State {
             let playing = std::env::var("SPIKE_PLAY").as_deref() == Ok("1")
                 && self.play_count < 3
                 && !self.turn_pending;
-            let need_page = self.goto.is_some_and(|target| {
+            let need_page = crate::web::reader_walk().is_some_and(|target| {
                 self.web
                     .as_ref()
                     .and_then(|web| web.inbox.borrow().pages)
-                    .map(|(page, _)| page < target)
+                    .map(|(page, _)| (page as u32) < target)
                     .unwrap_or(true)
             });
             if self.chrome_moving() || playing || need_page {
@@ -625,7 +624,8 @@ impl State {
                 let delta = args.as_i64().unwrap_or(0);
                 if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
-                        web.turn(delta as i32);
+                        crate::web::stop_walk();
+                        web.turn(delta as i32, crate::visit::TurnSource::User);
                     }
                 } else if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
                     self.turn_pdf(delta);
@@ -682,9 +682,7 @@ impl State {
                 }
             }
         };
-        if moved {
-            self.goto = crate::visit::opening_page(&go, self.goto);
-        }
+        let _ = (moved, go);
     }
 
     fn select_phrase(&mut self, phrase: &str) {
@@ -919,7 +917,6 @@ impl State {
             }
             if self.web.is_some() {
                 crate::web::open_reader(page, offset, &href);
-                self.goto = crate::visit::resume_walk(page, offset).map(|page| page as usize);
             }
             self.web.is_some()
         } else {
@@ -1005,7 +1002,7 @@ impl State {
             Mode::Pdfium | Mode::Hayro => Some(self.current_page() as u32 + 1),
             Mode::WebKit => {
                 let shown = self.epub_page as u32 + 1;
-                if self.goto.is_some_and(|target| (shown as usize) < target) {
+                if crate::web::reader_walk().is_some_and(|target| shown < target) {
                     None
                 } else {
                     Some(shown)
@@ -1083,29 +1080,22 @@ impl State {
             if ready && !already {
                 web.inbox.borrow_mut().scripted_turn = true;
                 self.turn_pending = true;
-                web.turn(1);
+                web.turn(1, crate::visit::TurnSource::Restore);
             }
         }
-        if let Some(target) = self.goto {
-            let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
-            if crate::visit::resume_turn(
-                Some(target as u32),
-                page as u32,
-                count as u32,
-                self.turn_pending,
-            ) {
-                self.turn_pending = true;
-                self.play_at = Some(Instant::now());
-                web.turn(1);
-            }
-            if self.turn_pending
-                && self
-                    .play_at
-                    .map(|at| at.elapsed().as_millis() > 700)
-                    .unwrap_or(false)
-            {
-                self.turn_pending = false;
-            }
+        let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
+        if crate::web::poll_reader_walk(page as u32, count as u32, self.turn_pending) {
+            self.turn_pending = true;
+            self.play_at = Some(Instant::now());
+            web.turn(1, crate::visit::TurnSource::Restore);
+        }
+        if self.turn_pending
+            && self
+                .play_at
+                .map(|at| at.elapsed().as_millis() > 700)
+                .unwrap_or(false)
+        {
+            self.turn_pending = false;
         }
         if std::env::var("SPIKE_PLAY").as_deref() == Ok("1") {
             let ready = web
@@ -1126,7 +1116,7 @@ impl State {
                 self.play_count += 1;
                 self.play_at = Some(Instant::now());
                 self.turn_pending = true;
-                web.turn(1);
+                web.turn(1, crate::visit::TurnSource::Restore);
             }
         }
         let frame_count = web.inbox.borrow().frame_ms.len();
@@ -1284,6 +1274,7 @@ impl State {
             crate::visit::PlaceStep::Hold => return,
             crate::visit::PlaceStep::Cancel { reflow } => {
                 crate::web::cancel_swipe();
+                crate::web::stop_walk();
                 self.placed_stage_w = self.stage_w;
                 self.placed_stage_h = self.stage_h;
                 if !reflow {
@@ -1629,9 +1620,6 @@ impl Stage {
             play_at: None,
             turn_pending: false,
             seen_frames: 0,
-            goto: std::env::var("SPIKE_AT")
-                .ok()
-                .and_then(|raw| raw.parse().ok()),
             title_settled: false,
             chrome: Rc::new(crate::chrome::Runtime::default()),
         }));
@@ -1712,6 +1700,9 @@ impl Stage {
                 if let Some(web) = state.web.as_ref() {
                     let href = web.href();
                     crate::web::open_reader(1, 0, &href);
+                    if let Ok(page) = std::env::var("SPIKE_AT").unwrap_or_default().parse::<u32>() {
+                        crate::web::prime_walk(page);
+                    }
                 }
                 state.publish();
             }

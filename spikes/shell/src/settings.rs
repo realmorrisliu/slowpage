@@ -1533,7 +1533,11 @@ mod tests {
             assert_eq!(resume_page(&file, book), 10);
             assert_eq!(resume_offset(&file, book), 0);
             assert!(crate::visit::resume_turn(target, shown, pages, false));
-            let crossed = read_step(&mut stdin, &mut stdout, "chase");
+            let crossed = read_step(
+                &mut stdin,
+                &mut stdout,
+                &crate::visit::turn_command(1, crate::visit::TurnSource::Restore),
+            );
             assert!(crossed.iter().any(|post| post.get("frames").is_some()));
             assert!(crossed.iter().all(|post| post["kind"] != "turn"));
             apply_posts(&mut reader, &crossed, href, &mut store, shown, pages, true);
@@ -1571,7 +1575,11 @@ mod tests {
                 && steps < 12
             {
                 turning = true;
-                let posts = read_step(&mut stdin, &mut stdout, "chase");
+                let posts = read_step(
+                    &mut stdin,
+                    &mut stdout,
+                    &crate::visit::turn_command(1, crate::visit::TurnSource::Restore),
+                );
                 let applied =
                     apply_posts(&mut reader, &posts, href, &mut store, shown, pages, turning);
                 shown = applied.0;
@@ -1593,11 +1601,19 @@ mod tests {
             let (shown, pages, turning) =
                 apply_posts(&mut reader, &opened, href, &mut store, 1, 1, false);
             assert!(crate::visit::resume_turn(Some(10), shown, pages, turning));
-            let chased = read_step(&mut stdin, &mut stdout, "chase");
+            let chased = read_step(
+                &mut stdin,
+                &mut stdout,
+                &crate::visit::turn_command(1, crate::visit::TurnSource::Restore),
+            );
             let (shown, pages, turning) =
                 apply_posts(&mut reader, &chased, href, &mut store, shown, pages, true);
             assert_eq!(resume_page(&file, book), 10);
-            let taken = read_step(&mut stdin, &mut stdout, "user");
+            let taken = read_step(
+                &mut stdin,
+                &mut stdout,
+                &crate::visit::turn_command(1, crate::visit::TurnSource::User),
+            );
             assert!(taken.iter().any(|post| post["kind"] == "turn"));
             apply_posts(&mut reader, &taken, href, &mut store, shown, pages, turning);
             let saved = resume_page(&file, book);
@@ -1608,6 +1624,292 @@ mod tests {
             assert_eq!(reader.place.page, saved);
             assert_eq!(resume_href(&file, book), href);
         }
+        let _ = writeln_cmd(&mut stdin, "quit");
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_resume_walk_ends_when_the_reader_moves() {
+        let script = crate::reading::page_script("en");
+        let dir = std::env::temp_dir().join(format!("superreader-walk-end-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page_js = dir.join("page.js");
+        let drive = dir.join("drive.js");
+        std::fs::write(&page_js, script).unwrap();
+        std::fs::write(&drive, PAGE_WALK_DRIVE).unwrap();
+        let mut child = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page_js)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("node");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        let _opened = read_posts(&mut stdout);
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        for href in ["", "ch.xhtml"] {
+            let mut reader = crate::visit::Reader::default();
+            let mut store = SettingsBook { file: &file, book };
+            record_progress(&file, book, 10, None, 0, href).unwrap();
+            crate::visit::open_resume(&mut reader, &store);
+            assert_eq!(reader.walk, Some(10));
+            let mut shown = 1u32;
+            let mut pages = 1u32;
+            let polled = crate::visit::poll_resume(reader.walk, shown, 40, false);
+            reader.walk = polled.walk;
+            let command = polled.command.expect("the walk still has columns");
+            let crossed = read_step(&mut stdin, &mut stdout, &command);
+            assert!(crossed.iter().any(|post| post["chase"] == true), "{href}");
+            assert!(crossed.iter().all(|post| post["kind"] != "turn"), "{href}");
+            let applied = apply_posts(&mut reader, &crossed, href, &mut store, shown, pages, true);
+            shown = applied.0;
+            pages = applied.1;
+            assert_eq!(resume_page(&file, book), 10, "{href}");
+            let taken = read_step(
+                &mut stdin,
+                &mut stdout,
+                &crate::visit::turn_command(1, crate::visit::TurnSource::User),
+            );
+            assert!(
+                taken.iter().any(|post| post["kind"] == "turn"),
+                "{href} {taken:?}"
+            );
+            apply_posts(&mut reader, &taken, href, &mut store, shown, pages, false);
+            let saved = resume_page(&file, book);
+            assert_ne!(saved, 10, "{href}");
+            assert_eq!(saved, reader.place.page, "{href}");
+            assert!(reader.walk.is_none(), "{href}");
+            shown = reader.place.page;
+            for _ in 0..3 {
+                let again = crate::visit::poll_resume(reader.walk, shown, pages, false);
+                assert!(again.command.is_none(), "{href}");
+                reader.walk = again.walk;
+                assert_eq!(resume_page(&file, book), saved, "{href}");
+            }
+        }
+
+        record_progress(&file, book, 10, None, 0, "").unwrap();
+        let mut store = SettingsBook { file: &file, book };
+        let mut reader = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut reader, &store);
+        let mut shown = 1u32;
+        let mut pages = 40u32;
+        let mut left = false;
+        let mut steps = 0u32;
+        while steps < 12 {
+            let polled = crate::visit::poll_resume(reader.walk, shown, pages, false);
+            reader.walk = polled.walk;
+            let Some(command) = polled.command else {
+                break;
+            };
+            let posts = read_step(&mut stdin, &mut stdout, &command);
+            let applied = apply_posts(&mut reader, &posts, "", &mut store, shown, pages, true);
+            shown = applied.0;
+            pages = applied.1;
+            steps += 1;
+            assert_eq!(resume_page(&file, book), 10);
+            assert_eq!(resume_offset(&file, book), 0);
+            if !left {
+                crate::visit::leave(&mut reader);
+                crate::visit::open_resume(&mut reader, &store);
+                assert_eq!((reader.place.page, reader.place.offset), (10, 0));
+                assert_eq!(reader.walk, Some(10));
+                left = true;
+            }
+        }
+        assert!(shown >= 10, "{shown}");
+        assert!(reader.walk.is_none());
+        let back = read_step(
+            &mut stdin,
+            &mut stdout,
+            &crate::visit::turn_command(-1, crate::visit::TurnSource::User),
+        );
+        assert!(back.iter().any(|post| post["kind"] == "turn"), "{back:?}");
+        apply_posts(&mut reader, &back, "", &mut store, shown, pages, false);
+        let backed = resume_page(&file, book);
+        assert_ne!(backed, 10);
+        assert!(reader.walk.is_none());
+        for _ in 0..3 {
+            let again = crate::visit::poll_resume(reader.walk, backed, pages, false);
+            assert!(again.command.is_none());
+            reader.walk = again.walk;
+            assert_eq!(resume_page(&file, book), backed);
+        }
+
+        let mut store = SettingsBook { file: &file, book };
+        for (label, command) in [
+            (
+                "left",
+                crate::visit::turn_command(
+                    crate::visit::page_key_delta(true, crate::visit::Surface::Reading, false),
+                    crate::visit::TurnSource::User,
+                ),
+            ),
+            (
+                "right",
+                crate::visit::turn_command(
+                    crate::visit::page_key_delta(true, crate::visit::Surface::Reading, true),
+                    crate::visit::TurnSource::User,
+                ),
+            ),
+            (
+                "space",
+                crate::visit::turn_command(
+                    crate::visit::page_key_delta(true, crate::visit::Surface::Reading, true),
+                    crate::visit::TurnSource::User,
+                ),
+            ),
+            (
+                "shift-space",
+                crate::visit::turn_command(
+                    crate::visit::page_key_delta(true, crate::visit::Surface::Reading, false),
+                    crate::visit::TurnSource::User,
+                ),
+            ),
+            (
+                "edge-back",
+                crate::visit::turn_command(-1, crate::visit::TurnSource::User),
+            ),
+            (
+                "edge-forward",
+                crate::visit::turn_command(1, crate::visit::TurnSource::User),
+            ),
+            ("page-right", "keydown {\"key\":\"ArrowRight\"}".to_string()),
+            ("page-left", "keydown {\"key\":\"ArrowLeft\"}".to_string()),
+            ("page-space", "keydown {\"key\":\" \"}".to_string()),
+            (
+                "page-shift-space",
+                "keydown {\"key\":\" \",\"shiftKey\":true}".to_string(),
+            ),
+            (
+                "page-edge-forward",
+                "click {\"clientX\":390,\"clientY\":20}".to_string(),
+            ),
+            (
+                "page-edge-back",
+                "click {\"clientX\":10,\"clientY\":20}".to_string(),
+            ),
+        ] {
+            record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+            let mut reader = crate::visit::Reader::default();
+            crate::visit::open_resume(&mut reader, &store);
+            assert_eq!(reader.walk, Some(10), "{label}");
+            let posts = read_step(&mut stdin, &mut stdout, &command);
+            assert!(
+                posts.iter().any(|post| post["kind"] == "turn"),
+                "{label} {posts:?}"
+            );
+            apply_posts(&mut reader, &posts, "ch.xhtml", &mut store, 1, 40, false);
+            assert!(reader.walk.is_none(), "{label}");
+            assert_eq!(resume_page(&file, book), reader.place.page, "{label}");
+            let saved = reader.place.page;
+            let again = crate::visit::poll_resume(reader.walk, 3, 40, false);
+            assert!(again.command.is_none(), "{label}");
+            assert_eq!(resume_page(&file, book), saved, "{label}");
+        }
+
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        let mut reader = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut reader, &store);
+        let (quiet, answer) = read_answered(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::release_command(1, 11)),
+        );
+        assert!(quiet.is_empty(), "{quiet:?}");
+        let parsed: serde_json::Value = serde_json::from_str(&answer).expect(&answer);
+        reader
+            .swipe
+            .note_answer(11, parsed["answer"].as_str().unwrap());
+        let (queued_posts, _) = read_answered(
+            &mut stdin,
+            &mut stdout,
+            &format!(
+                "now {}",
+                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+            ),
+        );
+        assert!(queued_posts.iter().all(|post| post["dropped"] != true));
+        let finished = read_step(&mut stdin, &mut stdout, "void 0");
+        assert!(finished.iter().all(|post| post["dropped"] != true));
+        assert!(
+            finished.iter().any(|post| post["chase"] == true),
+            "{finished:?}"
+        );
+        assert!(
+            finished.iter().all(|post| post["kind"] != "turn"),
+            "{finished:?}"
+        );
+        let swipe_page = finished
+            .iter()
+            .find(|post| post["swipe"].as_u64() == Some(11))
+            .unwrap()["page"]
+            .as_u64()
+            .unwrap() as u32;
+        apply_posts(&mut reader, &finished, "ch.xhtml", &mut store, 1, 40, false);
+        assert_eq!(resume_page(&file, book), swipe_page);
+        assert_eq!(reader.place.page, swipe_page);
+
+        let (first_posts, first_answer) = read_answered(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::release_command(1, 21)),
+        );
+        assert!(first_posts.is_empty());
+        let first: serde_json::Value = serde_json::from_str(&first_answer).unwrap();
+        reader
+            .swipe
+            .note_answer(21, first["answer"].as_str().unwrap());
+        let (second_posts, second_answer) = read_answered(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::release_command(1, 22)),
+        );
+        assert!(second_posts.iter().all(|post| post["dropped"] != true));
+        let second: serde_json::Value = serde_json::from_str(&second_answer).unwrap();
+        reader
+            .swipe
+            .note_answer(22, second["answer"].as_str().unwrap());
+        let (chase_posts, _) = read_answered(
+            &mut stdin,
+            &mut stdout,
+            &format!(
+                "now {}",
+                crate::visit::turn_command(1, crate::visit::TurnSource::Restore)
+            ),
+        );
+        assert!(
+            chase_posts.iter().all(|post| post["dropped"] != true),
+            "{chase_posts:?}"
+        );
+        let released = read_step(&mut stdin, &mut stdout, "void 0");
+        assert!(
+            released.iter().all(|post| post["dropped"] != true),
+            "{released:?}"
+        );
+        assert!(
+            released
+                .iter()
+                .any(|post| post["swipe"].as_u64() == Some(22)),
+            "{released:?}"
+        );
+
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        let mut reader = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut reader, &store);
+        crate::visit::stop_walk(&mut reader);
+        assert!(crate::visit::poll_resume(reader.walk, 3, 40, false)
+            .command
+            .is_none());
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+
         let _ = writeln_cmd(&mut stdin, "quit");
         let _ = child.wait();
         let _ = std::fs::remove_dir_all(&dir);
@@ -1649,8 +1951,21 @@ mod tests {
         stdout: &mut impl std::io::BufRead,
         command: &str,
     ) -> Vec<serde_json::Value> {
+        read_answered(stdin, stdout, command).0
+    }
+
+    fn read_answered(
+        stdin: &mut impl std::io::Write,
+        stdout: &mut impl std::io::BufRead,
+        command: &str,
+    ) -> (Vec<serde_json::Value>, String) {
         writeln_cmd(stdin, command);
-        read_posts(stdout)
+        let mut line = String::new();
+        stdout.read_line(&mut line).expect("node");
+        let value: serde_json::Value = serde_json::from_str(&line).expect(&line);
+        let posts = value["posts"].as_array().cloned().unwrap_or_default();
+        let answer = value["answer"].as_str().unwrap_or("").to_string();
+        (posts, answer)
     }
 
     fn writeln_cmd(stdin: &mut impl std::io::Write, command: &str) {
@@ -1694,7 +2009,13 @@ global.document = {
   createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
 };
 global.NodeFilter = { SHOW_TEXT: 4 };
-global.addEventListener = () => {};
+const listeners = {};
+global.addEventListener = (type, fn) => {
+  (listeners[type] ||= []).push(fn);
+};
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
 global.window = global;
 window.innerWidth = 400;
 window.innerHeight = 800;
@@ -1713,13 +2034,24 @@ flush();
 emit({ posts: posts.slice() });
 const readline = require('readline');
 const rl = readline.createInterface({ input: process.stdin });
+function drain() {
+  for (let i = 0; i < 8 && raf.length; i++) flush();
+}
 rl.on('line', (line) => {
   if (line === 'quit') process.exit(0);
   posts.length = 0;
-  window.spikeTurn(1, line === 'chase');
-  flush();
-  flush();
-  flush();
-  emit({ posts: posts.slice() });
+  let answer = null;
+  if (line.startsWith('keydown ')) {
+    fire('keydown', Object.assign({ repeat: false, shiftKey: false, preventDefault() {} }, JSON.parse(line.slice(8))));
+  } else if (line.startsWith('click ')) {
+    const spec = JSON.parse(line.slice(6));
+    fire('mousedown', { button: 0, clientX: spec.clientX, clientY: spec.clientY || 0 });
+    fire('click', Object.assign({ button: 0, preventDefault() {} }, spec));
+  } else {
+    const defer = line.startsWith('now ');
+    answer = eval(defer ? line.slice(4) : line);
+  }
+  if (!line.startsWith('now ')) drain();
+  emit({ posts: posts.slice(), answer: answer == null ? null : String(answer) });
 });
 "#;

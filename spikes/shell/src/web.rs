@@ -864,12 +864,12 @@ impl WebChapter {
         );
     }
 
-    pub fn turn(&self, delta: i32) {
+    pub fn turn(&self, delta: i32, source: crate::visit::TurnSource) {
         self.inbox.borrow_mut().turn_started = Some(Instant::now());
         let (web, _, href) = self.shown();
         eval(
             &web,
-            &format!("window.spikeTurn({delta}, true)"),
+            &crate::visit::turn_command(delta, source),
             self.inbox.clone(),
             href,
             true,
@@ -905,9 +905,7 @@ impl WebChapter {
         let (web, _, href) = self.shown();
         eval(
             &web,
-            &format!(
-                "(function(){{var answer=(window.spikeFollowEnd&&window.spikeFollowEnd({delta},{token}))||\"no\";return JSON.stringify({{answer:answer,swipe:{token}}});}})()"
-            ),
+            &crate::visit::release_command(delta, token),
             self.inbox.clone(),
             href,
             delta != 0,
@@ -1171,6 +1169,31 @@ pub fn open_reader(page: u32, offset: u32, href: &str) {
     SESSION.with(|session| {
         crate::visit::open_place(&mut session.borrow_mut().reader, page, offset, href);
     });
+}
+
+pub fn reader_walk() -> Option<u32> {
+    SESSION.with(|session| session.borrow().reader.walk)
+}
+
+/// The spike launcher's `SPIKE_AT`. The saved row stays the opened page.
+pub fn prime_walk(page: u32) {
+    SESSION.with(|session| {
+        session.borrow_mut().reader.walk = crate::visit::resume_walk(page, 0);
+    });
+}
+
+pub fn stop_walk() {
+    SESSION.with(|session| crate::visit::stop_walk(&mut session.borrow_mut().reader));
+}
+
+/// One poll of the reader's walk. Reaching the column clears it.
+pub fn poll_reader_walk(shown: u32, pages: u32, turning: bool) -> bool {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        let polled = crate::visit::poll_resume(session.reader.walk, shown, pages, turning);
+        session.reader.walk = polled.walk;
+        polled.command.is_some()
+    })
 }
 
 pub fn take_reader_reveal() -> Option<u32> {
