@@ -77,12 +77,23 @@ test("添加来源 adds a second source and PDF filters the grid", async () => {
 });
 
 test("继续阅读 lists opened books with the latest first", async () => {
-  const app = await open(".");
+  const app = await open(".", { platform: "macos", width: 1280, height: 800 });
   await app.press("Apple Books");
   await app.press("Plain Essay");
-  await app.wait(50);
+  let blob = `\n${app.texts().join("\n")}\n`;
+  expect(blob).toContain("Plain Essay");
+  expect(blob).not.toContain("\n书库\n");
+  await app.keyboard.press("escape");
+  blob = `\n${app.texts().join("\n")}\n`;
+  expect(blob).toContain("\n书库\n");
+  expect(blob).toContain("第 1 页");
   await app.press("Field Guide");
-  const blob = `\n${app.texts().join("\n")}\n`;
+  blob = `\n${app.texts().join("\n")}\n`;
+  expect(blob).toContain("Field Guide");
+  expect(blob).not.toContain("\n书库\n");
+  await app.keyboard.press("mod+[");
+  blob = `\n${app.texts().join("\n")}\n`;
+  expect(blob).toContain("\n书库\n");
   const start = blob.indexOf("\n继续阅读\n");
   const end = blob.indexOf("\n书架\n");
   const row = blob.slice(start, end);

@@ -16,7 +16,10 @@ Each slice below is a thin cut of that one form.
 
 - S1. The gray base, the 220 point version B sidebar, the white card, and the library chat panel frame, including empty states. Replace the bare shelf window. Remove the Open button flow and the `open -a` and Open With checks. Do not repair them. `spikes/library` stays.
 - S2. The cover grid and **继续阅读** in the card, filled from `Catalog`.
-- S3. The reading form, using the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits until Morris approves a mockup of the exact gap, the horizontal position, the margin width, and the toggle placement. The margin's contents are the 2026-11-10 hard requirement in `docs/design/north-star.md`.
+- S3. The reading form, using the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits until Morris approves a mockup of the exact gap, the horizontal position, the margin width, and the toggle placement. The margin's contents are the 2026-11-10 hard requirement in `docs/design/north-star.md`. Interaction detail for S3, S4, and every slice after them is `docs/design/reading-interactions.md`. One checklist item, or a small group, is one pull request. It merges on the necessary cloud checks and an independent review.
+
+The checklist document records the rule. It does not build an item, the margin mockup, or S4, and it does not start the alan embed. The document merges on the necessary cloud checks and an independent review. A green run does not pass the ten items. Not executed, and not a blocker for this document: the ten items, their `nsh test` runs, their Mac recordings, the real Apple Books round, and the shell GUI, performance, image, and animation checks. `deny.toml` still ignores RUSTSEC-2026-0543 (chrono 0.4.45 via nsh-base 0.5.1 and pdfium-render 0.9.5). That ignore is not a clearance.
+
 - S4. The immersive form. Control-Command-I, the menu item, and the toolbar button enter it. Escape leaves it.
 - S5. Motion, and the fit of the three forms. Night mode and a theme switch stay out. Light and dark join this slice only if a later decision revises the 2026-11-03 rule.
 
@@ -103,7 +106,7 @@ Morris picked `generic` / `list` for the contents control. That glyph is on main
 
 Queued after the shell slices, with [pull request 45](https://github.com/realmorrisliu/slowpage/pull/45), and before the calibre targets in Library.
 
-The spike still scrolls PDFs in one column. Replace that with fit-page inside the white reading card, EPUB's page-turn interaction, and pdfium with adjacent-page cache. The hard requirements are in `docs/design/north-star.md`, PDF reading.
+The spike still scrolls PDFs in one column. Replace that with fit-page inside the white reading card, EPUB's page-turn interaction, and pdfium with adjacent-page cache. The hard requirements are in `docs/design/north-star.md`, PDF reading. EPUB and PDF both run the checklist in `docs/design/reading-interactions.md`. Item 10 of that checklist is this paged PDF rule.
 
 The implementing pull request must attach prototype screenshots for Morris's approval before the code change: fit-page in the card at two window sizes, and a mid-turn frame.
 
@@ -121,18 +124,80 @@ The reading form shows a highlight, a note, and an agent response in the annotat
 
 ## @alan
 
-Blocked on the external dependency. When the gate is open, `@alan` spawns a fresh one-shot `alan` process with the passage, the note, the earlier comments, and the question on stdin. SuperReader stores stdout as alan's reply. The spawn does not pass `--resume`. The comment shows a thinking state until the whole reply lands.
+Picked on 2026-11-17. This decision supersedes the 2026-11-03 one-shot process. The full decision is in `docs/design/north-star.md`. SuperReader embeds alan in-process through `alan_os_host::embed` in [alan pull request 1109](https://github.com/realmorrisliu/alan/pull/1109). A reply is `EmbedEvent::TextDelta` from `EmbedEventStream::next_event`. SuperReader's SQLite owns the thread. Each ask sends that thread as context.
 
-## External dependency
-
-Owner: Morris. The work is assigned to him on [alan issue 1078](https://github.com/realmorrisliu/alan/issues/1078).
-
-alan needs a launch flag or mode so that a reader-spawned run does not rewrite its global root-rollout pointer. Today every launch rewrites that pointer. A reader-spawned launch would replace Morris's next `alan --resume` session.
-
-Status: pending.
-
-Gate: confirm [alan issue 1078](https://github.com/realmorrisliu/alan/issues/1078) is closed and the flag has landed before the @alan milestone starts. The change lands in the alan repository. This repository does not carry that patch.
+Integration starts after S3 and S4. This repository does not start it now.
 
 ## Distribution
 
 WKWebView _setBackgroundColor: SPI, revisit before any Mac App Store build.
+
+## S3 shelf return
+
+Goal. A cover or **继续阅读** opens the existing reader. Escape or Command-[ returns to the library while editing is idle and immersive is off. The shelf scroll and the reading page stay. **继续阅读** lists the book just opened first.
+
+Scope. The visit is library or reading. The library form unmounts while reading, and the existing title and footer show. Shelf scroll is the offset the shelf already records, restored when the form mounts again. The page stays in settings history.
+
+Non-goals. No margin layout, no new motion, no PDF page architecture, and no immersive enter path.
+
+Observable. The EPUB fixture Plain Essay and the PDF fixture Field Guide keep scroll and page across leave. **继续阅读** follows `opened_at`. Editing focus and immersive Escape do not leave the book. A wheel on the open reader reaches the page. A wheel on the library moves the shelf.
+
+Evidence. `spikes/shell/src/visit.rs` tests. The headless `shell.test.tsx` case leaves the reader between the two opens. macOS CI runs the visit tests. `smoke-shell-click` stays pending because no window was driven.
+
+Not run. Mac GUI, smoothness, frames, animation, and PDF runtime loading.
+
+## S3 file open
+
+Goal. A file opened from Finder or the Dock, at launch or while Slowpage is already running, opens that book. A second file replaces the book on screen. A file that is not an EPUB or a PDF, or whose bytes do not match, stays on the current book and shows 打不开这个文件.
+
+Scope. `next_open_files` and a drop on the window use one decision. An EPUB starts with `PK`. A PDF starts with `%PDF`. The exploded EPUB directory still counts. The visit switches to reading and the stage receives `open`. Cold start from a command-line path stays the launch target it already is.
+
+Non-goals. No new animation, no margin, no new type, and no new PDF renderer. A file whose header matches and whose pages still fail to load is outside this slice.
+
+Done. Plain Essay and Field Guide switch the visit and keep the shelf offset. A bad file leaves the open book in place and is not queued for the stage. A handled arrival does not open again when the reader leaves the book. The refusal is the sentence above.
+
+Evidence. `spikes/shell/src/visit.rs` reads those two fixtures. macOS CI runs that test. `nsh test` does not deliver `openFiles` on this machine.
+
+Not run. A Mac window of Finder, the Dock, and a second real PDF loading in pdfium. Smoothness, frames, and animation.
+
+## S3 page turn
+
+Goal. While a book is open, the right arrow and Space move one page forward. The left arrow and Shift-Space move one page back. The first page and the last page stay put. The footer shows that page. On the library those keys do nothing.
+
+Scope. The keys use the turn the reader already has. An EPUB keeps the 160 ms slide. A PDF keeps the existing page offset. The product PDF footer uses the same line the EPUB footer already uses. The visit page follows the page the stage reports.
+
+Non-goals. No new slide, no edge target, and no finger-following swipe. The EPUB swipe that is already in the page stays. A page whose header matches and whose bytes still fail to load is outside this slice.
+
+Done. Page 4 of 10 goes to 5, then back to 4. Page 1 does not go back. Page 10 does not go forward. The library form stays. A direct reader launch, whose visit still starts on the library surface, still turns. The product footer for page 2 of 5 is 2/5页 and 本章还剩3页.
+
+Evidence. `spikes/shell/src/visit.rs` tests the key and the stop. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test.
+
+Not run. A Mac window, `nsh test`, the key event itself, pdfium drawing the turned page, smoothness, frames, and animation.
+
+## S3 edge turn
+
+Goal. While a book is open, a click on the left of the page moves one page back and a click on the right moves one page forward. A click in the middle does not turn. The first page and the last page stay put.
+
+Scope. The click uses the turn the reader already has. An EPUB keeps the 160 ms slide. A PDF keeps the existing page offset. The outer quarter of the page rectangle is the edge. The middle stays so a selection click there still selects.
+
+Non-goals. No new slide, no bounce, and no finger-following swipe. The EPUB swipe that is already in the page stays. A click on the footer does not turn. The library ignores the click.
+
+Done. On a page rectangle from x 100 to 500, a click at x 199 goes back, a click at x 401 goes forward, and a click at x 200 stays. A click outside the rectangle stays. A move of 3 points is a drag and does not turn. A point inside the footer rectangle does not turn. Page 1 does not go back. Page 10 does not go forward.
+
+Evidence. `spikes/shell/src/visit.rs` tests the click rectangle. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test. The EPUB page script copies the same fraction. That copy is script generation, not a delivered click.
+
+Not run. A Mac window, `nsh test`, the click event itself, pdfium drawing the turned page, and the 160 ms slide.
+
+## S3 sentence
+
+Goal. After a page turn, closing the book and opening it again shows the same sentence. The page number alone is not enough. A reopen on the right page and the wrong sentence fails.
+
+Scope. The sentence is the character offset the page already measures near the top of the column. That offset is stored with the page. Opening the book uses the existing reveal to put that character back on screen. The same page keeps a stored sentence when a later sample is empty. A new page replaces it.
+
+Non-goals. No new slide and no finger-following swipe. A table of contents, a bookmark, a search result, and an in-book link stay out. A fitted PDF page already shows the whole page, so this slice does not add a second position inside that page. The blocked-turn bounce stays out.
+
+Done. Page 4 with offset 800 stays 4 and 800 when the same page reports an empty sample. The same page with offset 860 becomes 860. Page 5 with offset 20 becomes page 5 offset 20. A stored file keeps 800 across an open that does not record a new sentence, and a later turn stores 20. The opening page is not written while a reveal is still pending, and a nonzero sample from that page is not the reveal report. The report is the pinned offset. A missed target does not replace the stored sentence.
+
+Evidence. `spikes/shell/src/visit.rs` tests the sentence rule. `spikes/shell/src/settings.rs` writes the offset and reads it back. The CI `test` job runs those tests. The Release `macos` job compiles, packages, signs, and notarizes. It does not run these tests. The page script reports the offset. That report is script generation, not a quit and a reopen.
+
+Not run. A Mac window, `nsh test`, quitting the app, the reveal on screen, and pdfium.

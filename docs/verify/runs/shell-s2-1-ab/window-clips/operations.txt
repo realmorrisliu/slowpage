@@ -1,0 +1,26 @@
+Cropped from the existing identical-gesture recordings. The full-desktop movies and the window lists were not copied here. No reshoot.
+
+Source, local only: docs/verify/runs/shell-s2-1-ab/{shelf,reader}-{fixed,base}/session.mov
+Each movie is 3024x1964, 15 fps, 13.93s, the whole display. The traced window stayed at (266, 119) points and grew toward the bottom right.
+
+Clock. The driver started ffmpeg, then slept 0.60s, then stored gesture t0. Video time 0 is t0 minus 0.60s. Checked on shelf-fixed: at video 0.70s the crop is still the 980x640 shelf, and by video 1.10s the same top-left rect is already the wider layout. The clip below uses that offset for all four.
+
+Clip range, relative to t0: from -0.15s through 0.20s after the shrink's last point. That is the enlarge and the shrink only. Fullscreen is later and is not in these clips.
+shelf-fixed t0 1794974746.28486, enlarge +0.215s, shrink ends +4.005s, clip dt -0.15..+4.21, 66 frames, 4.40s
+shelf-base t0 1794974869.185625, enlarge +0.282s, shrink ends +4.114s, clip dt -0.15..+4.31, 68 frames, 4.53s
+reader-fixed t0 1794974817.274753, enlarge +0.268s, shrink ends +4.066s, clip dt -0.15..+4.27, 67 frames, 4.47s
+reader-base t0 1794974917.682396, enlarge +0.265s, shrink ends +4.054s, clip dt -0.15..+4.25, 67 frames, 4.47s
+The strips are the frames nearest +0.00, +0.50, +1.00, +1.50, +1.84, +2.70, +3.40, +4.05 seconds from t0.
+
+Crop. Points times 2. The rect is the traced window id from that session's report origin, nearest sample in windows.jsonl, then 10 points off the right and the bottom so a one-frame size error cannot include the desktop. Rounded corners, 22px, are painted with the flat fill (236,236,238). The frame is placed at the top left of a 2260x1480 canvas, which is the largest inset window in the gesture. The flat area to the right and below a not-yet-grown window is that fill, not the desktop and not the reader's old gray strip.
+
+What the strips show, same gesture, same clock:
+shelf-fixed has three covers across by +1.00s and is back to two by +3.40s.
+shelf-base is still two covers at +1.50s and three only at +1.84s, the end of the enlarge.
+At 1.5s into each shelf clip the fixed shelf has three columns and the baseline still has two.
+
+Fullscreen, from the same lists, not a new recording. On all four sessions the content window jumps from 980x640 at (266, 119) to a different window id at 1512x982 at (0, 0) for about 0.4s, then the original id is 1512x949 at (0, 33). Exit repeats a 1512x982 window, then the content id is 980x640 again. shelf-fixed: shield +4.912s, content +5.541s, exit shield +7.228s, restored +7.725s. shelf-base +5.025 / +5.531 / +7.215. reader-fixed +4.977 / +5.513 / +7.267. reader-base +4.921 / +5.440 / +7.162. No content-window size between 980x640 and 1512x949 was listed. shelf-fixed-fullscreen.png is the content window at the settled 1512x949 frame, scaled down. It is the shelf, already in the wide layout.
+
+Source. The only transition call is NSWindow toggleFullScreen:. NSH 0.5.1 (nsh-platform-macos chrome.rs) does not place buttons in full screen and says AppKit shows that bar in a window of its own. The 1512x982 window is 33 points taller than the content window, the menu-bar difference, and it appears on the baseline as well as the fixed build. fit_full_content sizes the content view to the window once the fullscreen style mask is set, so the shelf revealed when the system snapshot ends is the new layout. It does not create the 982-point window and it does not invent intermediate sizes. No app change removes that snapshot. Animating our own frames would not be the system fullscreen space.
+
+Traffic lights. Fresh 885718f, the tree before the shared-center change, measured close, minimize, and zoom all at 24.0pt from the top on the 980x640 shelf and the 582x781 reader, before the gesture and after fullscreen exit. The 8pt zoom offset from the earlier screenshot did not happen on that launch, that drag, or that return. NSH centers the buttons only when the title bar is hidden, the window is not fullscreen, and there is no toolbar. The reader has a toolbar, so that centering does not run, and our align runs later. That path can leave a button on AppKit's row. This pass did not see it do so, so it is not established as the cause of the earlier shot.

@@ -1,0 +1,15 @@
+Same gesture on both binaries. Not a full suite. Pid 75399 was not signaled.
+Binaries: fixed 43beccae (db991b1, resize publish + shared button center), baseline a95596b1 (tree 885718f, before both).
+Launch wrapper: scripts/verify launch and child_env. Support directories are under this run, not the real profile. The shared bar-fullscreen file was not written.
+Origin for every recorded pass: 980x640 at (266, 119). Enlarge corner from (1246.8, 759.2) to (1405.0, 868.0), 90 steps, 1.49 to 1.52s, then the reverse. Grown 1140x750, restored 980x640 at the same origin. Fullscreen window 1512x949 at (0, 33), then back.
+
+Shelf paint, from the 15fps screen recording sampled at 5fps. The count is dark covers in the top band, which goes from 1 to 2 when the wider grid appears.
+fixed:  2 covers from 1.0s through 3.2s, back to 1 at 3.4s
+baseline: 2 covers from 2.0s through 4.2s, back to 1 at 4.4s
+The window frame changed on both throughout the drag (about 32 to 36 size steps). The baseline's grid changes at the end of each gesture. The fixed build changes during the gesture. 5fps is not a 50ms smoothness claim.
+
+Fullscreen. The content window jumps to 1512x949. Both binaries also show a second spike-shell window at 1512x982 for a few tenths of a second. One fixed frame shows the old shelf arrangement faded under the new one; the next sampled frame is only the new arrangement. No intermediate content sizes were invented.
+
+Traffic lights at 980x640 and at 582x781, before the gesture and after fullscreen exit. Both binaries: native centers 24.0pt from the top, painted centers within 0.2px of each other. The 8pt green offset from the earlier paperback shot did not appear on 885718f in these fresh launches.
+
+Profile unchanged. Cache binary restored to the fixed hash.

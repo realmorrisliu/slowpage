@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use nsh_platform_macos::objc2::rc::Retained;
 use nsh_platform_macos::objc2::AnyThread;
 use objc2_app_kit::NSImage;
@@ -26,6 +29,15 @@ const NOTE: &str = include_str!("../../../assets/icons/note.svg");
 const BOOK: &str = include_str!("../../../assets/icons/book.svg");
 const FOLDER: &str = include_str!("../../../assets/icons/folder.svg");
 const LIBRARY: &str = include_str!("../../../assets/icons/library.svg");
+const SIDEBAR_LEFT: &str = include_str!("../../../assets/icons/sidebar-left.svg");
+const SLIDERS: &str = include_str!("../../../assets/icons/sliders.svg");
+const SLIDERS_SOLID: &str = include_str!("../../../assets/icons/sliders-solid.svg");
+const SORT_DESC: &str = include_str!("../../../assets/icons/sort-desc.svg");
+const CHEVRON_DOWN: &str = include_str!("../../../assets/icons/chevron-down.svg");
+const GRID: &str = include_str!("../../../assets/icons/grid.svg");
+const EDIT: &str = include_str!("../../../assets/icons/edit.svg");
+const PAPERCLIP: &str = include_str!("../../../assets/icons/paperclip.svg");
+const ARROW_UP: &str = include_str!("../../../assets/icons/arrow-up.svg");
 const POINTS: f64 = 18.0;
 const PIXELS: u32 = 54;
 
@@ -49,16 +61,58 @@ pub fn notes_image() -> Option<Retained<NSImage>> {
     image(NOTE)
 }
 
-pub fn glyph_file(name: &str) -> Option<std::path::PathBuf> {
-    let svg = named_svg(name)?;
-    let dir = crate::settings::support_dir().join("shell-glyphs");
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join(format!("{name}.png"));
-    if !path.is_file() {
-        let png = raster_png(svg, 48).ok()?;
-        std::fs::write(&path, png).ok()?;
+pub fn glyph_file(name: &str) -> Option<String> {
+    glyph_ink(name, "000000")
+}
+
+/// A `data:` URL for the painted glyph. The bytes stay in this process.
+/// Nothing is written under Application Support, including when
+/// `SUPERREADER_SUPPORT_DIR` is unset.
+pub fn glyph_ink(name: &str, hex: &str) -> Option<String> {
+    let key = format!("{name}-{hex}");
+    if let Some(hit) = glyph_memory()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&key).cloned())
+    {
+        return Some(hit);
     }
-    Some(path)
+    let svg = named_svg(name)?;
+    let png = raster_png(&paint_hex(svg, hex), 48).ok()?;
+    let src = format!("data:image/png;base64,{}", base64(&png));
+    if let Ok(mut map) = glyph_memory().lock() {
+        map.insert(key, src.clone());
+    }
+    Some(src)
+}
+
+fn glyph_memory() -> &'static Mutex<HashMap<String, String>> {
+    static MEMORY: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    MEMORY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let bits = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((bits >> 18) & 63) as usize] as char);
+        out.push(TABLE[((bits >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((bits >> 6) & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(bits & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 fn named_svg(name: &str) -> Option<&'static str> {
@@ -86,6 +140,15 @@ fn named_svg(name: &str) -> Option<&'static str> {
         "bookmark-solid" => BOOKMARK_SOLID,
         "note-solid" => NOTE_SOLID,
         "folder-solid" => FOLDER_SOLID,
+        "sidebar-left" => SIDEBAR_LEFT,
+        "sliders" => SLIDERS,
+        "sliders-solid" => SLIDERS_SOLID,
+        "sort-desc" => SORT_DESC,
+        "chevron-down" => CHEVRON_DOWN,
+        "grid" => GRID,
+        "edit" => EDIT,
+        "paperclip" => PAPERCLIP,
+        "arrow-up" => ARROW_UP,
         _ => return None,
     })
 }
@@ -117,9 +180,13 @@ fn raster(svg: &str, px: u32) -> Result<resvg::tiny_skia::Pixmap, String> {
 }
 
 fn paint(svg: &str) -> String {
-    // usvg leaves currentColor unresolved, which drops the stroke. A template
-    // image has to be black so AppKit can tint it.
-    svg.replace("currentColor", "#000000")
+    paint_hex(svg, "000000")
+}
+
+fn paint_hex(svg: &str, hex: &str) -> String {
+    // usvg leaves currentColor unresolved, which drops the stroke.
+    let fill = format!("#{hex}");
+    svg.replace("currentColor", &fill)
 }
 
 fn draw(tree: &resvg::usvg::Tree, px: u32) -> Result<resvg::tiny_skia::Pixmap, String> {
@@ -161,5 +228,44 @@ mod tests {
             let ink = pixmap.pixels().iter().filter(|px| px.alpha() > 0).count();
             assert!(ink > 20, "ink pixels {ink}");
         }
+    }
+
+    #[test]
+    fn glyph_ink_writes_nothing_when_the_support_dir_is_overridden() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-glyph-memory-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let previous = std::env::var("SUPERREADER_SUPPORT_DIR").ok();
+        std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
+        let real = crate::settings::support_dir();
+        assert_eq!(real, dir);
+        let home = crate::settings::default_support_dir().join("shell-glyphs");
+        let before = names_in(&home);
+        let src = glyph_ink("search", "1D1D1F").expect("search raster");
+        assert!(src.starts_with("data:image/png;base64,"));
+        assert!(src.len() > 80);
+        assert_eq!(names_in(&home), before);
+        assert!(
+            std::fs::read_dir(&dir).unwrap().next().is_none(),
+            "glyph raster created a file under {dir:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        match previous {
+            Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+            None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+        }
+    }
+
+    fn names_in(path: &std::path::Path) -> Vec<String> {
+        let mut names = Vec::new();
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return names;
+        };
+        for entry in entries.flatten() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        names.sort();
+        names
     }
 }

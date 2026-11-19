@@ -1,0 +1,25 @@
+verify lock acquired cursor/shell-form-tokens-d356 2026-11-17T09:28:34Z
+{ 183.27 115.12 83.98 }
+retry support before 57
+scan form-1440.png 12
+scan form-1100.png 6
+scan retry-page-after.png 12
+scan retry-wheel-after.png 12
+saved color rows 55
+retry launch 1440
+retry page down then wheel
+retry chat
+retry fullscreen
+retry support changed []
+fail item 1 cover type 1440 frames 5/5 ink 0/10; 1100 frames 3/3 ink 0/3
+pass item 2 minimum 578x520 window [578.0, 520.0] clip 0 overlap none continue 2 shelf True settings pinned True below rows True
+pass item 3 header and sidebar type 全部书籍 26/700 True sidebar row 13/600 True
+fail item 4 shelf scroll first pass wheel changed 1526 rows; retry wheel rows 0 cover y 304.0 -> 304.0 (Pride and Prejudice -> Pride and Prejudice); page down rows 1499 cover y 304.0 -> 304.0
+fail item 5 fullscreen lights hover rows None space quartz-top lights 1.0 frame delta None inset {'left': 6.0, 'top': 6.0, 'right': 6.0, 'bottom': 6.0, 'sidebar_w': 220.0, 'chat_w': 320.0, 'window': [1512.0, 949.0]} gaps {'left': 9.0, 'right': 9.0, 'bar_w': 78.0, 'light_w': 78.0} frames enter 5 hover 5 exit 0 flips 0/0/0
+pass item 6 cover color sRGB worst 1 missing none Middlemarch raw #C2A35A sRGB #C8A24C vs #C8A24C
+fail item 7 support dir real support changes since the run started: 22
+pass item 8 parity sidebar 9.3% (cap 12), header 7.2% (cap 12), continue 14.9% (cap 28), shelf 36.1% (cap 42), chat 13.4% (cap 18)
+pass item 9 chat toggle and 898 897 hid the panel (chat_w 0 at 897, 320 at 898) but the first click missed the button; retry presses [{'before': 320.0, 'after': 0.0, 'press': 'pressed', 'code': 0}, {'before': 0.0, 'after': 320.0, 'press': 'pressed', 'code': 0}]
+summary items fail=['cover type', 'shelf scroll', 'fullscreen lights', 'support dir'] harness fail=['nsh-title', 'nsh-no-night-mode', 'nsh-no-theme-switch', 'nsh-no-spread', 'shell-sidebar', 'shell-source-imported', 'shell-sidebar-toggle', 'shell-clip', 's21-proofs', 'real-support-untouched']
+EXIT:0
+verify lock released

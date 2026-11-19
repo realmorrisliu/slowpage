@@ -4,8 +4,8 @@ This directory is the maintained source for the checks `scripts/verify` runs. Re
 
 ## Baseline preconditions
 
-- macOS, with `nsh` 0.5.0 on `PATH`.
-- The shell crate depends on `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.5.0`.
+- macOS, with `nsh` 0.5.1 on `PATH`.
+- The shell crate depends on `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.5.1`.
 - Fixtures at `/tmp/superreader-fixtures/gpt3.pdf`, `/tmp/superreader-fixtures/pride-se.epub`, and `/tmp/pdfium/lib/libpdfium.dylib`, or the `SPIKE_GPT3`, `SPIKE_PRIDE`, and `SPIKE_PDFIUM` overrides.
 - No `spike-shell` process is already running.
 - Run `scripts/verify --doctor` and require every doctor row to pass.
@@ -49,6 +49,6 @@ Each feature file starts with an H1 and one paragraph. It then uses these four H
 - [Window chrome](window-chrome.md) covers the reading window, the page ratio, the column fill, and the footer on the measure.
 - [Sidebar](sidebar.md) covers the fixed left bar centered on the traffic lights. S1 replaces that bar. The new checks are in [Shell](shell.md).
 - [Library shelf](library-shelf.md) covers the bare shelf window. S1 removes that window and those checks.
-- [Shell](shell.md) covers the approved window. The checks stay pending until the matching slice.
+- [Shell](shell.md) covers the approved window. The checks stay pending until the matching slice. The reading-interaction rule is not a feature file here. Its ten items are not `scripts/verify` rows, and a missing row is not a pass.
 - [Alpha install](alpha.md) covers the packaged app opening an EPUB and a PDF, turning a page, and restoring that page. S1 removes the empty Open button and the Open With check.
 - [Official open](official-open.md) covers `open -a` for a cold EPUB, a PDF while the app is running, and the Launch Services stand-in for a Dock drop.

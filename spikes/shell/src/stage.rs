@@ -9,7 +9,9 @@ use nsh_platform_macos::objc2::{
     define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use nsh_platform_macos::objc2_app_kit::{NSEvent, NSResponder, NSView, NSWindow, NSWindowButton};
-use nsh_platform_macos::objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
+use nsh_platform_macos::objc2_foundation::{
+    NSArray, NSObjectProtocol, NSPoint, NSRect, NSRunLoopCommonModes, NSSize,
+};
 use nsh_platform_macos::{ComponentContext, Components, NativeComponent};
 use objc2_core_graphics::CGContext;
 use serde_json::{json, Value};
@@ -44,6 +46,7 @@ define_class!(
         #[unsafe(method(pumpLights))]
         fn pump_lights(&self) {
             let window: Option<Retained<NSWindow>> = unsafe { msg_send![self, window] };
+            let live = window.as_ref().is_some_and(|window| window.inLiveResize());
             if let Some(window) = window {
                 let queued = crate::launch::take_opens();
                 if !queued.is_empty() {
@@ -70,38 +73,21 @@ define_class!(
                     let _: () = unsafe { msg_send![self, setNeedsDisplay: true] };
                 }
                 if crate::chrome::shell_on() {
-                    let state = self.ivars().state.borrow();
-                    let key = (
-                        state.stage_w.round() as i32,
-                        state.stage_h.round() as i32,
-                        state.chrome.bar_w.get().round() as i32,
-                    );
-                    drop(state);
-                    thread_local! {
-                        static LAST: std::cell::Cell<(i32, i32, i32)> = const { std::cell::Cell::new((0, 0, 0)) };
-                    }
-                    let changed = LAST.with(|last| {
-                        if last.get() == key || key.0 < 2 || key.1 < 2 {
-                            false
-                        } else {
-                            last.set(key);
-                            true
-                        }
-                    });
-                    if changed {
-                        self.ivars().state.borrow().publish();
+                    if let Some((width, height)) = crate::chrome::content_size(&window) {
+                        publish_shell_if_resized(
+                            &self.ivars().state,
+                            width,
+                            height,
+                            "pump",
+                        );
                     }
                 }
                 self.ivars().state.borrow().note_probe(self);
             }
-            let _: () = unsafe {
-                msg_send![
-                    self,
-                    performSelector: sel!(pumpLights),
-                    withObject: std::ptr::null::<objc2::runtime::AnyObject>(),
-                    afterDelay: 0.05_f64
-                ]
-            };
+            // afterDelay alone is NSDefaultRunLoopMode. A drag tracks in
+            // NSEventTrackingRunLoopMode, so that timer does not run until
+            // the mouse is released and the layout jumps once.
+            schedule_shell_pump(self, if live { 1.0 / 60.0 } else { 0.05 });
         }
 
         #[unsafe(method(pollSettings))]
@@ -131,6 +117,8 @@ define_class!(
             let _: () = unsafe { msg_send![super(self), layout] };
             let bounds: NSRect = unsafe { msg_send![self, bounds] };
             let window: Option<Retained<NSWindow>> = unsafe { msg_send![self, window] };
+            let view: &NSView = unsafe { &*std::ptr::from_ref(self).cast::<NSView>() };
+            crate::chrome::write_bounds(view);
             let fullscreen = window.as_ref().is_some_and(|window| {
                 window.styleMask().contains(objc2_app_kit::NSWindowStyleMask::FullScreen)
             });
@@ -142,18 +130,43 @@ define_class!(
                 state.chrome.full.set(fullscreen);
                 state.stage_w = bounds.size.width;
                 state.stage_h = bounds.size.height;
+                state.chrome.stage_h.set(bounds.size.height);
                 state.chrome.laying_out.set(true);
                 state.place_page();
                 (state.chrome.clone(), state.page_box())
             };
             if let Some(window) = window {
                 crate::chrome::sync(&window, &chrome, page);
+                // AppKit calls layout during the drag. The pump timer does
+                // not. Publish the content view's size from this callback so
+                // the shelf follows the window instead of waiting for mouse-up.
+                if crate::chrome::shell_on() {
+                    if let Some((width, height)) = crate::chrome::content_size(&window) {
+                        publish_shell_if_resized(
+                            &self.ivars().state,
+                            width,
+                            height,
+                            "layout",
+                        );
+                    }
+                }
             }
             chrome.laying_out.set(false);
         }
 
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
+            if crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on()) {
+                // Covers forward a wheel here. The shelf is the NSH scroll
+                // above this stage, so move that instead of the PDF offset.
+                let mut dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
+                if dy.abs() < 0.01 {
+                    let lines: f64 = unsafe { msg_send![event, deltaY] };
+                    dy = lines * 16.0;
+                }
+                crate::form::nudge_shelf(-dy as f32);
+                return;
+            }
             let dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
             self.ivars().state.borrow_mut().scroll(dy);
             unsafe { msg_send![self, setNeedsDisplay: true] }
@@ -198,10 +211,22 @@ define_class!(
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
             let point = point_in(self, event);
+            let bounds: NSRect = unsafe { msg_send![self, bounds] };
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
-                state.finish_drag(start, point);
+                let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
+                let edge = if click && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
+                {
+                    state.page_edge_at(point.0, point.1, bounds.size.width, bounds.size.height)
+                } else {
+                    crate::visit::PageEdge::None
+                };
+                match edge {
+                    crate::visit::PageEdge::Back => state.command("page", &json!(-1)),
+                    crate::visit::PageEdge::Forward => state.command("page", &json!(1)),
+                    crate::visit::PageEdge::None => state.finish_drag(start, point),
+                }
             }
             drop(state);
             unsafe { msg_send![self, setNeedsDisplay: true] }
@@ -241,6 +266,10 @@ struct State {
     book_path: String,
     product: bool,
     saved_page: u32,
+    saved_sentence: u32,
+    pending_sentence: u32,
+    awaiting_pin: Option<u32>,
+    hold_shown: Option<u32>,
     page_total: Option<u32>,
     epub_page: usize,
     anchor: Option<Anchor>,
@@ -251,6 +280,10 @@ struct State {
     declared: Option<(f64, f64)>,
     stage_w: f64,
     stage_h: f64,
+    /// The window's content view. The shelf lays out from this, not from the
+    /// reader stage, which can stay at the previous frame in full screen.
+    shell_w: f64,
+    shell_h: f64,
     placed: Option<(i32, i32, i32, i32, String)>,
     placed_zoom: f64,
     await_hold: bool,
@@ -291,20 +324,6 @@ impl State {
             };
             CGContext::set_rgb_fill_color(Some(&ctx), red, green, blue, 1.0);
             CGContext::fill_rect(Some(&ctx), bounds);
-            let bar = self.chrome.bar_w.get();
-            if bar > 1.0 && !crate::chrome::shell_on() {
-                CGContext::set_rgb_fill_color(
-                    Some(&ctx),
-                    228.0 / 255.0,
-                    228.0 / 255.0,
-                    230.0 / 255.0,
-                    1.0,
-                );
-                CGContext::fill_rect(
-                    Some(&ctx),
-                    NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(bar, bounds.size.height)),
-                );
-            }
         }
     }
 
@@ -758,11 +777,7 @@ impl State {
             return;
         }
         let current = self.current_page();
-        let next = if delta < 0 {
-            current.saturating_sub(1)
-        } else {
-            (current + 1).min(count - 1)
-        };
+        let next = crate::visit::step_index(current, count, delta);
         let sizes = pdf.sizes.clone();
         self.offset = page_offset(&sizes, next as u32 + 1, self.scale);
         self.note_page();
@@ -784,6 +799,10 @@ impl State {
         };
         let page = page.max(1);
         self.page_total = None;
+        self.saved_sentence = 0;
+        self.pending_sentence = 0;
+        self.awaiting_pin = None;
+        self.hold_shown = None;
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
         self.dismiss_web();
         self.pdf = None;
@@ -803,6 +822,12 @@ impl State {
             } else {
                 None
             };
+            let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
+            self.saved_sentence = sentence;
+            self.pending_sentence = sentence;
+            if sentence > 0 {
+                self.goto = None;
+            }
             self.epub_page = 0;
             self.web_pages = 1;
             self.shown_at = None;
@@ -848,13 +873,17 @@ impl State {
         if self.book_path.is_empty() || page == self.saved_page {
             return;
         }
-        self.saved_page = page;
         let path = self.book_path.clone();
+        let (page, offset) =
+            crate::visit::next_sentence(self.saved_page, self.saved_sentence, page, 0);
+        self.saved_page = page;
+        self.saved_sentence = offset;
         let _ = crate::settings::record_progress(
             &crate::settings::path(),
             &path,
             page,
             self.page_total,
+            offset,
         );
     }
 
@@ -916,15 +945,45 @@ impl State {
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
             let shown = self.epub_page as u32 + 1;
             let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-            if !still_turning && shown != self.saved_page {
-                let path = self.book_path.clone();
-                self.saved_page = shown;
-                let _ = crate::settings::record_progress(
-                    &crate::settings::path(),
-                    &path,
+            let reported = web.inbox.borrow().pages.is_some();
+            let sentence = web.inbox.borrow().sentence.unwrap_or(0);
+            let pinned = web.inbox.borrow().pinned;
+            let missed = web.inbox.borrow().pin_missed;
+            if self.pending_sentence > 0 && reported {
+                let offset = self.pending_sentence;
+                self.pending_sentence = 0;
+                self.awaiting_pin = Some(offset);
+                web.reveal(offset);
+            }
+            let step = crate::visit::step_restore(
+                self.pending_sentence > 0,
+                self.awaiting_pin,
+                self.hold_shown,
+                shown,
+                pinned,
+                missed,
+            );
+            self.awaiting_pin = step.want;
+            self.hold_shown = step.hold;
+            if step.write && !still_turning {
+                let (page, offset) = crate::visit::next_sentence(
+                    self.saved_page,
+                    self.saved_sentence,
                     shown,
-                    self.page_total,
+                    sentence,
                 );
+                if page != self.saved_page || offset != self.saved_sentence {
+                    let path = self.book_path.clone();
+                    self.saved_page = page;
+                    self.saved_sentence = offset;
+                    let _ = crate::settings::record_progress(
+                        &crate::settings::path(),
+                        &path,
+                        page,
+                        self.page_total,
+                        offset,
+                    );
+                }
             }
         }
         if changed || self.chrome_moving() {
@@ -1115,8 +1174,7 @@ impl State {
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
         let (box_w, box_h, left, top) = crate::chrome::content_box(self.stage_w, self.stage_h);
         let (ix, iy, w, h) = crate::reading::fit_page(box_w, box_h, rw, rh);
-        let bar = self.chrome.bar_w.get();
-        let x = crate::chrome::content_page_x(self.stage_w, w, bar).unwrap_or(left + ix);
+        let x = crate::chrome::reader_page_x(left, ix);
         let y = top + iy;
         let design = crate::chrome::reading_page(
             rw,
@@ -1178,6 +1236,8 @@ impl State {
         let mut title_opacity = 1.0_f32;
         let mut footer_opacity = 1.0_f32;
         let mut bars_row = false;
+        let mut shown_page = 0_u32;
+        let mut shown_pages = 0_u32;
         let (title, variant, left, right, show_text, html) = match self.mode {
             Mode::Empty => {
                 bars_row = true;
@@ -1193,6 +1253,8 @@ impl State {
             Mode::Pdfium | Mode::Hayro => {
                 let pages = self.pdf.as_ref().map(|p| p.sizes.len()).unwrap_or(0);
                 let current = self.current_page().saturating_add(1);
+                shown_page = current as u32;
+                shown_pages = pages as u32;
                 let left_pages = pages.saturating_sub(current);
                 let title = if self.book_path.is_empty() || self.book_path.ends_with("gpt3.pdf") {
                     "Language Models are Few-Shot Learners".to_string()
@@ -1220,21 +1282,21 @@ impl State {
                         self.scale.name()
                     )
                 };
-                let left = if self.product {
-                    String::new()
+                let (left, right) = if self.product {
+                    crate::reading::product_page_footer(current as u32, pages as u32)
                 } else {
-                    format!("{current}/{pages}")
-                };
-                let right = if self.product {
-                    String::new()
-                } else {
-                    format!("{left_pages} pages left")
+                    (
+                        format!("{current}/{pages}"),
+                        format!("{left_pages} pages left"),
+                    )
                 };
                 (title, variant, left, right, false, String::new())
             }
             Mode::WebKit => {
                 let pages = self.web_pages.max(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 let path = self.epub_path();
                 let title = self
                     .web
@@ -1266,6 +1328,8 @@ impl State {
                     .map(|c| (c.plain.chars().count() / 1200).max(1))
                     .unwrap_or(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 (
                     title,
                     label.to_string(),
@@ -1301,10 +1365,14 @@ impl State {
                 "footer_opacity": footer_opacity,
                 "bars_row": bars_row,
                 "trim": self.trim_id,
+                "page": shown_page,
+                "pages": shown_pages,
                 "empty": self.mode == Mode::Empty,
-                "stage_w": self.stage_w,
-                "stage_h": self.stage_h,
+                "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
+                "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
                 "bar_w": self.chrome.bar_w.get(),
+                "lights_visible": self.chrome.lights_visible.get(),
+                "content_top": self.chrome.content_top.get(),
             }),
         );
     }
@@ -1326,9 +1394,9 @@ impl State {
     }
 }
 
-fn pdf_origin_of(product: bool, bar_w: f64) -> (f64, f64) {
+fn pdf_origin_of(product: bool) -> (f64, f64) {
     if product {
-        (bar_w.max(24.0), crate::chrome::TOP)
+        (crate::chrome::SIDE, crate::chrome::TOP)
     } else {
         (24.0, 0.0)
     }
@@ -1336,7 +1404,45 @@ fn pdf_origin_of(product: bool, bar_w: f64) -> (f64, f64) {
 
 impl State {
     fn pdf_origin(&self) -> (f64, f64) {
-        pdf_origin_of(self.product, self.chrome.bar_w.get())
+        pdf_origin_of(self.product)
+    }
+
+    fn page_edge_at(&self, x: f64, y: f64, stage_w: f64, stage_h: f64) -> crate::visit::PageEdge {
+        if !matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            return crate::visit::PageEdge::None;
+        }
+        let Some(pdf) = self.pdf.as_ref() else {
+            return crate::visit::PageEdge::None;
+        };
+        if pdf.sizes.is_empty() {
+            return crate::visit::PageEdge::None;
+        }
+        if self.product {
+            let index = self.current_page().min(pdf.sizes.len() - 1);
+            let (pw, ph) = pdf.sizes[index];
+            let (box_w, box_h, left, top) = crate::chrome::content_box(stage_w, stage_h);
+            let (rx, ry, rw, rh) = spike_report::fitted_pdf_page(
+                left,
+                top,
+                box_w,
+                box_h,
+                f64::from(pw),
+                f64::from(ph),
+            );
+            return crate::visit::page_edge(x, y, rx, ry, rw, rh);
+        }
+        let display = self.scale.display() as f64;
+        let (origin_x, origin_y) = self.pdf_origin();
+        let mut top = origin_y - self.offset;
+        for (pw, ph) in &pdf.sizes {
+            let height = f64::from(*ph) * display;
+            let width = f64::from(*pw) * display;
+            if y >= top && y <= top + height {
+                return crate::visit::page_edge(x, y, origin_x, top, width, height);
+            }
+            top += height + 16.0;
+        }
+        crate::visit::PageEdge::None
     }
 }
 
@@ -1405,6 +1511,10 @@ impl Stage {
             book_path: String::new(),
             product: false,
             saved_page: 0,
+            saved_sentence: 0,
+            pending_sentence: 0,
+            awaiting_pin: None,
+            hold_shown: None,
             page_total: None,
             epub_page: 0,
             anchor: None,
@@ -1415,6 +1525,8 @@ impl Stage {
             declared: None,
             stage_w: 0.0,
             stage_h: 0.0,
+            shell_w: 0.0,
+            shell_h: 0.0,
             placed: None,
             placed_zoom: 1.0,
             await_hold: false,
@@ -1450,25 +1562,33 @@ impl Stage {
                 state.mode = Mode::Empty;
             }
         }
-        let shelf = crate::launches_full();
-        if shelf {
-            crate::chrome::engage_shell();
-            state.borrow_mut().mode = Mode::Empty;
-            state.borrow_mut().publish();
-        } else if product {
-            let mut state = state.borrow_mut();
-            if let Ok(path) = std::env::var("SUPERREADER_OPEN_PATH") {
-                let path = path.trim();
-                if !path.is_empty() {
-                    state.open_requested(&view, path);
-                } else {
-                    state.publish();
-                }
-            } else if let Some(place) = crate::settings::load_place(&crate::settings::path()) {
-                state.open_at(&view, &place.path, place.page);
+        // An explicit file is decided before the shelf. A bare launch is Full
+        // and does not consume `place`. The stored page is for this file and
+        // for 继续阅读, not for opening the book on its own.
+        let explicit = std::env::var("SUPERREADER_OPEN_PATH").ok().and_then(|raw| {
+            let path = raw.trim().to_string();
+            if path.is_empty() || !std::path::Path::new(&path).exists() {
+                None
             } else {
-                state.publish();
+                Some(path)
             }
+        });
+        let stored = explicit
+            .as_deref()
+            .map(|path| crate::settings::resume_page(&crate::settings::path(), path));
+        let shelf = crate::launches_full();
+        match crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored) {
+            crate::LaunchTarget::File { page } if product => {
+                if let Some(path) = explicit {
+                    state.borrow_mut().open_at(&view, &path, page);
+                }
+            }
+            crate::LaunchTarget::Shelf => {
+                crate::chrome::engage_shell();
+                state.borrow_mut().mode = Mode::Empty;
+                state.borrow_mut().publish();
+            }
+            crate::LaunchTarget::File { .. } | crate::LaunchTarget::Forced => {}
         }
         if !product && !shelf {
             let engine = match std::env::var("SPIKE_ENGINE").as_deref() {
@@ -1502,14 +1622,7 @@ impl Stage {
                 state.borrow_mut().select_phrase("Abstract");
             }
         }
-        let _: () = unsafe {
-            msg_send![
-                &*view,
-                performSelector: sel!(pumpLights),
-                withObject: std::ptr::null::<AnyObject>(),
-                afterDelay: 0.05_f64
-            ]
-        };
+        schedule_shell_pump(&*view, 0.05);
         let _: () = unsafe {
             msg_send![
                 &*view,
@@ -1599,15 +1712,148 @@ fn layout_target(placed_width: f64, zoom: f64) -> f64 {
     }
 }
 
+/// `performSelector:afterDelay:` waits in the default mode only. Common modes
+/// include the tracking mode a window resize runs in, so the pump still sees
+/// the content view while the mouse is down.
+fn schedule_shell_pump(view: &StageView, delay: f64) {
+    let modes = NSArray::from_slice(&[unsafe { NSRunLoopCommonModes }]);
+    let _: () = unsafe {
+        msg_send![
+            view,
+            performSelector: sel!(pumpLights),
+            withObject: std::ptr::null::<AnyObject>(),
+            afterDelay: delay,
+            inModes: &*modes,
+        ]
+    };
+}
+
+/// One shared key, so a layout callback and the pump do not publish the same
+/// size twice. The layout callback is what AppKit delivers during a drag.
+fn publish_shell_if_resized(
+    state: &Rc<RefCell<State>>,
+    width: f64,
+    height: f64,
+    source: &str,
+) {
+    let key = {
+        let mut state = state.borrow_mut();
+        state.shell_w = width;
+        state.shell_h = height;
+        shell_publish_key(
+            state.shell_w,
+            state.shell_h,
+            state.chrome.bar_w.get(),
+            state.chrome.lights_visible.get(),
+        )
+    };
+    thread_local! {
+        static LAST: std::cell::Cell<Option<(i32, i32, i32, i32)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    let changed = LAST.with(|last| match key {
+        Some(key) if last.get() != Some(key) => {
+            last.set(Some(key));
+            true
+        }
+        _ => false,
+    });
+    trace_resize(source, width, height, changed);
+    if changed {
+        state.borrow().publish();
+    }
+}
+
+pub(crate) fn trace_resize(source: &str, width: f64, height: f64, published: bool) {
+    if std::env::var("SPIKE_RESIZE_TRACE").ok().as_deref() != Some("1") {
+        return;
+    }
+    let Ok(elapsed) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return;
+    };
+    let line = format!(
+        "{{\"t\":{:.4},\"src\":\"{source}\",\"w\":{width:.1},\"h\":{height:.1},\"published\":{published}}}\n",
+        elapsed.as_secs_f64()
+    );
+    let path = std::path::Path::new("/tmp/superreader-spike/resize-trace.jsonl");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// The shell status event is skipped when this key is unchanged. Lights are
+/// part of it: exit restores the old window size before the buttons are
+/// visible again, and a size-only key then never publishes the shown lights.
+fn shell_publish_key(
+    shell_w: f64,
+    shell_h: f64,
+    bar_w: f64,
+    lights_visible: bool,
+) -> Option<(i32, i32, i32, i32)> {
+    let key = (
+        shell_w.round() as i32,
+        shell_h.round() as i32,
+        bar_w.round() as i32,
+        i32::from(lights_visible),
+    );
+    if key.0 < 2 || key.1 < 2 {
+        None
+    } else {
+        Some(key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::layout_target;
+    use super::{layout_target, shell_publish_key};
 
     #[test]
     fn a_smaller_placement_is_the_layout_target() {
         assert_eq!(layout_target(400.0, 1.0), 400.0);
         assert_eq!(layout_target(800.0, 2.0), 400.0);
         assert!(layout_target(400.0, 1.0) < 534.0);
+    }
+
+    #[test]
+    fn live_resize_publishes_from_layout_in_common_modes() {
+        let source = include_str!("stage.rs");
+        let layout = source
+            .split("fn layout_view")
+            .nth(1)
+            .and_then(|rest| rest.split("fn scroll_wheel").next())
+            .unwrap_or("");
+        assert!(
+            layout.contains("publish_shell_if_resized"),
+            "layout() has to publish the content size while a drag is tracking"
+        );
+        let pump = source
+            .split("fn pump_lights")
+            .nth(1)
+            .and_then(|rest| rest.split("fn poll_settings").next())
+            .unwrap_or("");
+        assert!(
+            pump.contains("NSRunLoopCommonModes") || pump.contains("schedule_shell_pump"),
+            "the lights pump has to be scheduled in the tracking run-loop mode"
+        );
+        let schedule = source
+            .split("fn schedule_shell_pump")
+            .nth(1)
+            .unwrap_or("");
+        assert!(
+            schedule.contains("NSRunLoopCommonModes"),
+            "schedule_shell_pump must use common modes, not afterDelay alone"
+        );
+    }
+
+    #[test]
+    fn a_light_change_republishes_the_restored_window() {
+        let hidden = shell_publish_key(1440.0, 855.0, 78.0, false);
+        let shown = shell_publish_key(1440.0, 855.0, 78.0, true);
+        assert_eq!(hidden, Some((1440, 855, 78, 0)));
+        assert_eq!(shown, Some((1440, 855, 78, 1)));
+        assert_ne!(hidden, shown);
+        assert_eq!(shell_publish_key(1.0, 855.0, 78.0, true), None);
     }
 }
 

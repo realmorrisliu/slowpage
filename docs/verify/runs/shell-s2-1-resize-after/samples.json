@@ -1,0 +1,2216 @@
+{
+ "meta": {
+  "pid": 96110,
+  "support": "/var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/superreader-resize-before-wuxrqtsd",
+  "binary": "~/.cache/cargo-target/SuperReader/release/spike-shell",
+  "foreign_left_running": 75399,
+  "front_before": 69259,
+  "phases": {
+   "enlarge": {
+    "from": [
+     1242.0,
+     755.0
+    ],
+    "to": [
+     1402.0,
+     865.0
+    ],
+    "t0": 1794972795.612302
+   },
+   "shrink": {
+    "from": [
+     1402.0,
+     865.0
+    ],
+    "by": [
+     -160.0,
+     -110.0
+    ],
+    "t0": 1794972800.8641229
+   },
+   "fullscreen-enter": {
+    "t": 1794972807.293891,
+    "file": "1"
+   },
+   "fullscreen-exit": {
+    "t": 1794972810.220481,
+    "file": "0"
+   }
+  },
+  "origin": {
+   "id": 141552,
+   "w": 980.0,
+   "h": 640.0,
+   "x": 266.0,
+   "y": 119.0
+  },
+  "grown": {
+   "id": 141552,
+   "w": 1140.0,
+   "h": 750.0,
+   "x": 266.0,
+   "y": 119.0
+  },
+  "shrunk": {
+   "id": 141552,
+   "w": 980.0,
+   "h": 640.0,
+   "x": 266.0,
+   "y": 119.0
+  },
+  "restored_cg": {
+   "id": 141552,
+   "w": 980.0,
+   "h": 640.0,
+   "x": 266.0,
+   "y": 119.0
+  }
+ },
+ "samples": [
+  {
+   "t": 1794972792.7971551,
+   "phase": "boot",
+   "ours": false,
+   "cg": null,
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972793.392766,
+   "phase": "boot",
+   "ours": false,
+   "cg": null,
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972793.591721,
+   "phase": "boot",
+   "ours": false,
+   "cg": null,
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972793.798597,
+   "phase": "boot",
+   "ours": false,
+   "cg": null,
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972793.94996,
+   "phase": "boot",
+   "ours": false,
+   "cg": [
+    141552,
+    267.0,
+    88.0,
+    978.0,
+    670.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972794.102509,
+   "phase": "boot",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972794.3038552,
+   "phase": "boot",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972794.5500832,
+   "phase": "boot",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    980.0,
+    640.0
+   ],
+   "content": [
+    980.0,
+    640.0
+   ],
+   "stage": [
+    980.0,
+    640.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    980.0,
+    640.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    428.0,
+    628.0
+   ],
+   "chat": [
+    660.0,
+    0.0,
+    320.0,
+    640.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972795.432676,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    980.0,
+    640.0
+   ],
+   "content": [
+    980.0,
+    640.0
+   ],
+   "stage": [
+    980.0,
+    640.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    980.0,
+    640.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    428.0,
+    628.0
+   ],
+   "chat": [
+    660.0,
+    0.0,
+    320.0,
+    640.0
+   ],
+   "ax": null,
+   "shot": "f001.png"
+  },
+  {
+   "t": 1794972795.61472,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    980.0,
+    640.0
+   ],
+   "content": [
+    980.0,
+    640.0
+   ],
+   "stage": [
+    980.0,
+    640.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    980.0,
+    640.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    428.0,
+    628.0
+   ],
+   "chat": [
+    660.0,
+    0.0,
+    320.0,
+    640.0
+   ],
+   "ax": null,
+   "shot": "f002.png"
+  },
+  {
+   "t": 1794972795.8185081,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    980.0,
+    640.0
+   ],
+   "content": [
+    980.0,
+    640.0
+   ],
+   "stage": [
+    980.0,
+    640.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    980.0,
+    640.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    428.0,
+    628.0
+   ],
+   "chat": [
+    660.0,
+    0.0,
+    320.0,
+    640.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972795.953602,
+   "phase": "enlarge",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f003.png"
+  },
+  {
+   "t": 1794972796.1373,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    993.0,
+    649.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    997.0,
+    651.0
+   ],
+   "content": [
+    997.0,
+    651.0
+   ],
+   "stage": [
+    997.0,
+    651.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    997.0,
+    651.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    445.0,
+    639.0
+   ],
+   "chat": [
+    677.0,
+    0.0,
+    320.0,
+    651.0
+   ],
+   "ax": {
+    "err": 0,
+    "children": 44,
+    "child": [
+     385,
+     546
+    ],
+    "window": [
+     1017,
+     665
+    ]
+   },
+   "shot": "f004.png"
+  },
+  {
+   "t": 1794972796.778961,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1020.0,
+    667.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1020.0,
+    667.0
+   ],
+   "content": [
+    1020.0,
+    667.0
+   ],
+   "stage": [
+    1020.0,
+    667.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1020.0,
+    667.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    468.0,
+    655.0
+   ],
+   "chat": [
+    700.0,
+    0.0,
+    320.0,
+    667.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972796.882642,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1027.0,
+    672.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1037.0,
+    679.0
+   ],
+   "content": [
+    1037.0,
+    679.0
+   ],
+   "stage": [
+    1037.0,
+    679.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1037.0,
+    679.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    485.0,
+    667.0
+   ],
+   "chat": [
+    717.0,
+    0.0,
+    320.0,
+    679.0
+   ],
+   "ax": null,
+   "shot": "f005.png"
+  },
+  {
+   "t": 1794972797.1480398,
+   "phase": "enlarge",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1040.0,
+    681.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972797.2648928,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1043.0,
+    684.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1047.0,
+    686.0
+   ],
+   "content": [
+    1047.0,
+    686.0
+   ],
+   "stage": [
+    1047.0,
+    686.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1047.0,
+    686.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    495.0,
+    674.0
+   ],
+   "chat": [
+    727.0,
+    0.0,
+    320.0,
+    686.0
+   ],
+   "ax": null,
+   "shot": "f006.png"
+  },
+  {
+   "t": 1794972797.427624,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1050.0,
+    688.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1057.0,
+    693.0
+   ],
+   "content": [
+    1057.0,
+    693.0
+   ],
+   "stage": [
+    1057.0,
+    693.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1053.0,
+    690.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    501.0,
+    678.0
+   ],
+   "chat": [
+    733.0,
+    0.0,
+    320.0,
+    690.0
+   ],
+   "ax": {
+    "window": [
+     1060,
+     695
+    ],
+    "children": 44,
+    "child": [
+     428,
+     576
+    ],
+    "err": 0
+   }
+  },
+  {
+   "t": 1794972797.667954,
+   "phase": "enlarge",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1063.0,
+    697.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1063.0,
+    697.0
+   ],
+   "content": [
+    1063.0,
+    697.0
+   ],
+   "stage": [
+    1063.0,
+    697.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1063.0,
+    697.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    511.0,
+    685.0
+   ],
+   "chat": [
+    743.0,
+    0.0,
+    320.0,
+    697.0
+   ],
+   "ax": null,
+   "shot": "f007.png"
+  },
+  {
+   "t": 1794972800.672447,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1140.0,
+    750.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1140.0,
+    750.0
+   ],
+   "content": [
+    1140.0,
+    750.0
+   ],
+   "stage": [
+    1140.0,
+    750.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1140.0,
+    750.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    588.0,
+    738.0
+   ],
+   "chat": [
+    820.0,
+    0.0,
+    320.0,
+    750.0
+   ],
+   "ax": null,
+   "shot": "f001.png"
+  },
+  {
+   "t": 1794972800.865966,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1140.0,
+    750.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1133.0,
+    745.0
+   ],
+   "content": [
+    1133.0,
+    745.0
+   ],
+   "stage": [
+    1133.0,
+    745.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1133.0,
+    745.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    581.0,
+    733.0
+   ],
+   "chat": [
+    813.0,
+    0.0,
+    320.0,
+    745.0
+   ],
+   "ax": null,
+   "shot": "f002.png"
+  },
+  {
+   "t": 1794972801.0684428,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1130.0,
+    743.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1127.0,
+    741.0
+   ],
+   "content": [
+    1127.0,
+    741.0
+   ],
+   "stage": [
+    1127.0,
+    741.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1127.0,
+    741.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    575.0,
+    729.0
+   ],
+   "chat": [
+    807.0,
+    0.0,
+    320.0,
+    741.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972801.2998269,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1123.0,
+    739.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1120.0,
+    736.0
+   ],
+   "content": [
+    1120.0,
+    736.0
+   ],
+   "stage": [
+    1120.0,
+    736.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1120.0,
+    736.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    568.0,
+    724.0
+   ],
+   "chat": [
+    800.0,
+    0.0,
+    320.0,
+    736.0
+   ],
+   "ax": null,
+   "shot": "f003.png"
+  },
+  {
+   "t": 1794972801.408633,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1117.0,
+    734.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1113.0,
+    732.0
+   ],
+   "content": [
+    1113.0,
+    732.0
+   ],
+   "stage": [
+    1113.0,
+    732.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1113.0,
+    732.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    561.0,
+    720.0
+   ],
+   "chat": [
+    793.0,
+    0.0,
+    320.0,
+    732.0
+   ],
+   "ax": {
+    "child": [
+     481,
+     613
+    ],
+    "window": [
+     1113,
+     732
+    ],
+    "err": 0,
+    "children": 44
+   }
+  },
+  {
+   "t": 1794972801.5905,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1110.0,
+    729.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1110.0,
+    729.0
+   ],
+   "content": [
+    1110.0,
+    729.0
+   ],
+   "stage": [
+    1110.0,
+    729.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1110.0,
+    729.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    558.0,
+    717.0
+   ],
+   "chat": [
+    790.0,
+    0.0,
+    320.0,
+    729.0
+   ],
+   "ax": null,
+   "shot": "f004.png"
+  },
+  {
+   "t": 1794972801.6919758,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1107.0,
+    727.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1100.0,
+    723.0
+   ],
+   "content": [
+    1100.0,
+    723.0
+   ],
+   "stage": [
+    1100.0,
+    723.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1100.0,
+    723.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    548.0,
+    711.0
+   ],
+   "chat": [
+    780.0,
+    0.0,
+    320.0,
+    723.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972801.8568041,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1093.0,
+    718.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1090.0,
+    716.0
+   ],
+   "content": [
+    1090.0,
+    716.0
+   ],
+   "stage": [
+    1090.0,
+    716.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1090.0,
+    716.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    538.0,
+    704.0
+   ],
+   "chat": [
+    770.0,
+    0.0,
+    320.0,
+    716.0
+   ],
+   "ax": null,
+   "shot": "f005.png"
+  },
+  {
+   "t": 1794972802.024147,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1080.0,
+    709.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1077.0,
+    706.0
+   ],
+   "content": [
+    1077.0,
+    706.0
+   ],
+   "stage": [
+    1077.0,
+    706.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1077.0,
+    706.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    525.0,
+    694.0
+   ],
+   "chat": [
+    757.0,
+    0.0,
+    320.0,
+    706.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972802.138252,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1073.0,
+    704.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1067.0,
+    700.0
+   ],
+   "content": [
+    1067.0,
+    700.0
+   ],
+   "stage": [
+    1067.0,
+    700.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1070.0,
+    702.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    518.0,
+    690.0
+   ],
+   "chat": [
+    750.0,
+    0.0,
+    320.0,
+    702.0
+   ],
+   "ax": {
+    "children": 44,
+    "window": [
+     1067,
+     700
+    ],
+    "child": [
+     431,
+     578
+    ],
+    "err": 0
+   },
+   "shot": "f006.png"
+  },
+  {
+   "t": 1794972802.311994,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1060.0,
+    695.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1057.0,
+    693.0
+   ],
+   "content": [
+    1057.0,
+    693.0
+   ],
+   "stage": [
+    1057.0,
+    693.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1057.0,
+    693.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    505.0,
+    681.0
+   ],
+   "chat": [
+    737.0,
+    0.0,
+    320.0,
+    693.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972802.452814,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1053.0,
+    690.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1050.0,
+    688.0
+   ],
+   "content": [
+    1050.0,
+    688.0
+   ],
+   "stage": [
+    1050.0,
+    688.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1050.0,
+    688.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    498.0,
+    676.0
+   ],
+   "chat": [
+    730.0,
+    0.0,
+    320.0,
+    688.0
+   ],
+   "ax": null,
+   "shot": "f007.png"
+  },
+  {
+   "t": 1794972802.628963,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1043.0,
+    684.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1043.0,
+    684.0
+   ],
+   "content": [
+    1043.0,
+    684.0
+   ],
+   "stage": [
+    1043.0,
+    684.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1043.0,
+    684.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    491.0,
+    672.0
+   ],
+   "chat": [
+    723.0,
+    0.0,
+    320.0,
+    684.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972802.7821481,
+   "phase": "shrink",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1040.0,
+    681.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1033.0,
+    677.0
+   ],
+   "content": [
+    1033.0,
+    677.0
+   ],
+   "stage": [
+    1033.0,
+    677.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    1033.0,
+    677.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    481.0,
+    665.0
+   ],
+   "chat": [
+    713.0,
+    0.0,
+    320.0,
+    677.0
+   ],
+   "ax": null,
+   "shot": "f008.png"
+  },
+  {
+   "t": 1794972802.9417112,
+   "phase": "shrink",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    1030.0,
+    674.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": {
+    "children": 44,
+    "err": 0,
+    "child": [
+     395,
+     553
+    ],
+    "window": [
+     1027,
+     672
+    ]
+   }
+  },
+  {
+   "t": 1794972804.9255471,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f001.png"
+  },
+  {
+   "t": 1794972805.103104,
+   "phase": "fullscreen-enter",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1512.0,
+    949.0
+   ],
+   "content": [
+    1512.0,
+    949.0
+   ],
+   "stage": [
+    980.0,
+    640.0
+   ],
+   "fullscreen": false,
+   "lights": false,
+   "layout": [
+    1512.0,
+    949.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    960.0,
+    937.0
+   ],
+   "chat": [
+    1192.0,
+    0.0,
+    320.0,
+    949.0
+   ],
+   "ax": null,
+   "shot": "f002.png"
+  },
+  {
+   "t": 1794972805.348405,
+   "phase": "fullscreen-enter",
+   "ours": true,
+   "cg": [
+    141569,
+    0.0,
+    0.0,
+    1512.0,
+    982.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1512.0,
+    949.0
+   ],
+   "content": [
+    1512.0,
+    949.0
+   ],
+   "stage": [
+    1512.0,
+    949.0
+   ],
+   "fullscreen": true,
+   "lights": false,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972805.73246,
+   "phase": "fullscreen-enter",
+   "ours": true,
+   "cg": [
+    141569,
+    0.0,
+    0.0,
+    1512.0,
+    982.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1512.0,
+    949.0
+   ],
+   "content": [
+    1512.0,
+    949.0
+   ],
+   "stage": [
+    1512.0,
+    949.0
+   ],
+   "fullscreen": true,
+   "lights": false,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f003.png"
+  },
+  {
+   "t": 1794972805.980368,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": {
+    "window": [
+     1512,
+     949
+    ],
+    "err": 0,
+    "children": 41,
+    "child": [
+     880,
+     830
+    ]
+   },
+   "shot": "f004.png"
+  },
+  {
+   "t": 1794972806.121042,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972806.233973,
+   "phase": "fullscreen-enter",
+   "ours": true,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1512.0,
+    949.0
+   ],
+   "content": [
+    1512.0,
+    949.0
+   ],
+   "stage": [
+    1512.0,
+    949.0
+   ],
+   "fullscreen": true,
+   "lights": false,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f005.png"
+  },
+  {
+   "t": 1794972806.471073,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972806.649668,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f006.png"
+  },
+  {
+   "t": 1794972806.7615201,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": {
+    "err": 0,
+    "child": [
+     880,
+     830
+    ],
+    "window": [
+     1512,
+     949
+    ],
+    "children": 41
+   }
+  },
+  {
+   "t": 1794972806.9063838,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f007.png"
+  },
+  {
+   "t": 1794972807.064244,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972807.1663349,
+   "phase": "fullscreen-enter",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f008.png"
+  },
+  {
+   "t": 1794972807.294347,
+   "phase": "fullscreen-enter",
+   "ours": true,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    1512.0,
+    949.0
+   ],
+   "content": [
+    1512.0,
+    949.0
+   ],
+   "stage": [
+    1512.0,
+    949.0
+   ],
+   "fullscreen": true,
+   "lights": false,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972807.839852,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f001.png"
+  },
+  {
+   "t": 1794972807.9421701,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    0.0,
+    33.0,
+    1512.0,
+    949.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972808.157622,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141578,
+    0.0,
+    0.0,
+    1512.0,
+    982.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f002.png"
+  },
+  {
+   "t": 1794972808.3443332,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141578,
+    0.0,
+    0.0,
+    1512.0,
+    982.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972808.540972,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141578,
+    0.0,
+    0.0,
+    1512.0,
+    982.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": {
+    "children": 44,
+    "child": [
+     348,
+     521
+    ],
+    "err": 0,
+    "window": [
+     980,
+     640
+    ]
+   },
+   "shot": "f003.png"
+  },
+  {
+   "t": 1794972808.851763,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f004.png"
+  },
+  {
+   "t": 1794972808.987882,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972809.1237912,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f005.png"
+  },
+  {
+   "t": 1794972809.271095,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972809.396461,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": {
+    "window": [
+     980,
+     640
+    ],
+    "children": 44,
+    "child": [
+     348,
+     521
+    ],
+    "err": 0
+   },
+   "shot": "f006.png"
+  },
+  {
+   "t": 1794972809.6357918,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null
+  },
+  {
+   "t": 1794972809.760152,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f007.png"
+  },
+  {
+   "t": 1794972809.924907,
+   "phase": "fullscreen-exit",
+   "ours": true,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 96110,
+   "window": [
+    980.0,
+    640.0
+   ],
+   "content": [
+    980.0,
+    640.0
+   ],
+   "stage": [
+    980.0,
+    640.0
+   ],
+   "fullscreen": false,
+   "lights": true,
+   "layout": [
+    980.0,
+    640.0
+   ],
+   "card": [
+    226.0,
+    6.0,
+    428.0,
+    628.0
+   ],
+   "chat": [
+    660.0,
+    0.0,
+    320.0,
+    640.0
+   ],
+   "ax": null
+  },
+  {
+   "t": 1794972810.095077,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": null,
+   "shot": "f008.png"
+  },
+  {
+   "t": 1794972810.220938,
+   "phase": "fullscreen-exit",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": {
+    "children": 44,
+    "window": [
+     980,
+     640
+    ],
+    "child": [
+     348,
+     521
+    ],
+    "err": 0
+   },
+   "shot": "f009.png"
+  },
+  {
+   "t": 1794972811.42799,
+   "phase": "restored",
+   "ours": false,
+   "cg": [
+    141552,
+    266.0,
+    119.0,
+    980.0,
+    640.0
+   ],
+   "chrome_pid": 75399,
+   "window": null,
+   "content": null,
+   "stage": null,
+   "fullscreen": null,
+   "lights": null,
+   "layout": null,
+   "card": null,
+   "chat": null,
+   "ax": {
+    "child": [
+     348,
+     521
+    ],
+    "window": [
+     980,
+     640
+    ],
+    "err": 0,
+    "children": 44
+   }
+  }
+ ]
+}

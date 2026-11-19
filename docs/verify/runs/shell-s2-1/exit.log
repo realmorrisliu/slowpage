@@ -1,0 +1,16 @@
+verify lock acquired cursor/shell-form-tokens-d356 2026-11-17T09:41:07Z
+windowed ok [1440.0, 855.0]
+enter 0 
+hover 8.0 lights 0.0
+hover 20.0 lights 0.0
+hover 28.0 lights 0.0
+hover 40.0 lights 1.0
+window origin 0.0 0.0 1512.0 982.0
+click 60.0 24.0 lights 0.0 fullscreen True
+click 60.0 32.0 lights 0.0 fullscreen True
+click 60.0 40.0 lights 1.0 fullscreen True
+key 0 
+delta 0.0 gaps {'left': 9.0, 'right': 9.0, 'bar_w': 78.0, 'light_w': 78.0} inset {'left': 6.0, 'top': 6.0, 'right': 6.0, 'bottom': 6.0, 'sidebar_w': 220.0, 'chat_w': 320.0, 'window': [1440.0, 855.0]} flag False
+support []
+EXIT:0
+verify lock released

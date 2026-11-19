@@ -1,0 +1,6 @@
+b99e83dcc5ea9d072ebb49ce7dc0f8eece287c65
+start 2026-11-17T14:43:19Z
+nsh 0.5.1 (224d9a7)
+cargo pins nsh-core nsh-base nsh-platform-macos =0.5.1
+lock pid 92696 branch cursor/shell-form-tokens-d356
+summary.json has no git head field; this file records the checked-out HEAD

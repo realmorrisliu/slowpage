@@ -17,7 +17,7 @@ From the repo root:
 just verify --out docs/verify/runs/$RUN_ID
 ```
 
-`just verify` takes `/tmp/superreader-verify.lock` with `mkdir`, waiting 30 seconds between tries, and releases it with `rmdir` when the run exits. It then waits until `sysctl -n vm.loadavg` shows a 1-minute load under `SR_VERIFY_MAX_LOAD` (default 8). A caller-supplied `SR_VERIFY_LOAD_START` is recorded as `load_start`; otherwise the summary records the load after that wait, and `load_end` when the run finishes. Do not start a second window run while the lock is held.
+`just verify` takes `/tmp/superreader-verify.lock` with `mkdir`, waiting 30 seconds between tries, and releases it with `rmdir` when the run exits. It then reads `sysctl -n vm.loadavg`. The prescribed ceiling is 8. `SR_VERIFY_MAX_LOAD` cannot raise it. If the 1-minute load is not under the ceiling, the run does not start. Do not start a second window run while the lock is held.
 
 The script builds `spike-shell` and `spike-measure` in release, then starts each drive as its own process. A PDF drive is ready when Accessibility shows the paper title and a `N pages left` footer. An EPUB drive is ready when the footer shows `N/M` with more than one page and `page left in this chapter` or `pages left in this chapter`. There is no shared server and no seeded database.
 
@@ -37,7 +37,7 @@ If doctor says one is missing, run `spikes/fetch-fixtures.sh`. That script downl
 scripts/verify --doctor
 ```
 
-This is read-only. It checks `nsh` is 0.5.0, the shell crate pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.5.0`, the fixtures exist, Cargo.lock has neither the `epub` crate nor `mupdf`, the machine is macOS, and no `spike-shell` process is already running. A running shell belongs to someone else. Do not kill it.
+This is read-only. It checks `nsh` is 0.5.1, the shell crate pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.5.1`, the fixtures exist, Cargo.lock has neither the `epub` crate nor `mupdf`, the machine is macOS, and no `spike-shell` process is already running. A running shell belongs to someone else. Do not kill it.
 
 ## Drive
 
@@ -47,7 +47,7 @@ Headless `nsh test` reads the NSH tree. The test file is `spikes/shell/shell.tes
 
 `nsh test` does not see pixels inside a native `NSView`. pdfium bitmaps and WKWebView are invisible to it. The headless runner also does not construct `reader.stage`, so it never receives the footer strings the stage publishes.
 
-The window driver launches `spikes/target/release/spike-shell` and captures that process's window with `screencapture -l` after `CGWindowListCopyWindowInfo` finds the window id. It does not click the user's other apps and it does not call `screencapture` on a rectangle of the desktop. PDF footer strings come from Accessibility. WKWebView hides those NSH texts from Accessibility, so the EPUB footer is read with Vision from the captured PNG.
+The window driver launches the release `spike-shell` from the target directory `cargo metadata` reports. It does not assume `spikes/target/release`, and it does not set `CARGO_TARGET_DIR`. It captures that process's window with `screencapture -l` after `CGWindowListCopyWindowInfo` finds the window id. It does not click the user's other apps and it does not call `screencapture` on a rectangle of the desktop. PDF footer strings come from Accessibility. WKWebView hides those NSH texts from Accessibility, so the EPUB footer is read with Vision from the captured PNG.
 
 The env vars are the same commands the keys send. The reading window hides the traffic lights and the book title until the pointer is at the top. `SPIKE_DRAG=1` is the two-line drag. `SPIKE_SCALE=zoom-2x` is Command plus. `SPIKE_MODE=webkit` is the EPUB page. `SPIKE_SELECT=1` with `SPIKE_RELOAD=1` marks `truth universally acknowledged` and reloads. `SPIKE_TURN=1` turns one page. `SPIKE_PLAY=1` turns three times so a recording can see the slide. `SPIKE_BOOK` selects `pride`, `zhaohua`, `styled`, `plain-en`, `plain-zh`, or `fixed`. The trim is the View menu. A real launch saves it in `~/Library/Application Support/app.slowpage.reader/settings.json`. `scripts/verify` sets `SUPERREADER_SUPPORT_DIR` to a fresh temp directory for that run, and the shell reads settings and the line-break cache from there. An empty override is the real directory. The footer is `N/M页` and `本章还剩X页`.
 
@@ -55,7 +55,7 @@ Perf numbers come from `spike-measure pdf pdfium retina-1x`, five release runs. 
 
 ## Evidence
 
-The run directory holds `summary.json`, the screenshots, the Accessibility dumps, `nsh-junit.xml`, and `measure.json`. `summary.json` is the result. `ok` is true only when no check has status `fail`. Each check has `id`, `feature`, `status` of `pass`, `fail`, or `pending`, `driver`, and `detail`.
+The run directory holds `summary.json`, the screenshots, the Accessibility dumps, `nsh-junit.xml`, and `measure.json`. `summary.json` is the result. `ok` is true only when no check has status `fail`. Its `head` field is `git rev-parse HEAD`. Each check has `id`, `feature`, `status` of `pass`, `fail`, or `pending`, `driver`, and `detail`.
 
 A proof shows the action and the resulting state. The PDF shots are the highlight at retina 1x and at zoom 2x. The EPUB shot is Pride with the footer and the mark. The highlight check counts yellow paper pixels and dark ink pixels inside that band. A yellow band with no ink fails.
 
@@ -74,6 +74,18 @@ scripts/verify --self-test
 scripts/verify --doctor
 scripts/verify --out docs/verify/runs/manual
 ```
+
+## Preflight
+
+Before the full suite, prove the shell form on its own. This builds the release shell, launches the fixture library in an isolated temp support directory, and scores only that form. It walks 1440, the 578 by 528 minimum, and fullscreen enter, settled, and exit, and it requires the accessibility titles and a shelf wheel that moves pixels. It does not install to `/Applications` and it does not set `CARGO_TARGET_DIR`.
+
+```sh
+just verify --subset preflight --out /tmp/superreader-preflight-s2-1-9
+```
+
+Do not set `SR_VERIFY_MAX_LOAD` above 8. A load at or above 8 means this command does not start.
+
+`shell-form-fixture`, `shell-shelf-scroll`, and `shell-clip` have to pass. `frames/` has to contain `1440`, `minimum`, `fullscreen-enter`, `fullscreen-settled`, and `fullscreen-exit`. `form-minimum.png`, `form-fullscreen.png`, and `form-restored.png` have to exist, and the fullscreen capture has to differ from the windowed one. The wheel before and after captures have to differ. A pass here is the gate for the full suite. The full suite uses a new run directory and still scores every other row.
 
 `--self-test` checks the median, the footer patterns, and the highlight pixel rule. It does not launch the app.
 

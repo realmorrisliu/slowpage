@@ -1,0 +1,26 @@
+S2.1 run 10. Head 6c5e1d45a581f84d3e62f879f6682b8cbce2073e.
+This directory is the preflight only. The full suite was not run.
+
+One-window diagnostic, same binary, 09:03-09:06 CST, before this preflight
+- executable ~/.cache/cargo-target/SuperReader/release/spike-shell
+- sha256 e1ade42162ff921b2dd0701b174848d8e8a69cc61425e2aa12160092ab6fda03
+- pid 17394 started 09:03:41, proc_pidpath matched that image
+- the app became key (frontmost spike-shell)
+- wheel before 0b1333c1... after 3006960a..., 2013967 shelf pixels changed
+- fullscreen settled chrome 1512x949, lights 0, lights_visible false, PNG 3024x1898
+- exit restored CG and chrome to 1440x855, delta 0 pt, PNG 2880x1710
+- AX trusted, windows error 0, all 12 fixture titles in the user-facing tree
+
+Preflight 09:07:00-09:09:26 CST, exit 1
+- shell-form-fixture, shell-form-parity, shell-shelf-geometry, shell-shelf-scroll passed
+- shell-clip failed
+- wheel before and after are the same file hash 8ed99605abf476a9, so that post moved 0 pixels
+- minimum chrome is 578x528 and form-minimum.png is 1156x1056
+- fullscreen-settled chrome is fullscreen true, 1512x949, lights hidden
+- fullscreen-exit chrome is fullscreen false, 1440x855, lights visible
+- form-fullscreen.png was not written; window id lookup returned no capture
+- fullscreen-enter frame was not archived; the first saved fullscreen sample is already settled
+- the exit watch requires layout lights is True. The saved exit layout has lights false,
+  so the row says fullscreen did not exit even though the chrome frame had already restored
+
+Real support stayed 51 files, inode 900769011, same content hash.

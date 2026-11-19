@@ -1,6 +1,6 @@
 # Official open
 
-Launch Services opens an EPUB and a PDF through NSH 0.5.0's file path. The proof is `opens.log`.
+Launch Services opens an EPUB and a PDF through NSH 0.5.1's file path. The proof is `opens.log`.
 
 ## Sub-features
 
@@ -16,14 +16,14 @@ Launch Services opens an EPUB and a PDF through NSH 0.5.0's file path. The proof
 
 ## Driving it with scripts/verify
 
-Preconditions: fixtures are `/tmp/superreader-fixtures/pride-se.epub` and `/tmp/superreader-fixtures/gpt3.pdf`. `scripts/verify` packages `dist/Slowpage.app` for these three checks. Slowpage must not already be running. `open -a` does not pass `SUPERREADER_SUPPORT_DIR`, so the script moves `~/Library/Application Support/app.slowpage.reader` aside for the three opens and puts it back afterward.
+Preconditions: fixtures are `/tmp/superreader-fixtures/pride-se.epub` and `/tmp/superreader-fixtures/gpt3.pdf`. `scripts/verify` packages a temporary `Slowpage.app` inside the run directory. The binary is the one `cargo metadata` names. Slowpage must not already be running. The package's `LSEnvironment` sets `SUPERREADER_SUPPORT_DIR` to a fresh temp directory. The real Application Support directory is not moved.
 
-- The full `just verify` run calls `open -a dist/Slowpage.app` three times and reads `/tmp/superreader-spike/opens.log`.
+- The full `just verify` run calls `open -a` on that temporary app three times and reads `/tmp/superreader-spike/opens.log`.
 - Each pass row names the path. A missing `queued <path>` line fails that check.
 
 ## Gotchas
 
 - Launching `spike-shell` directly does not go through Launch Services. These checks need the `.app`.
-- `open -a` does not pass `SUPERREADER_SUPPORT_DIR`. The real Application Support directory is moved aside and restored, including when a check fails.
+- `open -a` does not pass the shell environment. The temporary app's `LSEnvironment` carries the temp support directory. Do not move `~/Library/Application Support/app.slowpage.reader`.
 - A real Dock drag is not in the script. `open-dock-equivalent` is `open -a` on `dock-drop.epub` while the app is running.
 - `alpha-finder-open` stays pending. It is the Finder double-click this driver still does not click.

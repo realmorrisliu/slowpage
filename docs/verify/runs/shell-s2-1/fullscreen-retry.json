@@ -1,0 +1,17 @@
+{
+  "metrics": {
+    "id": 133816,
+    "w": 1512.0,
+    "h": 949.0,
+    "vis_w": 1512.0,
+    "vis_h": 887.0,
+    "scale": 2.0,
+    "screen_h": 982.0,
+    "x": 0.0,
+    "y": 33.0
+  },
+  "diff": 0,
+  "hover_top": "#EFEEF1",
+  "away_top": "#EFEEF1",
+  "hover_top_y8": "#EEEEF0"
+}
