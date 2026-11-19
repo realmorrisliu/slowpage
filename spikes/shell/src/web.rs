@@ -866,28 +866,15 @@ impl WebChapter {
         place_pair(&web, &edge, x, y, width, height, zoom);
     }
 
-    pub fn hold(&self) {
-        let plan =
-            SESSION.with(|session| crate::visit::begin_reflow(&mut session.borrow_mut().reader));
-        match plan {
-            crate::visit::ReflowHold::Keep(ch) => {
-                let mut inbox = self.inbox.borrow_mut();
-                inbox.hold = Some(ch);
-                inbox.hold_probe = SESSION.with(|session| session.borrow().reader.probe);
-                inbox.hold_missed = false;
-            }
-            crate::visit::ReflowHold::Pending => {}
-            crate::visit::ReflowHold::Measure { page, probe } => {
-                let (web, _, href) = self.shown();
-                eval(
-                    &web,
-                    &crate::visit::hold_eval(page, probe),
-                    self.inbox.clone(),
-                    href,
-                    false,
-                );
-            }
-        }
+    pub fn measure(&self, page: u32, probe: u64) {
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &crate::visit::hold_eval(page, probe),
+            self.inbox.clone(),
+            href,
+            false,
+        );
     }
 
     pub fn reveal(&self, offset: u32) {
@@ -1267,17 +1254,8 @@ pub fn anchor_missed() {
     });
 }
 
-pub fn keep_frame() -> bool {
-    SESSION.with(|session| crate::visit::keep_frame(&session.borrow().reader))
-}
-
-pub fn reader_probe() -> u64 {
-    SESSION.with(|session| session.borrow().reader.probe)
-}
-
-/// One reader. A miss leaves the frame, a hit reveals after the frame moves.
-pub fn settle_finished_hold(finish: crate::visit::HoldFinish) -> crate::visit::FrameStep {
-    SESSION.with(|session| crate::visit::settle_hold(&mut session.borrow_mut().reader, finish))
+pub fn layout_frame(tick: crate::visit::FrameTick) -> crate::visit::DrawPlan {
+    SESSION.with(|session| crate::visit::layout_frame(&mut session.borrow_mut().reader, tick))
 }
 
 pub fn take_reader_reveal() -> Option<u32> {

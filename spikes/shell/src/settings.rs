@@ -2618,14 +2618,20 @@ mod tests {
             &mut stdout,
             r#"window.__caretOff=null;window.__textNode={nodeType:3,textContent:"a".repeat(5000),nodeValue:"a".repeat(5000),parentNode:document.body,parentElement:document.body};document.body.firstChild=window.__textNode;document.caretRangeFromPoint=function(){if(window.__caretOff==null)return null;return{startContainer:window.__textNode,startOffset:window.__caretOff}};document.createTreeWalker=function(){var sent=false;return{currentNode:window.__textNode,nextNode:function(){if(sent)return null;sent=true;this.currentNode=window.__textNode;return window.__textNode}}};document.createRange=function(){return{setStart:function(){},setEnd:function(){},selectNodeContents:function(){},getClientRects:function(){return[]},getBoundingClientRect:function(){return{left:900,right:910,top:40,bottom:60,width:10,height:20}}}};"#,
         );
-        let measured = crate::visit::begin_reflow(&mut reader);
-        let crate::visit::ReflowHold::Measure { page: 10, probe } = measured else {
+        let mut tick = fitted_tick(false, false);
+        let measured = crate::visit::layout_frame(&mut reader, tick);
+        let crate::visit::Draw::Measure { page: 10, probe } = measured.draw else {
             panic!("measure the saved column, {measured:?}");
         };
-        assert_eq!(
-            crate::visit::begin_reflow(&mut reader),
-            crate::visit::ReflowHold::Pending
-        );
+        assert!(measured.cancel);
+        assert!(measured.pump);
+        tick.awaiting = true;
+        tick.hold_probe = probe;
+        let pending = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(pending.draw, crate::visit::Draw::Rest);
+        assert!(!pending.cancel);
+        assert!(pending.pump);
+        assert_eq!(reader.probe, probe);
         let (missed_posts, missed, missed_column) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -2661,13 +2667,31 @@ mod tests {
         assert!(reader.measured.is_none());
         assert!(!reader.anchoring);
         assert!(reader.hold_layout);
-        let stayed = crate::visit::settle_hold(
-            &mut reader,
-            crate::visit::finish_hold_offset(None, true, false),
-        );
-        assert_eq!(stayed, crate::visit::FrameStep::Stay);
-        assert!(!crate::visit::places_frame(stayed));
+        tick.missed = true;
+        let stayed = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(stayed.draw, crate::visit::Draw::Move { reveal: None });
+        assert!(!stayed.cancel);
+        assert!(!stayed.pump);
         assert_ne!(reader.probe, probe);
+        assert_eq!(reader.walk, Some(10));
+        tick.awaiting = false;
+        tick.missed = false;
+        tick.fitted_same = true;
+        let mut rested_cancels = 0;
+        let mut rested_pumps = 0;
+        for _ in 0..8 {
+            let rested = crate::visit::layout_frame(&mut reader, tick);
+            assert_eq!(rested.draw, crate::visit::Draw::Rest);
+            if rested.cancel {
+                rested_cancels += 1;
+            }
+            if rested.pump {
+                rested_pumps += 1;
+            }
+            assert_eq!(reader.walk, Some(10));
+        }
+        assert_eq!(rested_cancels, 0);
+        assert_eq!(rested_pumps, 0);
         let blocked = crate::visit::poll_anchored(&mut reader, 4, 40, false);
         assert!(blocked.command.is_none());
         assert_eq!(reader.walk, Some(10));
@@ -2676,13 +2700,6 @@ mod tests {
         assert_eq!(reader.walk, Some(10));
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
-        assert!(crate::visit::keep_frame(&reader));
-        let timed = crate::visit::settle_hold(
-            &mut reader,
-            crate::visit::finish_hold_offset(None, false, true),
-        );
-        assert_eq!(timed, crate::visit::FrameStep::Stay);
-        assert!(crate::visit::keep_frame(&reader));
         assert!(crate::visit::current_hold(Some(42), probe, reader.probe).is_none());
         let late = serde_json::json!({
             "hold": 42,
@@ -2762,11 +2779,13 @@ mod tests {
         assert_eq!(resume_offset(&file, book), 0);
         assert_eq!(reader.walk, Some(10));
         let _ = read_frame(&mut stdin, &mut stdout, "window.__caretOff=42");
-        assert!(crate::visit::keep_frame(&reader));
-        let again = crate::visit::begin_reflow(&mut reader);
-        let crate::visit::ReflowHold::Measure { page: 10, probe } = again else {
+        tick.fitted_same = false;
+        tick.awaiting = false;
+        let again = crate::visit::layout_frame(&mut reader, tick);
+        let crate::visit::Draw::Measure { page: 10, probe } = again.draw else {
             panic!("measure the caret, {again:?}");
         };
+        assert!(again.cancel);
         let (held_posts, held, _) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -2795,8 +2814,16 @@ mod tests {
             true,
         );
         assert_eq!(reader.measured, Some(42));
-        assert!(!crate::visit::keep_frame(&reader));
         assert!(reader.anchoring);
+        tick.awaiting = true;
+        tick.hold = Some(42);
+        tick.hold_probe = probe;
+        tick.missed = false;
+        tick.fitted_same = false;
+        let reveal = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(reveal.draw, crate::visit::Draw::Move { reveal: Some(42) });
+        assert!(!reveal.cancel);
+        assert!(!reveal.pump);
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
         assert_eq!(reader.walk, Some(10));
@@ -2805,10 +2832,13 @@ mod tests {
             &mut stdout,
             "window.innerWidth=250;window.dispatchEvent({type:\"resize\"})",
         );
-        assert_eq!(
-            crate::visit::begin_reflow(&mut reader),
-            crate::visit::ReflowHold::Keep(42)
-        );
+        tick.awaiting = false;
+        tick.hold = None;
+        tick.fitted_same = false;
+        let kept = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(kept.draw, crate::visit::Draw::Move { reveal: Some(42) });
+        assert!(!kept.cancel);
+        assert!(!kept.pump);
         let (waiting, _, waiting_column) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -2845,10 +2875,14 @@ mod tests {
         let failed_walk = crate::visit::poll_anchored(&mut reader, 4, 40, false);
         assert!(failed_walk.command.is_none());
         assert_eq!(reader.walk, Some(10));
+        tick.fitted_same = false;
+        tick.awaiting = false;
+        let denied_resize = crate::visit::layout_frame(&mut reader, tick);
         assert_eq!(
-            crate::visit::begin_reflow(&mut reader),
-            crate::visit::ReflowHold::Keep(42)
+            denied_resize.draw,
+            crate::visit::Draw::Move { reveal: Some(42) }
         );
+        assert!(!denied_resize.pump);
         apply_posts(
             &mut reader,
             &landed,
@@ -2865,10 +2899,10 @@ mod tests {
         assert!(reader.walk.is_none());
         assert!(!reader.anchoring);
         let _ = read_frame(&mut stdin, &mut stdout, "window.innerWidth=180");
-        assert_eq!(
-            crate::visit::begin_reflow(&mut reader),
-            crate::visit::ReflowHold::Keep(42)
-        );
+        tick.fitted_same = false;
+        let narrower = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(narrower.draw, crate::visit::Draw::Move { reveal: Some(42) });
+        assert!(!narrower.pump);
         let (second_wait, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -3216,8 +3250,8 @@ mod tests {
             &mut stdout,
             "window.__caretOff=0;window.innerWidth=250",
         );
-        let zero_measure = crate::visit::begin_reflow(&mut reopened);
-        let crate::visit::ReflowHold::Measure { page: 10, probe } = zero_measure else {
+        let zero_measure = crate::visit::layout_frame(&mut reopened, fitted_tick(false, false));
+        let crate::visit::Draw::Measure { page: 10, probe } = zero_measure.draw else {
             panic!("an old page row is measured, {zero_measure:?}");
         };
         let (zero_posts, zero, _) = read_frame(
@@ -3269,14 +3303,63 @@ mod tests {
         crate::visit::open_resume(&mut opened, &store);
         assert_eq!(opened.measured, Some(0));
         assert!(opened.walk.is_none());
-        assert_eq!(
-            crate::visit::begin_reflow(&mut opened),
-            crate::visit::ReflowHold::Keep(0)
+        let kept_zero = crate::visit::layout_frame(&mut opened, fitted_tick(false, false));
+        assert_eq!(kept_zero.draw, crate::visit::Draw::Move { reveal: Some(0) });
+        assert!(!kept_zero.pump);
+        let mut quiet = fitted_tick(true, false);
+        for _ in 0..5 {
+            let rested = crate::visit::layout_frame(&mut opened, quiet);
+            assert_eq!(rested.draw, crate::visit::Draw::Rest);
+            assert!(!rested.cancel);
+            assert!(!rested.pump);
+        }
+        let user = crate::visit::turn_command(
+            1,
+            crate::visit::TurnSource::User,
+            0,
+            false,
+            opened.restore_load,
         );
+        let (started_posts, started_answer, _) =
+            read_frame(&mut stdin, &mut stdout, &format!("now {user}"));
+        assert!(started_posts.is_empty(), "{started_posts:?}");
+        assert_eq!(script_answer(&started_answer), "ok");
+        for _ in 0..5 {
+            let during = crate::visit::layout_frame(&mut opened, quiet);
+            assert!(!during.cancel, "{during:?}");
+            assert!(!during.pump, "{during:?}");
+        }
+        let (finished_turn, _, finished_column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert!(
+            finished_turn.iter().any(|post| post["kind"] == "turn"),
+            "{finished_turn:?}"
+        );
+        apply_posts(
+            &mut opened,
+            &finished_turn,
+            "ch.xhtml",
+            &mut store,
+            finished_column,
+            40,
+            false,
+        );
+        assert_eq!(resume_page(&file, book), finished_column);
+        assert!(opened.walk.is_none());
+        quiet.shown = finished_column;
+        let after = crate::visit::layout_frame(&mut opened, quiet);
+        assert!(!after.pump);
+        assert!(!after.cancel);
 
         let _ = writeln_cmd(&mut stdin, "quit");
         let _ = child.wait();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn fitted_tick(same: bool, awaiting: bool) -> crate::visit::FrameTick {
+        let mut tick = crate::visit::FrameTick::new(same, true, true, true, true, awaiting);
+        tick.shown = 4;
+        tick.pages = 40;
+        tick
     }
 
     fn apply_posts(

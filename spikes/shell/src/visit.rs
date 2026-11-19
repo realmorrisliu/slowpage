@@ -1013,8 +1013,9 @@ pub struct Reader {
     /// The sample this resize asked for. A post from an older sample is not
     /// the current character.
     pub probe: u64,
-    /// The saved page number is not a target in a new layout. Set when a
-    /// caret read misses, times out, or the anchor row fails to land.
+    /// The saved page number is not a chase. A miss, a timeout, or a failed
+    /// anchor write sets it. The frame may still move, and a later size may
+    /// measure. It does not freeze the draw.
     pub hold_layout: bool,
     /// The next restore answers a user post this reader refused or accepted.
     /// The page blocks an older restore until that answer arrives.
@@ -1581,16 +1582,151 @@ pub fn poll_resume(
     ResumePoll { walk, command }
 }
 
-/// The poll while a caret read is in flight. The old page is not chased,
-/// and a column past that page does not end the walk.
+/// The poll while a caret read is in flight, or the saved page number is not
+/// a chase. A column past that page does not end the walk.
 fn layout_held(reader: &Reader) -> bool {
     reader.anchoring || reader.measured.is_some() || reader.hold_layout
 }
 
-/// A resize must not measure the saved page number. The frame stays until a
-/// caret hit can be revealed, or the reader turns the page.
-pub fn keep_frame(reader: &Reader) -> bool {
-    reader.hold_layout && reader.measured.is_none()
+/// One draw, the same inputs `place_page` has. The test drives this for
+/// several frames. A matching box does not cancel a gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameTick {
+    pub fitted_same: bool,
+    pub zoom_same: bool,
+    pub stage_same: bool,
+    pub reflowable: bool,
+    pub settled: bool,
+    pub awaiting: bool,
+    pub hold: Option<u32>,
+    pub hold_probe: u64,
+    pub missed: bool,
+    pub timed_out: bool,
+    pub shown: u32,
+    pub pages: u32,
+    pub pages_known: bool,
+}
+
+impl FrameTick {
+    pub fn new(
+        fitted_same: bool,
+        zoom_same: bool,
+        stage_same: bool,
+        reflowable: bool,
+        settled: bool,
+        awaiting: bool,
+    ) -> Self {
+        Self {
+            fitted_same,
+            zoom_same,
+            stage_same,
+            reflowable,
+            settled,
+            awaiting,
+            hold: None,
+            hold_probe: 0,
+            missed: false,
+            timed_out: false,
+            shown: 1,
+            pages: 1,
+            pages_known: true,
+        }
+    }
+}
+
+/// What this draw does to the web view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Draw {
+    /// Leave the view where it is.
+    Rest,
+    /// Ask the page for the caret. This draw drops a gesture painted for the
+    /// old box. Later draws of the same wait do not.
+    Measure { page: u32, probe: u64 },
+    /// Move the view to the fitted box. `reveal` seeks that character after
+    /// the move. None does not seek a page number.
+    Move { reveal: Option<u32> },
+}
+
+/// `cancel` drops a gesture that has not posted. `pump` asks for another draw.
+/// A walk that is not being chased does not pump.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawPlan {
+    pub draw: Draw,
+    pub cancel: bool,
+    pub pump: bool,
+}
+
+fn chase_due(reader: &Reader, tick: FrameTick) -> bool {
+    if layout_held(reader) {
+        return false;
+    }
+    if !tick.pages_known {
+        return reader.walk.is_some();
+    }
+    resume_turn(reader.walk, tick.shown, tick.pages, false)
+}
+
+fn plan(draw: Draw, cancel: bool, pump: bool) -> DrawPlan {
+    DrawPlan { draw, cancel, pump }
+}
+
+/// The draw `place_page` applies. A failed sample moves the box and does not
+/// seek the saved page. The next size can measure. A matching box does not
+/// cancel and does not schedule a chase.
+pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
+    if tick.awaiting {
+        let hold = current_hold(tick.hold, tick.hold_probe, reader.probe);
+        let missed = tick.missed && hold.is_none();
+        let timed_out = tick.timed_out && hold.is_none();
+        match finish_hold_offset(hold, missed, timed_out) {
+            HoldFinish::Wait => return plan(Draw::Rest, false, true),
+            HoldFinish::Miss => {
+                reader.probe = reader.probe.saturating_add(1);
+                reader.anchoring = false;
+                reader.hold_layout = true;
+                return plan(Draw::Move { reveal: None }, false, false);
+            }
+            HoldFinish::Reveal(offset) => {
+                reader.anchoring = true;
+                reader.hold_layout = false;
+                return plan(
+                    Draw::Move {
+                        reveal: Some(offset),
+                    },
+                    false,
+                    false,
+                );
+            }
+        }
+    }
+    let chase = chase_due(reader, tick);
+    match place_step(tick.fitted_same, tick.zoom_same, tick.stage_same) {
+        PlaceStep::Hold => plan(Draw::Rest, false, chase),
+        PlaceStep::Cancel { reflow: false } => plan(Draw::Rest, true, chase),
+        PlaceStep::Cancel { reflow: true } => {
+            if tick.settled && tick.reflowable {
+                if let Some(offset) = reader.measured {
+                    reader.anchoring = false;
+                    return plan(
+                        Draw::Move {
+                            reveal: Some(offset),
+                        },
+                        false,
+                        false,
+                    );
+                }
+                if reader.anchoring {
+                    return plan(Draw::Rest, false, true);
+                }
+                reader.probe = reader.probe.saturating_add(1);
+                reader.anchoring = true;
+                let page = reader.walk.unwrap_or(0);
+                let probe = reader.probe;
+                return plan(Draw::Measure { page, probe }, true, true);
+            }
+            plan(Draw::Move { reveal: None }, false, chase)
+        }
+    }
 }
 
 pub fn poll_anchored(reader: &mut Reader, shown: u32, pages: u32, turning: bool) -> ResumePoll {
@@ -1610,31 +1746,6 @@ pub fn poll_anchored(reader: &mut Reader, shown: u32, pages: u32, turning: bool)
     );
     reader.walk = polled.walk;
     polled
-}
-
-/// What a reflow asks the page to measure. A known character is not measured
-/// again at the new width. A probe already in flight is not started again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReflowHold {
-    Measure { page: u32, probe: u64 },
-    Keep(u32),
-    Pending,
-}
-
-pub fn begin_reflow(reader: &mut Reader) -> ReflowHold {
-    if let Some(ch) = reader.measured {
-        reader.anchoring = true;
-        return ReflowHold::Keep(ch);
-    }
-    if reader.anchoring {
-        return ReflowHold::Pending;
-    }
-    reader.probe = reader.probe.saturating_add(1);
-    reader.anchoring = true;
-    ReflowHold::Measure {
-        page: reader.walk.unwrap_or(0),
-        probe: reader.probe,
-    }
 }
 
 pub fn hold_eval(page: u32, probe: u64) -> String {
@@ -1660,41 +1771,10 @@ pub fn finish_hold_offset(hold: Option<u32>, missed: bool, timed_out: bool) -> H
     }
 }
 
-/// Whether `finish_hold` moves the web view to the new frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FrameStep {
-    Wait,
-    Stay,
-    Reveal(u32),
-}
-
-pub fn places_frame(step: FrameStep) -> bool {
-    matches!(step, FrameStep::Reveal(_))
-}
-
 /// A hold already in the inbox is current only when it is the sample still
 /// being asked for.
 pub fn current_hold(hold: Option<u32>, hold_probe: u64, reader_probe: u64) -> Option<u32> {
     hold.filter(|_| hold_probe == reader_probe)
-}
-
-/// Miss and timeout retire the sample and leave the frame where it is.
-/// A hit reveals that character after the frame moves.
-pub fn settle_hold(reader: &mut Reader, finish: HoldFinish) -> FrameStep {
-    match finish {
-        HoldFinish::Wait => FrameStep::Wait,
-        HoldFinish::Miss => {
-            reader.probe = reader.probe.saturating_add(1);
-            reader.anchoring = false;
-            reader.hold_layout = true;
-            FrameStep::Stay
-        }
-        HoldFinish::Reveal(ch) => {
-            reader.anchoring = true;
-            reader.hold_layout = false;
-            FrameStep::Reveal(ch)
-        }
-    }
 }
 
 pub fn take_reveal(reader: &mut Reader) -> Option<u32> {
@@ -2717,32 +2797,91 @@ mod tests {
         assert_eq!(reader.walk, Some(10));
         assert!(command.contains("spikeFollowDrop"));
         assert!(!reader.swipe.release_open());
-        let first = begin_reflow(&mut reader);
-        let ReflowHold::Measure { page: 10, probe } = first else {
-            panic!("measure the saved column, {first:?}");
+        let mut tick = FrameTick::new(false, true, true, true, true, false);
+        tick.shown = 4;
+        tick.pages = 40;
+        let started = layout_frame(&mut reader, tick);
+        let Draw::Measure { page: 10, probe } = started.draw else {
+            panic!("measure the saved column, {started:?}");
         };
+        assert!(started.cancel);
+        assert!(started.pump);
         assert_eq!(probe, reader.probe);
-        assert!(reader.anchoring);
-        assert_eq!(begin_reflow(&mut reader), ReflowHold::Pending);
-        assert_eq!(finish_hold_offset(None, false, false), HoldFinish::Wait);
-        assert_eq!(finish_hold_offset(None, true, false), HoldFinish::Miss);
-        assert_eq!(finish_hold_offset(None, false, true), HoldFinish::Miss);
-        assert_eq!(
-            finish_hold_offset(Some(0), false, false),
-            HoldFinish::Reveal(0)
-        );
-        let stayed = settle_hold(&mut reader, HoldFinish::Miss);
-        assert_eq!(stayed, FrameStep::Stay);
-        assert!(!places_frame(stayed));
+        tick.awaiting = true;
+        tick.hold_probe = probe;
+        let waiting = layout_frame(&mut reader, tick);
+        assert_eq!(waiting.draw, Draw::Rest);
+        assert!(!waiting.cancel);
+        assert!(waiting.pump);
+        assert_eq!(reader.probe, probe);
+        tick.timed_out = true;
+        let failed = layout_frame(&mut reader, tick);
+        assert_eq!(failed.draw, Draw::Move { reveal: None });
+        assert!(!failed.cancel);
+        assert!(!failed.pump);
         assert!(reader.hold_layout);
-        assert!(current_hold(Some(9), probe, reader.probe).is_none());
-        let polled = poll_anchored(&mut reader, 10, 40, false);
-        assert!(polled.command.is_none());
+        assert!(reader.measured.is_none());
         assert_eq!(reader.walk, Some(10));
-        assert!(keep_frame(&reader));
+        assert!(current_hold(Some(42), probe, reader.probe).is_none());
+        let polled = poll_anchored(&mut reader, 4, 40, false);
+        assert!(polled.command.is_none());
+        assert_eq!(polled.walk, Some(10));
+        tick.awaiting = false;
+        tick.timed_out = false;
+        tick.fitted_same = true;
+        let mut cancels = 0;
+        let mut pumps = 0;
+        for _ in 0..8 {
+            let rested = layout_frame(&mut reader, tick);
+            assert_eq!(rested.draw, Draw::Rest);
+            if rested.cancel {
+                cancels += 1;
+            }
+            if rested.pump {
+                pumps += 1;
+            }
+            assert_eq!(reader.walk, Some(10));
+        }
+        assert_eq!(cancels, 0);
+        assert_eq!(pumps, 0);
+        for _ in 0..3 {
+            tick.fitted_same = false;
+            let again = layout_frame(&mut reader, tick);
+            let Draw::Measure {
+                page: 10,
+                probe: next,
+            } = again.draw
+            else {
+                panic!("the next size measures, {again:?}");
+            };
+            assert!(again.cancel);
+            tick.awaiting = true;
+            tick.hold_probe = next;
+            tick.missed = true;
+            let missed = layout_frame(&mut reader, tick);
+            assert_eq!(missed.draw, Draw::Move { reveal: None });
+            assert!(!missed.cancel);
+            assert!(!missed.pump);
+            tick.awaiting = false;
+            tick.missed = false;
+            tick.fitted_same = true;
+            let rested = layout_frame(&mut reader, tick);
+            assert!(!rested.cancel && !rested.pump, "{rested:?}");
+        }
+        assert_eq!(reader.walk, Some(10));
         reader.measured = Some(42);
-        assert!(!keep_frame(&reader));
-        assert_eq!(begin_reflow(&mut reader), ReflowHold::Keep(42));
+        reader.anchoring = false;
+        tick.fitted_same = false;
+        let known = layout_frame(&mut reader, tick);
+        assert_eq!(known.draw, Draw::Move { reveal: Some(42) });
+        assert!(!known.cancel);
+        assert!(!known.pump);
+        assert_eq!(reader.walk, Some(10));
+        reader.measured = Some(0);
+        let zero = layout_frame(&mut reader, tick);
+        assert_eq!(zero.draw, Draw::Move { reveal: Some(0) });
+        assert!(!zero.pump);
+        assert_eq!(reader.walk, Some(10));
     }
 
     #[test]

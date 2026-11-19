@@ -319,7 +319,6 @@ struct State {
     placed_stage_w: f64,
     placed_stage_h: f64,
     await_hold: bool,
-    hold_ready: bool,
     settled: bool,
     hold_since: Option<Instant>,
     shown_at: Option<Instant>,
@@ -420,18 +419,11 @@ impl State {
         if self.mode == Mode::WebKit {
             self.stage_w = bounds.size.width;
             self.stage_h = bounds.size.height;
-            self.place_page();
+            let pump = self.place_page();
             let playing = std::env::var("SPIKE_PLAY").as_deref() == Ok("1")
                 && self.play_count < 3
                 && !self.turn_pending;
-            let need_page = crate::web::reader_walk().is_some_and(|target| {
-                self.web
-                    .as_ref()
-                    .and_then(|web| web.inbox.borrow().pages)
-                    .map(|(page, _)| (page as u32) < target)
-                    .unwrap_or(true)
-            });
-            if self.chrome_moving() || playing || need_page {
+            if self.chrome_moving() || playing || pump {
                 let _: () = unsafe {
                     msg_send![
                         view,
@@ -1029,7 +1021,6 @@ impl State {
     }
 
     fn poll_web(&mut self) {
-        self.finish_hold();
         let Some(web) = &self.web else {
             return;
         };
@@ -1135,53 +1126,6 @@ impl State {
         crate::web::write_inbox(&inbox, &href);
     }
 
-    fn finish_hold(&mut self) {
-        if !self.await_hold {
-            return;
-        }
-        let (offset, hold_probe, missed) = match self.web.as_ref() {
-            Some(web) => {
-                let inbox = web.inbox.borrow();
-                (inbox.hold, inbox.hold_probe, inbox.hold_missed)
-            }
-            None => (None, 0, false),
-        };
-        let timed_out = self
-            .hold_since
-            .map(|at| at.elapsed().as_millis() > 700)
-            .unwrap_or(false);
-        let offset = crate::visit::current_hold(offset, hold_probe, crate::web::reader_probe());
-        let finish = crate::visit::finish_hold_offset(offset, missed, timed_out);
-        if finish == crate::visit::HoldFinish::Wait {
-            return;
-        }
-        let step = crate::web::settle_finished_hold(finish);
-        if let Some(web) = &self.web {
-            let mut inbox = web.inbox.borrow_mut();
-            inbox.hold = None;
-            inbox.hold_probe = 0;
-            inbox.hold_missed = false;
-        }
-        self.await_hold = false;
-        if !crate::visit::places_frame(step) {
-            return;
-        }
-        let crate::visit::FrameStep::Reveal(offset) = step else {
-            return;
-        };
-        self.hold_ready = true;
-        self.place_page();
-        if let Some(web) = &self.web {
-            web.reveal(offset);
-            if let (Some(start), Some(end)) = (
-                self.anchor.as_ref().and_then(anchor_start),
-                self.anchor.as_ref().and_then(anchor_end),
-            ) {
-                web.repaint(start, end);
-            }
-        }
-    }
-
     fn open_web(&mut self, parent: &StageView, href: &str) {
         let path = self.epub_path();
         let parent: &AnyObject = unsafe { &*(parent as *const StageView).cast() };
@@ -1258,9 +1202,9 @@ impl State {
         }
     }
 
-    fn place_page(&mut self) {
-        if self.await_hold || self.stage_w < 1.0 || self.stage_h < 1.0 {
-            return;
+    fn place_page(&mut self) -> bool {
+        if self.web.is_none() || ((self.stage_w < 1.0 || self.stage_h < 1.0) && !self.await_hold) {
+            return false;
         }
         let item = crate::reading::trim(&self.trim_id);
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
@@ -1286,57 +1230,108 @@ impl State {
             h.round() as i32,
             self.trim_id.clone(),
         );
-        if self.web.is_none() {
-            return;
+        let (hold, hold_probe, missed, shown, pages, pages_known) = {
+            let inbox = self.web.as_ref().unwrap().inbox.borrow();
+            match inbox.pages {
+                Some((page, count)) => (
+                    inbox.hold,
+                    inbox.hold_probe,
+                    inbox.hold_missed,
+                    page as u32,
+                    count as u32,
+                    true,
+                ),
+                None => (inbox.hold, inbox.hold_probe, inbox.hold_missed, 0, 0, false),
+            }
+        };
+        let timed_out = self.await_hold
+            && self
+                .hold_since
+                .map(|at| at.elapsed().as_millis() > 700)
+                .unwrap_or(false);
+        let mut tick = crate::visit::FrameTick::new(
+            self.placed.as_ref() == Some(&key),
+            (self.placed_zoom - zoom).abs() < 0.01,
+            self.placed_stage_w.round() as i32 == self.stage_w.round() as i32
+                && self.placed_stage_h.round() as i32 == self.stage_h.round() as i32,
+            self.declared.is_none(),
+            self.settled,
+            self.await_hold,
+        );
+        tick.hold = hold;
+        tick.hold_probe = hold_probe;
+        tick.missed = missed;
+        tick.timed_out = timed_out;
+        tick.shown = shown;
+        tick.pages = pages;
+        tick.pages_known = pages_known;
+        let plan = crate::web::layout_frame(tick);
+        let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
+        if resolved {
+            if let Some(web) = &self.web {
+                let mut inbox = web.inbox.borrow_mut();
+                inbox.hold = None;
+                inbox.hold_probe = 0;
+                inbox.hold_missed = false;
+            }
+            self.await_hold = false;
+            self.hold_since = None;
         }
-        let fitted_same = self.placed.as_ref() == Some(&key);
-        let zoom_same = (self.placed_zoom - zoom).abs() < 0.01;
-        let stage_same = self.placed_stage_w.round() as i32 == self.stage_w.round() as i32
-            && self.placed_stage_h.round() as i32 == self.stage_h.round() as i32;
-        match crate::visit::place_step(fitted_same, zoom_same, stage_same) {
-            crate::visit::PlaceStep::Hold => return,
-            crate::visit::PlaceStep::Cancel { reflow } => {
-                crate::web::cancel_placed_page();
+        if plan.cancel {
+            crate::web::cancel_placed_page();
+            self.placed_stage_w = self.stage_w;
+            self.placed_stage_h = self.stage_h;
+        }
+        match plan.draw {
+            crate::visit::Draw::Rest => {}
+            crate::visit::Draw::Measure { page, probe } => {
+                self.await_hold = true;
+                self.hold_since = Some(Instant::now());
+                if let Some(web) = &self.web {
+                    {
+                        let mut inbox = web.inbox.borrow_mut();
+                        inbox.hold = None;
+                        inbox.hold_probe = 0;
+                        inbox.hold_missed = false;
+                    }
+                    web.measure(page, probe);
+                }
+            }
+            crate::visit::Draw::Move { reveal } => {
+                self.settled = true;
+                self.placed = Some(key);
+                self.placed_zoom = zoom;
                 self.placed_stage_w = self.stage_w;
                 self.placed_stage_h = self.stage_h;
-                if !reflow {
-                    return;
+                let Some(web) = &self.web else {
+                    return plan.pump;
+                };
+                web.place_at(x, y, w, h, zoom);
+                web.set_page_target(layout_target(w, zoom));
+                {
+                    let mut inbox = web.inbox.borrow_mut();
+                    inbox.page_w = w;
+                    inbox.page_h = h;
+                    inbox.page_x = x;
+                    inbox.bar_w = self.chrome.bar_w.get();
+                    inbox.stage_w = self.stage_w;
+                    inbox.trim = self.trim_id.clone();
+                    inbox.page_source = source.to_string();
+                }
+                let href = web.href();
+                crate::web::write_inbox(&web.inbox.borrow(), &href);
+                if let Some(offset) = reveal {
+                    web.reveal(offset);
+                    if let (Some(start), Some(end)) = (
+                        self.anchor.as_ref().and_then(anchor_start),
+                        self.anchor.as_ref().and_then(anchor_end),
+                    ) {
+                        web.repaint(start, end);
+                    }
                 }
             }
         }
-        let reflowable = self.declared.is_none();
-        if self.settled && reflowable && !self.hold_ready {
-            if crate::web::keep_frame() {
-                return;
-            }
-            self.await_hold = true;
-            self.hold_since = Some(Instant::now());
-            if let Some(web) = &self.web {
-                web.hold();
-            }
-            return;
-        }
-        self.hold_ready = false;
-        self.settled = true;
-        self.placed = Some(key);
-        let Some(web) = &self.web else {
-            return;
-        };
-        self.placed_zoom = zoom;
-        web.place_at(x, y, w, h, zoom);
-        web.set_page_target(layout_target(w, zoom));
-        {
-            let mut inbox = web.inbox.borrow_mut();
-            inbox.page_w = w;
-            inbox.page_h = h;
-            inbox.page_x = x;
-            inbox.bar_w = self.chrome.bar_w.get();
-            inbox.stage_w = self.stage_w;
-            inbox.trim = self.trim_id.clone();
-            inbox.page_source = source.to_string();
-        }
-        let href = web.href();
-        crate::web::write_inbox(&web.inbox.borrow(), &href);
+        plan.pump
     }
 
     fn publish(&self) {
@@ -1636,7 +1631,6 @@ impl Stage {
             placed_stage_w: 0.0,
             placed_stage_h: 0.0,
             await_hold: false,
-            hold_ready: false,
             settled: false,
             hold_since: None,
             shown_at: None,
