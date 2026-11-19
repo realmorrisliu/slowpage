@@ -343,6 +343,13 @@ pub fn footer_zh(page: u32, pages: u32) -> (String, String) {
     (format!("{page}/{pages}页"), format!("本章还剩{left}页"))
 }
 
+pub fn product_page_footer(page: u32, pages: u32) -> (String, String) {
+    if pages == 0 {
+        return (String::new(), String::new());
+    }
+    footer_zh(page, pages)
+}
+
 pub fn title_alpha(shown_ms: u32) -> f32 {
     fade_down(shown_ms, TITLE_DELAY_MS, TITLE_OVER_MS).clamp(0.0, 1.0)
 }
@@ -885,9 +892,12 @@ const SCRIPT: &str = r#"
   };
   window.addEventListener("keydown", function (event) {
     if (event.repeat) return;
-    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    var delta = 0;
+    if (event.key === "ArrowRight" || (event.key === " " && !event.shiftKey)) delta = 1;
+    else if (event.key === "ArrowLeft" || (event.key === " " && event.shiftKey)) delta = -1;
+    else return;
     event.preventDefault();
-    window.spikeTurn(event.key === "ArrowRight" ? 1 : -1);
+    window.spikeTurn(delta);
   }, true);
   window.addEventListener("wheel", function (event) {
     if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
@@ -938,9 +948,22 @@ mod tests {
         let (left, right) = footer_zh(590, 1146);
         assert_eq!(left, "590/1146页");
         assert_eq!(right, "本章还剩556页");
+        let (left, right) = product_page_footer(2, 5);
+        assert_eq!(left, "2/5页");
+        assert_eq!(right, "本章还剩3页");
+        assert_eq!(product_page_footer(1, 0), (String::new(), String::new()));
         let (left, right) = footer_zh(2, 2);
         assert_eq!(left, "2/2页");
         assert_eq!(right, "本章还剩0页");
+    }
+
+    #[test]
+    fn space_and_shift_space_use_the_existing_page_turn() {
+        let script = page_script("zh");
+        assert!(script.contains("event.key === \" \""));
+        assert!(script.contains("event.shiftKey"));
+        assert!(script.contains("window.spikeTurn(delta)"));
+        assert!(script.contains("target > box.pages"));
     }
 
     #[test]

@@ -16,6 +16,7 @@ The approved window is the gray base, one white card, the version B sidebar, and
 - `shell-shelf-scroll` requires `scrolls` true and the last shelf title in the accessibility tree, so a row below the 855 point window can be brought on screen.
 - `smoke-shell-click` stays pending. A cover click leaves the library and shows the existing reader chrome. Escape or Command-[ returns while editing is idle and immersive is off. This window check has not been driven. The margin form still waits on the mockup. The reader-forcing launch is `SPIKE_BOOK`.
 - A Finder or Dock open uses the same visit. A bad file stays on the current book and shows 打不开这个文件. The window proof of that open stays pending.
+- A right arrow or Space turns one page forward, and a left arrow or Shift-Space turns one page back, while a book is open. The ends stay put. The library ignores those keys. The window proof stays pending.
 - `shell-reading-hides-sidebar` is S3. Opening a book hides the sidebar and keeps the page in the card. The right region is the annotation margin.
 - `shell-reading-margin` is S3, and it has no pixel bar yet. The exact gap, the horizontal position, the margin width, and the toggle placement wait for Morris's mockup. Do not invent those pixels in the check.
 - `shell-immersive-no-gray` is S4. Immersive reading shows no gray field. The card meets the window edges.
