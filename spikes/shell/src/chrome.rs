@@ -329,7 +329,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     // first style.
     keep_fullscreen_primary(window);
     style_window(window, rt);
-    if shell_on() {
+    // The shelf and the EPUB page share this monitor. A direct file open
+    // never engages the shelf, and the page script no longer handles the wheel.
+    if crate::visit::arms_page_wheel(shell_on()) {
         install_shelf_wheel();
     }
     window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
@@ -1155,8 +1157,28 @@ fn install_shelf_wheel() {
     }
     let block = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
         let e = unsafe { event.as_ref() };
-        if !crate::visit::wheel_scrolls_shelf(shell_on()) {
-            return event.as_ptr();
+        let phase = e.phase().0 as u64;
+        let momentum = e.momentumPhase().0 as u64;
+        let precise = e.hasPreciseScrollingDeltas();
+        let scroll_x = e.scrollingDeltaX();
+        let scroll_y = e.scrollingDeltaY();
+        let line_x = e.deltaX();
+        let line_y = e.deltaY();
+        let scrolls_shelf = crate::visit::wheel_scrolls_shelf(shell_on());
+        let page_took = if scrolls_shelf {
+            false
+        } else {
+            crate::web::take_epub_wheel(
+                phase,
+                momentum,
+                crate::visit::wheel_points(precise, scroll_x, line_x),
+                crate::visit::wheel_points(precise, scroll_y, line_y),
+            )
+        };
+        match crate::visit::wheel_owner(scrolls_shelf, page_took) {
+            crate::visit::WheelOwner::Page => return std::ptr::null_mut(),
+            crate::visit::WheelOwner::Through => return event.as_ptr(),
+            crate::visit::WheelOwner::Shelf => {}
         }
         let Some(mtm) = MainThreadMarker::new() else {
             return event.as_ptr();
@@ -1191,6 +1213,14 @@ fn install_shelf_wheel() {
         NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::ScrollWheel, &block)
     };
     std::mem::forget(monitor);
+    let keys = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        crate::web::abandon_swipe();
+        event.as_ptr()
+    });
+    let keys = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &keys)
+    };
+    std::mem::forget(keys);
 }
 
 fn expose_window(window: &NSWindow) {

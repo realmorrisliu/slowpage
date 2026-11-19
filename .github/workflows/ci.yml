@@ -98,6 +98,23 @@ jobs:
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
+            a_trackpad_swipe_follows_cancels_and_commits_once \
+            a_key_during_the_release_still_turns \
+            a_direct_file_arms_the_wheel_without_the_shelf \
+            a_release_stays_open_until_chapter_or_resize_cancels_it \
+            a_reveal_during_the_release_does_not_post \
+            a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
+            a_second_finger_key_keeps_the_committed_page \
+            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it \
+            a_long_chapter_commit_is_never_dropped \
+            a_second_commit_and_a_long_chapter_post_every_token \
+            a_finished_page_is_saved_before_chapter_or_resize \
+            a_finished_swipe_is_the_place_a_later_open_reads \
+            a_page_resume_does_not_store_the_columns_it_crosses \
+            a_resume_walk_ends_when_the_reader_moves \
+            a_taken_turn_is_the_page_the_resume_stops_on \
+            a_resize_keeps_the_saved_page_until_the_anchor_lands \
+            a_hold_reads_the_column_character \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -119,7 +136,24 @@ jobs:
             a_chapter_choice_lands_on_that_sentence_and_returns \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
-            a_title_or_author_query_filters_the_shelf_and_clears
+            a_title_or_author_query_filters_the_shelf_and_clears \
+            a_trackpad_swipe_follows_cancels_and_commits_once \
+            a_key_during_the_release_still_turns \
+            a_direct_file_arms_the_wheel_without_the_shelf \
+            a_release_stays_open_until_chapter_or_resize_cancels_it \
+            a_reveal_during_the_release_does_not_post \
+            a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
+            a_second_finger_key_keeps_the_committed_page \
+            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it \
+            a_long_chapter_commit_is_never_dropped \
+            a_second_commit_and_a_long_chapter_post_every_token \
+            a_finished_page_is_saved_before_chapter_or_resize \
+            a_finished_swipe_is_the_place_a_later_open_reads \
+            a_page_resume_does_not_store_the_columns_it_crosses \
+            a_resume_walk_ends_when_the_reader_moves \
+            a_taken_turn_is_the_page_the_resume_stops_on \
+            a_resize_keeps_the_saved_page_until_the_anchor_lands \
+            a_hold_reads_the_column_character
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

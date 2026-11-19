@@ -46,21 +46,18 @@ define_class!(
 
         #[unsafe(method(showContents:))]
         fn show_contents(&self, _sender: Option<&AnyObject>) {
-            let (titles, back) = {
+            let titles = {
                 let state = self.ivars().state.borrow();
                 let Some(web) = state.web.as_ref() else {
                     return;
                 };
                 let marks = crate::visit::contents_marks(&web.book_title, &web.spine());
-                if marks.is_empty() && state.back_place.is_none() {
+                if marks.is_empty() && !crate::web::reader_has_back() {
                     return;
                 }
-                (
-                    marks.into_iter().map(|mark| mark.title).collect::<Vec<_>>(),
-                    state.back_place.is_some(),
-                )
+                marks.into_iter().map(|mark| mark.title).collect::<Vec<_>>()
             };
-            pop_chapters(self, &titles, back);
+            pop_chapters(self, &titles, crate::web::reader_has_back());
         }
 
         #[unsafe(method(pickChapter:))]
@@ -301,15 +298,8 @@ struct State {
     book_kind: &'static str,
     book_path: String,
     product: bool,
-    saved_page: u32,
-    saved_sentence: u32,
-    saved_href: String,
-    pending_sentence: u32,
-    awaiting_pin: Option<u32>,
-    hold_shown: Option<u32>,
-    back_place: Option<crate::visit::ReadingPlace>,
-    jump_href: String,
-    jump_offset: Option<u32>,
+    pdf_saved_page: u32,
+    pdf_saved_offset: u32,
     page_total: Option<u32>,
     epub_page: usize,
     anchor: Option<Anchor>,
@@ -326,8 +316,9 @@ struct State {
     shell_h: f64,
     placed: Option<(i32, i32, i32, i32, String)>,
     placed_zoom: f64,
+    placed_stage_w: f64,
+    placed_stage_h: f64,
     await_hold: bool,
-    hold_ready: bool,
     settled: bool,
     hold_since: Option<Instant>,
     shown_at: Option<Instant>,
@@ -336,7 +327,6 @@ struct State {
     play_at: Option<Instant>,
     turn_pending: bool,
     seen_frames: usize,
-    goto: Option<usize>,
     title_settled: bool,
     chrome: Rc<crate::chrome::Runtime>,
 }
@@ -419,6 +409,7 @@ impl State {
 
     fn draw(&mut self, view: &StageView) {
         self.poll_web();
+        self.bind_swipe();
         self.note_probe(view);
         let bounds: NSRect = unsafe { msg_send![view, bounds] };
         self.paint_shell(bounds);
@@ -428,18 +419,11 @@ impl State {
         if self.mode == Mode::WebKit {
             self.stage_w = bounds.size.width;
             self.stage_h = bounds.size.height;
-            self.place_page();
+            let pump = self.place_page();
             let playing = std::env::var("SPIKE_PLAY").as_deref() == Ok("1")
                 && self.play_count < 3
                 && !self.turn_pending;
-            let need_page = self.goto.is_some_and(|target| {
-                self.web
-                    .as_ref()
-                    .and_then(|web| web.inbox.borrow().pages)
-                    .map(|(page, _)| page < target)
-                    .unwrap_or(true)
-            });
-            if self.chrome_moving() || playing || need_page {
+            if self.chrome_moving() || playing || pump {
                 let _: () = unsafe {
                     msg_send![
                         view,
@@ -628,10 +612,11 @@ impl State {
                 self.publish();
             }
             "page" => {
+                crate::web::abandon_swipe();
                 let delta = args.as_i64().unwrap_or(0);
                 if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
-                        web.turn(delta as i32);
+                        web.turn(delta as i32, crate::visit::TurnSource::User);
                     }
                 } else if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
                     self.turn_pdf(delta);
@@ -647,53 +632,37 @@ impl State {
     }
 
     fn apply_chapter(&mut self, tag: isize) {
-        let next = {
-            let Some(web) = self.web.as_ref() else {
-                return;
-            };
-            let spine = web.spine();
-            let marks = crate::visit::contents_marks(&web.book_title, &spine);
-            crate::visit::navigate(crate::visit::NavIn {
-                shown_href: &web.href(),
-                shown_page: self.epub_page as u32 + 1,
-                saved_href: &self.saved_href,
-                saved_page: self.saved_page,
-                saved_offset: self.saved_sentence,
-                jump_href: &self.jump_href,
-                jump_offset: self.jump_offset,
-                awaiting: self.awaiting_pin,
-                pending: self.pending_sentence,
-                back: self.back_place.clone(),
-                marks: &marks,
-                spine: &spine,
-                pick: tag,
-            })
+        let Some(web) = self.web.as_ref() else {
+            return;
         };
-        let go = next.go.clone();
-        let applied = match go {
+        let spine = web.spine();
+        let marks = crate::visit::contents_marks(&web.book_title, &spine);
+        let href = web.href();
+        let decided = crate::web::turn_chapter(tag, &marks, &spine, &href);
+        if !decided.accepted {
+            return;
+        }
+        crate::web::cancel_swipe();
+        let go = decided
+            .go
+            .clone()
+            .unwrap_or(crate::visit::ChapterMove::Stay);
+        let moved = match &go {
             crate::visit::ChapterMove::Stay => true,
             crate::visit::ChapterMove::Reveal { offset } => {
-                if let Some(web) = self.web.as_ref() {
-                    let mut inbox = web.inbox.borrow_mut();
-                    inbox.pinned = None;
-                    inbox.pin_missed = false;
-                    drop(inbox);
-                    web.reveal(offset);
-                    true
-                } else {
-                    false
-                }
+                let mut inbox = web.inbox.borrow_mut();
+                inbox.pinned = None;
+                inbox.pin_missed = false;
+                drop(inbox);
+                web.reveal(*offset);
+                true
             }
-            crate::visit::ChapterMove::Chapter { index, .. } => self
-                .web
-                .as_ref()
-                .and_then(|web| web.show_chapter(index))
-                .is_some(),
+            crate::visit::ChapterMove::Chapter { index, .. } => web.show_chapter(*index).is_some(),
             crate::visit::ChapterMove::Page { page } => {
                 if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
                     if let Some(pdf) = self.pdf.as_ref() {
                         let sizes = pdf.sizes.clone();
-                        self.offset = page_offset(&sizes, page, self.scale);
+                        self.offset = page_offset(&sizes, *page, self.scale);
                         self.note_page();
                         true
                     } else {
@@ -704,30 +673,7 @@ impl State {
                 }
             }
         };
-        if applied {
-            self.back_place = next.back;
-            self.pending_sentence = next.pending;
-            self.jump_href = next.jump_href;
-            self.jump_offset = next.jump_offset;
-            self.awaiting_pin = next.awaiting;
-            if next.record {
-                self.saved_page = next.saved_page;
-                self.saved_sentence = next.saved_offset;
-                self.saved_href = next.saved_href;
-                if !self.book_path.is_empty() {
-                    let path = self.book_path.clone();
-                    let _ = crate::settings::record_progress(
-                        &crate::settings::path(),
-                        &path,
-                        self.saved_page,
-                        self.page_total,
-                        self.saved_sentence,
-                        &self.saved_href,
-                    );
-                }
-            }
-            self.goto = crate::visit::opening_page(&go, self.goto);
-        }
+        let _ = (moved, go);
     }
 
     fn select_phrase(&mut self, phrase: &str) {
@@ -923,20 +869,14 @@ impl State {
         };
         let mut page = page.max(1);
         self.page_total = None;
-        self.saved_sentence = 0;
-        self.saved_href.clear();
-        self.pending_sentence = 0;
-        self.awaiting_pin = None;
-        self.hold_shown = None;
-        self.back_place = None;
-        self.jump_href.clear();
-        self.jump_offset = None;
+        crate::web::set_book(&book.path);
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
         self.dismiss_web();
         self.pdf = None;
         self.anchor = None;
         self.book_path = book.path.clone();
         let mut replaced_href = String::new();
+        let mut offset = 0u32;
         let opened = if plan.pdf {
             let engine = match std::env::var("SPIKE_ENGINE").as_deref() {
                 Ok("hayro") => PdfEngine::Hayro,
@@ -946,49 +886,48 @@ impl State {
             self.load_pdf_at(engine, &book.path, plan.page)
         } else if plan.web {
             self.mode = Mode::WebKit;
-            self.goto = if plan.page > 1 {
-                Some(plan.page as usize)
-            } else {
-                None
-            };
             let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
-            self.saved_href = crate::settings::resume_href(&crate::settings::path(), &book.path);
-            self.saved_sentence = sentence;
-            self.pending_sentence = sentence;
-            if sentence > 0 {
-                self.goto = None;
-            }
+            let mut href = crate::settings::resume_href(&crate::settings::path(), &book.path);
+            let mut caret = crate::settings::resume_caret(&crate::settings::path(), &book.path);
+            offset = sentence;
             self.epub_page = 0;
             self.web_pages = 1;
             self.shown_at = None;
             self.placed = None;
-            self.open_web(view);
+            self.open_web(view, &href);
             if let Some(web) = &self.web {
-                let open =
-                    crate::visit::opened_place(&web.spine(), &self.saved_href, page, sentence);
+                let open = crate::visit::opened_place(&web.spine(), &href, page, sentence);
                 if open.page != page || open.offset != sentence {
                     page = open.page;
-                    self.saved_sentence = open.offset;
-                    self.pending_sentence = open.offset;
-                    self.goto = None;
-                    let href = web.href();
-                    if !href.is_empty() {
-                        self.saved_href = href.clone();
-                        replaced_href = href;
+                    offset = open.offset;
+                    if offset == 0 {
+                        caret = false;
+                    }
+                    let shown = web.href();
+                    if !shown.is_empty() {
+                        href = shown.clone();
+                        replaced_href = shown;
                     }
                 }
+            }
+            if self.web.is_some() {
+                crate::web::open_reader(page, offset, &href, caret);
             }
             self.web.is_some()
         } else {
             false
         };
         if !opened {
+            crate::web::set_book("");
             self.mode = Mode::Empty;
             self.book_path.clear();
             self.publish();
             return false;
         }
-        self.saved_page = page;
+        if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            self.pdf_saved_page = page;
+            self.pdf_saved_offset = 0;
+        }
         let _ = crate::settings::record_open(
             &crate::settings::path(),
             &book.path,
@@ -1002,7 +941,7 @@ impl State {
                 &book.path,
                 page,
                 self.page_total,
-                self.saved_sentence,
+                offset,
                 &replaced_href,
             );
         }
@@ -1016,8 +955,18 @@ impl State {
     }
 
     fn dismiss_web(&mut self) {
+        crate::web::cancel_swipe();
+        crate::web::show_swipe_target(None);
         if let Some(web) = self.web.take() {
             web.dismiss();
+        }
+    }
+
+    fn bind_swipe(&self) {
+        if self.mode == Mode::WebKit {
+            crate::web::show_swipe_target(self.web.clone());
+        } else {
+            crate::web::show_swipe_target(None);
         }
     }
 
@@ -1025,14 +974,14 @@ impl State {
         let Some(page) = self.settled_page() else {
             return;
         };
-        if self.book_path.is_empty() || page == self.saved_page {
+        if self.book_path.is_empty() || page == self.pdf_saved_page {
             return;
         }
         let path = self.book_path.clone();
         let (page, offset) =
-            crate::visit::next_sentence(self.saved_page, self.saved_sentence, page, 0);
-        self.saved_page = page;
-        self.saved_sentence = offset;
+            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, 0);
+        self.pdf_saved_page = page;
+        self.pdf_saved_offset = offset;
         let _ = crate::settings::record_progress(
             &crate::settings::path(),
             &path,
@@ -1048,7 +997,7 @@ impl State {
             Mode::Pdfium | Mode::Hayro => Some(self.current_page() as u32 + 1),
             Mode::WebKit => {
                 let shown = self.epub_page as u32 + 1;
-                if self.goto.is_some_and(|target| (shown as usize) < target) {
+                if crate::web::reader_walk().is_some_and(|target| shown < target) {
                     None
                 } else {
                     Some(shown)
@@ -1072,7 +1021,6 @@ impl State {
     }
 
     fn poll_web(&mut self) {
-        self.finish_hold();
         let Some(web) = &self.web else {
             return;
         };
@@ -1099,60 +1047,8 @@ impl State {
             (inbox.reload && !inbox.did_reload, changed)
         };
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
-            let shown = self.epub_page as u32 + 1;
-            let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-            let (ready, reported, sentence, pinned, missed) = {
-                let inbox = web.inbox.borrow();
-                (
-                    inbox.nav_done && inbox.pages.is_some(),
-                    inbox.pages.is_some(),
-                    inbox.sentence.unwrap_or(0),
-                    inbox.pinned,
-                    inbox.pin_missed,
-                )
-            };
-            let href = web.href();
-            let polled = crate::visit::poll_chapter(crate::visit::ChapterPoll {
-                saved_href: &self.saved_href,
-                saved_page: self.saved_page,
-                saved_offset: self.saved_sentence,
-                jump_href: &self.jump_href,
-                jump_offset: self.jump_offset,
-                awaiting: self.awaiting_pin,
-                pending: self.pending_sentence,
-                hold: self.hold_shown,
-                shown,
-                href: &href,
-                ready,
-                reported,
-                pinned,
-                missed,
-                sentence,
-                still_turning,
-            });
-            self.jump_offset = polled.jump_offset;
-            self.awaiting_pin = polled.awaiting;
-            self.pending_sentence = polled.pending;
-            self.hold_shown = polled.hold;
-            if let Some(offset) = polled.reveal_jump {
+            if let Some(offset) = crate::web::take_reader_reveal() {
                 web.reveal(offset);
-            }
-            if let Some(offset) = polled.reveal_pending {
-                web.reveal(offset);
-            }
-            if polled.record {
-                let path = self.book_path.clone();
-                self.saved_page = polled.saved_page;
-                self.saved_sentence = polled.saved_offset;
-                self.saved_href = polled.saved_href;
-                let _ = crate::settings::record_progress(
-                    &crate::settings::path(),
-                    &path,
-                    self.saved_page,
-                    self.page_total,
-                    self.saved_sentence,
-                    &self.saved_href,
-                );
             }
         }
         if changed || self.chrome_moving() {
@@ -1178,24 +1074,25 @@ impl State {
             if ready && !already {
                 web.inbox.borrow_mut().scripted_turn = true;
                 self.turn_pending = true;
-                web.turn(1);
+                web.turn(1, crate::visit::TurnSource::Restore);
             }
         }
-        if let Some(target) = self.goto {
-            let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
-            if count > 1 && page < target && !self.turn_pending {
-                self.turn_pending = true;
-                self.play_at = Some(Instant::now());
-                web.turn(1);
-            }
-            if self.turn_pending
-                && self
-                    .play_at
-                    .map(|at| at.elapsed().as_millis() > 700)
-                    .unwrap_or(false)
-            {
-                self.turn_pending = false;
-            }
+        if crate::web::take_turn_declined(&web.inbox) {
+            self.turn_pending = false;
+        }
+        let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
+        if crate::web::poll_reader_walk(page as u32, count as u32, self.turn_pending) {
+            self.turn_pending = true;
+            self.play_at = Some(Instant::now());
+            web.turn(1, crate::visit::TurnSource::Restore);
+        }
+        if self.turn_pending
+            && self
+                .play_at
+                .map(|at| at.elapsed().as_millis() > 700)
+                .unwrap_or(false)
+        {
+            self.turn_pending = false;
         }
         if std::env::var("SPIKE_PLAY").as_deref() == Ok("1") {
             let ready = web
@@ -1216,7 +1113,7 @@ impl State {
                 self.play_count += 1;
                 self.play_at = Some(Instant::now());
                 self.turn_pending = true;
-                web.turn(1);
+                web.turn(1, crate::visit::TurnSource::Restore);
             }
         }
         let frame_count = web.inbox.borrow().frame_ms.len();
@@ -1229,40 +1126,10 @@ impl State {
         crate::web::write_inbox(&inbox, &href);
     }
 
-    fn finish_hold(&mut self) {
-        if !self.await_hold {
-            return;
-        }
-        let offset = self.web.as_ref().and_then(|web| web.inbox.borrow().hold);
-        let timed_out = self
-            .hold_since
-            .map(|at| at.elapsed().as_millis() > 700)
-            .unwrap_or(false);
-        if offset.is_none() && !timed_out {
-            return;
-        }
-        if let Some(web) = &self.web {
-            web.inbox.borrow_mut().hold = None;
-        }
-        self.await_hold = false;
-        let offset = offset.unwrap_or(0);
-        self.hold_ready = true;
-        self.place_page();
-        if let Some(web) = &self.web {
-            web.reveal(offset);
-            if let (Some(start), Some(end)) = (
-                self.anchor.as_ref().and_then(anchor_start),
-                self.anchor.as_ref().and_then(anchor_end),
-            ) {
-                web.repaint(start, end);
-            }
-        }
-    }
-
-    fn open_web(&mut self, parent: &StageView) {
+    fn open_web(&mut self, parent: &StageView, href: &str) {
         let path = self.epub_path();
         let parent: &AnyObject = unsafe { &*(parent as *const StageView).cast() };
-        match crate::web::WebChapter::open(parent, &path, &self.saved_href) {
+        match crate::web::WebChapter::open(parent, &path, href) {
             Ok(chapter) => {
                 self.declared = chapter.declared;
                 self.placed = None;
@@ -1335,9 +1202,9 @@ impl State {
         }
     }
 
-    fn place_page(&mut self) {
-        if self.await_hold || self.stage_w < 1.0 || self.stage_h < 1.0 {
-            return;
+    fn place_page(&mut self) -> bool {
+        if self.web.is_none() || ((self.stage_w < 1.0 || self.stage_h < 1.0) && !self.await_hold) {
+            return false;
         }
         let item = crate::reading::trim(&self.trim_id);
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
@@ -1363,42 +1230,149 @@ impl State {
             h.round() as i32,
             self.trim_id.clone(),
         );
-        if self.web.is_none() {
-            return;
-        }
-        if self.placed.as_ref() == Some(&key) && (self.placed_zoom - zoom).abs() < 0.01 {
-            return;
-        }
-        let reflowable = self.declared.is_none();
-        if self.settled && reflowable && !self.hold_ready {
-            self.await_hold = true;
-            self.hold_since = Some(Instant::now());
-            if let Some(web) = &self.web {
-                web.hold();
+        let (hold, hold_probe, missed, shown, pages, pages_known, figure, figure_lost) = {
+            let inbox = self.web.as_ref().unwrap().inbox.borrow();
+            let figure = inbox.figure.clone();
+            let figure_lost = inbox.figure_lost;
+            match inbox.pages {
+                Some((page, count)) => (
+                    inbox.hold,
+                    inbox.hold_probe,
+                    inbox.hold_missed,
+                    page as u32,
+                    count as u32,
+                    true,
+                    figure,
+                    figure_lost,
+                ),
+                None => (
+                    inbox.hold,
+                    inbox.hold_probe,
+                    inbox.hold_missed,
+                    0,
+                    0,
+                    false,
+                    figure,
+                    figure_lost,
+                ),
             }
-            return;
-        }
-        self.hold_ready = false;
-        self.settled = true;
-        self.placed = Some(key);
-        let Some(web) = &self.web else {
-            return;
         };
-        self.placed_zoom = zoom;
-        web.place_at(x, y, w, h, zoom);
-        web.set_page_target(layout_target(w, zoom));
-        {
-            let mut inbox = web.inbox.borrow_mut();
-            inbox.page_w = w;
-            inbox.page_h = h;
-            inbox.page_x = x;
-            inbox.bar_w = self.chrome.bar_w.get();
-            inbox.stage_w = self.stage_w;
-            inbox.trim = self.trim_id.clone();
-            inbox.page_source = source.to_string();
+        let (saw_figure, lost_figure) = crate::visit::figure_flags(&figure, figure_lost);
+        if let Some(id) = crate::visit::found_figure(figure, figure_lost) {
+            crate::web::note_figure(Some(id));
         }
-        let href = web.href();
-        crate::web::write_inbox(&web.inbox.borrow(), &href);
+        let timed_out = self.await_hold
+            && self
+                .hold_since
+                .map(|at| at.elapsed().as_millis() > 700)
+                .unwrap_or(false);
+        let mut tick = crate::visit::FrameTick::new(
+            self.placed.as_ref() == Some(&key),
+            (self.placed_zoom - zoom).abs() < 0.01,
+            self.placed_stage_w.round() as i32 == self.stage_w.round() as i32
+                && self.placed_stage_h.round() as i32 == self.stage_h.round() as i32,
+            self.declared.is_none(),
+            self.settled,
+            self.await_hold,
+        );
+        tick.hold = hold;
+        tick.hold_probe = hold_probe;
+        tick.missed = missed;
+        tick.timed_out = timed_out;
+        tick.shown = shown;
+        tick.pages = pages;
+        tick.pages_known = pages_known;
+        tick.figure = saw_figure;
+        tick.figure_lost = lost_figure;
+        let plan = crate::web::layout_frame(tick);
+        let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
+        let spent = crate::visit::spent_figure_loss(lost_figure, plan.draw)
+            || crate::visit::spent_figure_find(saw_figure, plan.draw);
+        if resolved || spent {
+            if let Some(web) = &self.web {
+                let mut inbox = web.inbox.borrow_mut();
+                if resolved {
+                    inbox.hold = None;
+                    inbox.hold_probe = 0;
+                    inbox.hold_missed = false;
+                }
+                inbox.clear_figure();
+            }
+            if resolved {
+                self.await_hold = false;
+                self.hold_since = None;
+            }
+        }
+        if plan.cancel {
+            crate::web::cancel_placed_page();
+            self.placed_stage_w = self.stage_w;
+            self.placed_stage_h = self.stage_h;
+        }
+        match plan.draw {
+            crate::visit::Draw::Rest => {}
+            crate::visit::Draw::Align => {
+                self.settled = true;
+                self.placed = Some(key);
+                self.placed_zoom = zoom;
+                self.placed_stage_w = self.stage_w;
+                self.placed_stage_h = self.stage_h;
+                if let Some(web) = &self.web {
+                    web.place_at(x, y, w, h, zoom);
+                    web.set_page_target(layout_target(w, zoom));
+                    if let Some(id) = crate::web::reader_figure() {
+                        web.align(&id);
+                    }
+                }
+            }
+            crate::visit::Draw::Measure { page, probe } => {
+                self.await_hold = true;
+                self.hold_since = Some(Instant::now());
+                if let Some(web) = &self.web {
+                    {
+                        let mut inbox = web.inbox.borrow_mut();
+                        inbox.hold = None;
+                        inbox.hold_probe = 0;
+                        inbox.hold_missed = false;
+                        inbox.clear_figure();
+                    }
+                    web.measure(page, probe);
+                }
+            }
+            crate::visit::Draw::Move { reveal } => {
+                self.settled = true;
+                self.placed = Some(key);
+                self.placed_zoom = zoom;
+                self.placed_stage_w = self.stage_w;
+                self.placed_stage_h = self.stage_h;
+                let Some(web) = &self.web else {
+                    return plan.pump;
+                };
+                web.place_at(x, y, w, h, zoom);
+                web.set_page_target(layout_target(w, zoom));
+                {
+                    let mut inbox = web.inbox.borrow_mut();
+                    inbox.page_w = w;
+                    inbox.page_h = h;
+                    inbox.page_x = x;
+                    inbox.bar_w = self.chrome.bar_w.get();
+                    inbox.stage_w = self.stage_w;
+                    inbox.trim = self.trim_id.clone();
+                    inbox.page_source = source.to_string();
+                }
+                let href = web.href();
+                crate::web::write_inbox(&web.inbox.borrow(), &href);
+                if let Some(offset) = reveal {
+                    web.reveal(offset);
+                    if let (Some(start), Some(end)) = (
+                        self.anchor.as_ref().and_then(anchor_start),
+                        self.anchor.as_ref().and_then(anchor_end),
+                    ) {
+                        web.repaint(start, end);
+                    }
+                }
+            }
+        }
+        plan.pump
     }
 
     fn publish(&self) {
@@ -1679,15 +1653,8 @@ impl Stage {
             book_kind: "pride",
             book_path: String::new(),
             product: false,
-            saved_page: 0,
-            saved_sentence: 0,
-            saved_href: String::new(),
-            pending_sentence: 0,
-            awaiting_pin: None,
-            hold_shown: None,
-            back_place: None,
-            jump_href: String::new(),
-            jump_offset: None,
+            pdf_saved_page: 0,
+            pdf_saved_offset: 0,
             page_total: None,
             epub_page: 0,
             anchor: None,
@@ -1702,8 +1669,9 @@ impl Stage {
             shell_h: 0.0,
             placed: None,
             placed_zoom: 1.0,
+            placed_stage_w: 0.0,
+            placed_stage_h: 0.0,
             await_hold: false,
-            hold_ready: false,
             settled: false,
             hold_since: None,
             shown_at: None,
@@ -1712,9 +1680,6 @@ impl Stage {
             play_at: None,
             turn_pending: false,
             seen_frames: 0,
-            goto: std::env::var("SPIKE_AT")
-                .ok()
-                .and_then(|raw| raw.parse().ok()),
             title_settled: false,
             chrome: Rc::new(crate::chrome::Runtime::default()),
         }));
@@ -1750,14 +1715,18 @@ impl Stage {
             .as_deref()
             .map(|path| crate::settings::resume_page(&crate::settings::path(), path));
         let shelf = crate::launches_full();
-        match crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored) {
+        let target =
+            crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored);
+        if target.engages_shell() {
+            crate::chrome::engage_shell();
+        }
+        match target {
             crate::LaunchTarget::File { page } if product => {
                 if let Some(path) = explicit {
                     state.borrow_mut().open_at(&view, &path, page);
                 }
             }
             crate::LaunchTarget::Shelf => {
-                crate::chrome::engage_shell();
                 state.borrow_mut().mode = Mode::Empty;
                 state.borrow_mut().publish();
             }
@@ -1781,10 +1750,21 @@ impl Stage {
                 state.borrow_mut().drag_two_lines();
             }
             if std::env::var("SPIKE_MODE").as_deref() == Ok("webkit") {
-                state.borrow_mut().mode = Mode::WebKit;
-                state.borrow_mut().book_kind = book_kind_from_env();
-                state.borrow_mut().open_web(&view);
-                state.borrow_mut().publish();
+                let mut state = state.borrow_mut();
+                state.mode = Mode::WebKit;
+                state.book_kind = book_kind_from_env();
+                let path = state.epub_path();
+                crate::web::set_book(&path);
+                crate::web::cancel_swipe();
+                state.open_web(&view, "");
+                if let Some(web) = state.web.as_ref() {
+                    let href = web.href();
+                    crate::web::open_reader(1, 0, &href, false);
+                    if let Ok(page) = std::env::var("SPIKE_AT").unwrap_or_default().parse::<u32>() {
+                        crate::web::prime_walk(page);
+                    }
+                }
+                state.publish();
             }
             if std::env::var("SPIKE_MODE").as_deref() == Ok("text") {
                 state.borrow_mut().mode = Mode::Text;

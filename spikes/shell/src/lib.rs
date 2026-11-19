@@ -301,6 +301,14 @@ pub enum LaunchTarget {
     Forced,
 }
 
+impl LaunchTarget {
+    /// The shelf flag is the library. A file open stays off it. The wheel
+    /// monitor is separate and is installed on every sync.
+    pub fn engages_shell(self) -> bool {
+        matches!(self, LaunchTarget::Shelf)
+    }
+}
+
 pub fn launch_target(
     explicit_file: bool,
     reader_forcing: bool,
@@ -1113,6 +1121,7 @@ fn reading_menu(
 
 #[cfg(test)]
 mod launch_tests {
+    use super::visit::{self, Surface, WheelOwner};
     use super::{launch_target, LaunchTarget};
 
     #[test]
@@ -1144,5 +1153,36 @@ mod launch_tests {
     #[test]
     fn a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place() {
         assert_eq!(launch_target(false, true, Some(2)), LaunchTarget::Forced);
+    }
+
+    #[test]
+    fn a_direct_file_arms_the_wheel_without_the_shelf() {
+        let file = launch_target(true, false, Some(4));
+        assert_eq!(file, LaunchTarget::File { page: 4 });
+        assert!(!file.engages_shell());
+        assert!(launch_target(false, false, None).engages_shell());
+        assert!(!launch_target(false, true, None).engages_shell());
+        // These are the functions `sync` and the wheel monitor call.
+        // This test does not run `sync` or install the monitor.
+        visit::publish_surface(Surface::Library);
+        assert!(visit::arms_page_wheel(false));
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(false), true),
+            WheelOwner::Page
+        );
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(false), false),
+            WheelOwner::Through
+        );
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(true), true),
+            WheelOwner::Shelf
+        );
+        visit::publish_surface(Surface::Reading);
+        assert_eq!(
+            visit::wheel_owner(visit::wheel_scrolls_shelf(true), true),
+            WheelOwner::Page
+        );
+        visit::publish_surface(Surface::Library);
     }
 }

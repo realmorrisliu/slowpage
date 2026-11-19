@@ -113,6 +113,51 @@ pub fn wheel_scrolls_shelf(shell: bool) -> bool {
     shell && ON_LIBRARY.load(Ordering::Relaxed)
 }
 
+/// Who consumes one scroll-wheel event. The shelf flag selects the shelf.
+/// It does not decide whether the monitor is installed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WheelOwner {
+    Shelf,
+    Page,
+    Through,
+}
+
+pub fn wheel_owner(scrolls_shelf: bool, page_took_it: bool) -> WheelOwner {
+    if scrolls_shelf {
+        WheelOwner::Shelf
+    } else if page_took_it {
+        WheelOwner::Page
+    } else {
+        WheelOwner::Through
+    }
+}
+
+/// The scroll monitor is installed for a direct file as well as the shelf.
+/// `shell` is the shelf flag. It does not gate installation.
+pub fn arms_page_wheel(shell: bool) -> bool {
+    let _ = shell;
+    true
+}
+
+/// What `place_page` does with a gesture that may still be painting.
+/// The same fitted frame on the same stage leaves the release alone.
+/// A stage change cancels it even when the fitted integers and zoom do not move.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceStep {
+    Hold,
+    Cancel { reflow: bool },
+}
+
+pub fn place_step(fitted_same: bool, zoom_same: bool, stage_same: bool) -> PlaceStep {
+    if fitted_same && zoom_same && stage_same {
+        PlaceStep::Hold
+    } else if fitted_same && zoom_same {
+        PlaceStep::Cancel { reflow: false }
+    } else {
+        PlaceStep::Cancel { reflow: true }
+    }
+}
+
 pub fn on_library() -> bool {
     ON_LIBRARY.load(Ordering::Relaxed)
 }
@@ -551,6 +596,1404 @@ pub fn spine_index(spine: &[String], href: &str) -> usize {
 
 pub fn changed_chapter(stored_href: &str, href: &str) -> bool {
     !href.is_empty() && href != stored_href
+}
+
+/// Horizontal travel, in points, that commits one EPUB page.
+/// This is the page script's old `SWIPE` value. The finger path uses it once.
+pub const SWIPE_POINTS: f64 = 48.0;
+
+/// AppKit `NSEventPhase` bits. `phase` and `momentumPhase` are separate.
+const PHASE_BEGAN: u64 = 1;
+const PHASE_STATIONARY: u64 = 2;
+const PHASE_CHANGED: u64 = 4;
+const PHASE_ENDED: u64 = 8;
+const PHASE_CANCELLED: u64 = 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Finger {
+    None,
+    Down,
+    Up,
+    Cancelled,
+}
+
+/// `phase` while the fingers are down. Momentum is not a finger.
+pub fn finger_bits(phase: u64) -> Finger {
+    if phase & PHASE_CANCELLED != 0 {
+        Finger::Cancelled
+    } else if phase & PHASE_ENDED != 0 {
+        Finger::Up
+    } else if phase & (PHASE_BEGAN | PHASE_STATIONARY | PHASE_CHANGED) != 0 {
+        Finger::Down
+    } else {
+        Finger::None
+    }
+}
+
+/// Precise trackpad deltas are already in points. A line-mode wheel uses the
+/// same 16 point step the shelf uses when `scrollingDeltaY` is empty.
+pub fn wheel_points(precise: bool, scrolling: f64, lines: f64) -> f64 {
+    if precise || scrolling.abs() >= 0.01 {
+        scrolling
+    } else {
+        lines * 16.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WheelTick {
+    pub finger: Finger,
+    pub momentum: bool,
+    /// Positive moves toward the next page. That is AppKit `scrollingDeltaX`:
+    /// positive is to the right, which is the sign the old wheel handler used.
+    pub dx: f64,
+    pub dy: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WheelMove {
+    /// Not an EPUB page gesture. The caller lets the event through.
+    Pass,
+    /// Eat the event. Do not turn and do not write progress.
+    Swallow,
+    /// Still accumulating a mouse-wheel notch. Do not write progress.
+    Hold,
+    /// Paint this offset. Do not write progress.
+    Follow(f64),
+    /// Seek exactly one page. This is the only effect that changes progress.
+    Commit(i32),
+    /// Return to the page the gesture started on. Do not write progress.
+    Cancel,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Swipe {
+    travel: f64,
+    live: bool,
+    notch: f64,
+    /// A key, chapter, resize, or new book took the gesture. Ignore the rest
+    /// of this finger, including the lift, so that lift cannot turn again.
+    ignore: bool,
+    /// A commit or a return glide has been handed to the page and has not
+    /// been dropped. The finger may already be up. A matching commit post
+    /// clears this. Navigation clears it. A new finger does not.
+    release: bool,
+    next_id: u64,
+    /// Tokens at or below this were retired by navigation.
+    floor: u64,
+    /// The newest commit whose post was stored. An older post does not
+    /// move the saved page backward.
+    last_applied: u64,
+    /// The glide the page is running. Its post carries this token.
+    flying: Option<u64>,
+    /// The one queued page. A newer commit replaces it. A key that takes
+    /// the slot retires it. There is no window of old commits.
+    queued: Option<u64>,
+    /// The commit just handed to the page. The wheel command reads it once.
+    last_commit: Option<u64>,
+}
+
+impl Default for Swipe {
+    fn default() -> Self {
+        Self {
+            travel: 0.0,
+            live: false,
+            notch: 0.0,
+            ignore: false,
+            release: false,
+            next_id: 0,
+            floor: 0,
+            last_applied: 0,
+            flying: None,
+            queued: None,
+            last_commit: None,
+        }
+    }
+}
+
+impl Swipe {
+    /// Drop a gesture that resize, a new book, a chapter, or a key interrupted.
+    /// The next lift must not turn.
+    pub fn abandon(&mut self) -> bool {
+        let was = self.live;
+        // A finger that started during an open commit is not that commit.
+        // Dropping the page paint would cancel the page already handed over.
+        let drop_paint = was && self.flying.is_none();
+        self.travel = 0.0;
+        self.notch = 0.0;
+        self.live = false;
+        if was {
+            self.ignore = true;
+        }
+        drop_paint
+    }
+
+    pub fn commit_token(&self) -> Option<u64> {
+        self.last_commit
+    }
+
+    /// The page accepted or refused the token it was just given.
+    /// `glide` and `queued` are the only answers that keep it.
+    pub fn note_answer(&mut self, token: u64, answer: &str) {
+        if token == 0 || token <= self.floor {
+            return;
+        }
+        match answer {
+            "glide" => {
+                if self.queued == Some(token) {
+                    self.queued = None;
+                }
+                if self.flying.is_none() || self.flying == Some(token) {
+                    self.flying = Some(token);
+                } else {
+                    self.queued = Some(token);
+                }
+            }
+            "queued" => {
+                if self.flying == Some(token) {
+                    self.flying = None;
+                }
+                self.queued = Some(token);
+            }
+            _ => {
+                if self.flying == Some(token) {
+                    self.flying = None;
+                }
+                if self.queued == Some(token) {
+                    self.queued = None;
+                }
+            }
+        }
+    }
+
+    /// The commit glide finished and reported `token`. A token the page
+    /// refused, replaced, or navigation retired does not change the stored page.
+    /// Either of the two slots may arrive first. A repeat does not apply.
+    pub fn take_commit_post(&mut self, token: u64) -> bool {
+        let held = self.holds(token);
+        if held {
+            self.clear_token(token);
+        }
+        if !held || token <= self.last_applied {
+            return false;
+        }
+        self.last_applied = token;
+        true
+    }
+
+    /// The page dropped this token without turning for it. A key taking the
+    /// one queue slot uses this. The column is not moved here.
+    pub fn retire(&mut self, token: u64) {
+        self.clear_token(token);
+    }
+
+    fn holds(&self, token: u64) -> bool {
+        token > self.floor && (self.flying == Some(token) || self.queued == Some(token))
+    }
+
+    fn clear_token(&mut self, token: u64) {
+        if self.flying == Some(token) {
+            self.flying = None;
+        }
+        if self.queued == Some(token) {
+            self.queued = None;
+        }
+        if self.flying.is_none() && self.queued.is_none() {
+            self.release = false;
+            self.last_commit = None;
+        }
+    }
+
+    /// The page is still painting the finger-up glide. A key does not use this.
+    pub fn release_open(&self) -> bool {
+        self.release
+    }
+
+    /// Drop a follow or the finger-up glide. A chapter, a reveal, a return,
+    /// a resize, a reopen, or another book calls this. A key does not.
+    pub fn cancel_release(&mut self) -> bool {
+        let drop = self.live || self.release || self.flying.is_some() || self.queued.is_some();
+        let was = self.live;
+        self.travel = 0.0;
+        self.notch = 0.0;
+        self.live = false;
+        self.release = false;
+        self.floor = self.next_id;
+        self.flying = None;
+        self.queued = None;
+        self.last_commit = None;
+        if was {
+            self.ignore = true;
+        }
+        drop
+    }
+
+    pub fn offer(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
+        if self.ignore {
+            if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
+                let next_id = self.next_id;
+                let floor = self.floor;
+                let last_applied = self.last_applied;
+                let flying = self.flying;
+                let queued = self.queued;
+                let last_commit = self.last_commit;
+                let release = self.release;
+                *self = Self::default();
+                self.next_id = next_id;
+                self.floor = floor;
+                self.last_applied = last_applied;
+                self.flying = flying;
+                self.queued = queued;
+                self.last_commit = last_commit;
+                self.release = release;
+            }
+            return if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
+                WheelMove::Pass
+            } else {
+                WheelMove::Swallow
+            };
+        }
+        if tick.momentum {
+            if !self.live {
+                return WheelMove::Swallow;
+            }
+            return self.settle(false, page, pages);
+        }
+        match tick.finger {
+            Finger::Up => self.settle(false, page, pages),
+            Finger::Cancelled => self.settle(true, page, pages),
+            Finger::Down => self.track(tick, page, pages),
+            Finger::None => self.notch(tick, page, pages),
+        }
+    }
+
+    fn track(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
+        if !self.live && tick.dx.abs() <= tick.dy.abs() {
+            return WheelMove::Pass;
+        }
+        self.live = true;
+        self.notch = 0.0;
+        self.travel += tick.dx;
+        WheelMove::Follow(shown_travel(self.travel, page, pages))
+    }
+
+    fn settle(&mut self, cancelled: bool, page: u32, pages: u32) -> WheelMove {
+        if !self.live {
+            return WheelMove::Pass;
+        }
+        let travel = self.travel;
+        self.travel = 0.0;
+        self.notch = 0.0;
+        self.live = false;
+        self.ignore = false;
+        let effect = if cancelled || travel.abs() < SWIPE_POINTS {
+            WheelMove::Cancel
+        } else {
+            let delta = if travel > 0.0 { 1 } else { -1 };
+            if end_blocks(delta, page, pages) {
+                WheelMove::Cancel
+            } else {
+                WheelMove::Commit(delta)
+            }
+        };
+        self.hand_glide(&effect);
+        effect
+    }
+
+    fn notch(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
+        if self.live || tick.dx.abs() <= tick.dy.abs() {
+            return WheelMove::Pass;
+        }
+        self.notch += tick.dx;
+        if self.notch.abs() < SWIPE_POINTS {
+            return WheelMove::Hold;
+        }
+        let delta = if self.notch > 0.0 { 1 } else { -1 };
+        self.notch = 0.0;
+        let effect = if end_blocks(delta, page, pages) {
+            WheelMove::Cancel
+        } else {
+            WheelMove::Commit(delta)
+        };
+        self.hand_glide(&effect);
+        effect
+    }
+
+    /// A commit while one glide is flying replaces the single queued token.
+    /// The page posts that token only if it kept the slot. A refused answer
+    /// removes it. Nothing here remembers commits that have already posted.
+    fn hand_glide(&mut self, effect: &WheelMove) {
+        if matches!(effect, WheelMove::Commit(_)) {
+            self.next_id = self.next_id.saturating_add(1);
+            let id = self.next_id;
+            if self.flying.is_none() {
+                self.flying = Some(id);
+            } else {
+                self.queued = Some(id);
+            }
+            self.last_commit = Some(id);
+        }
+        self.release = true;
+    }
+}
+
+/// The page the message handler stores. A rejected report leaves it unchanged.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageView {
+    pub page: Option<u32>,
+    pub pages: Option<u32>,
+    pub sentence: Option<u32>,
+    pub pin_missed: bool,
+    pub pinned: Option<u32>,
+}
+
+impl Default for PageView {
+    fn default() -> Self {
+        Self {
+            page: None,
+            pages: None,
+            sentence: None,
+            pin_missed: false,
+            pinned: None,
+        }
+    }
+}
+
+/// The script-message entry. `token` is the commit post. None is an ordinary
+/// report. A token that was refused or retired does not change `view`.
+pub fn deliver_page(
+    swipe: &mut Swipe,
+    view: &mut PageView,
+    token: Option<u64>,
+    page: u32,
+    pages: u32,
+    sentence: Option<u32>,
+    missed: Option<bool>,
+    pinned: Option<u32>,
+) -> bool {
+    if let Some(token) = token {
+        if !swipe.take_commit_post(token) {
+            return false;
+        }
+    }
+    view.page = Some(page);
+    view.pages = Some(pages);
+    view.sentence = sentence;
+    view.pin_missed = missed.unwrap_or(false);
+    if let Some(pinned) = pinned {
+        view.pinned = Some(pinned);
+    }
+    true
+}
+
+/// The one EPUB place. The gesture, the saved row, and the unfinished resume
+/// live here. The inbox does not.
+#[derive(Clone, Debug)]
+pub struct Reader {
+    pub swipe: Swipe,
+    pub place: ReadingPlace,
+    pub jump_href: String,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub back: Option<ReadingPlace>,
+    pub hold: Option<u32>,
+    /// One reveal `poll_web` may run. A later poll does not invent another.
+    pub reveal: Option<u32>,
+    /// The one column walk started by a page-only resume. It ends when the
+    /// shown column reaches it, or when a reader turn is saved. A resize does
+    /// not end it.
+    pub walk: Option<u32>,
+    /// The caret character for this chapter. `None` until a caret hits,
+    /// including a hit on character 0. A miss is not stored as 0.
+    pub measured: Option<u32>,
+    /// An img or svg identity for this document. It is not a character and
+    /// it is not written.
+    pub figure: Option<String>,
+    /// Samples of the saved page that found no anchor. Two means a later
+    /// size does not measure that page.
+    pub sample_misses: u8,
+    /// Lookups of `figure` that did not find the element. Two drops it.
+    pub figure_misses: u8,
+    /// A caret read is in flight. The poll does not chase and does not end
+    /// the walk until the hit or the miss is applied.
+    pub anchoring: bool,
+    /// The sample this resize asked for. A post from an older sample is not
+    /// the current character.
+    pub probe: u64,
+    /// The saved page number is not a chase. The frame may still move.
+    /// A lost sample does not measure that page again.
+    pub hold_layout: bool,
+    /// The next restore answers a user post this reader refused or accepted.
+    /// The page blocks an older restore until that answer arrives.
+    pub restore_ack: bool,
+    /// The loaded chapter document. A restore or a drop from an older document
+    /// does not run. A user key does not carry this.
+    pub restore_load: u64,
+}
+
+impl Default for Reader {
+    fn default() -> Self {
+        Self {
+            swipe: Swipe::default(),
+            place: ReadingPlace {
+                href: String::new(),
+                page: 1,
+                offset: 0,
+            },
+            jump_href: String::new(),
+            jump_offset: None,
+            awaiting: None,
+            pending: 0,
+            back: None,
+            hold: None,
+            reveal: None,
+            walk: None,
+            measured: None,
+            figure: None,
+            sample_misses: 0,
+            figure_misses: 0,
+            anchoring: false,
+            probe: 0,
+            hold_layout: false,
+            restore_ack: false,
+            restore_load: 0,
+        }
+    }
+}
+
+/// Who asked the page to turn. The script posts this source. Frames do not
+/// choose it, and `web.turn` does not default every caller to a restore.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnSource {
+    /// Poll walking a stored page. `SPIKE_TURN` and `SPIKE_PLAY` are the host
+    /// moving columns, so they use this too.
+    Restore,
+    /// A shell key, a shell edge, a page key, or a page edge.
+    User,
+}
+
+/// The eval `web.turn` runs. `target` is the walk goal. `ack` answers the
+/// user post the page already sent. Tests send this string.
+pub fn turn_command(delta: i32, source: TurnSource, target: u32, ack: bool, load: u64) -> String {
+    let source = match source {
+        TurnSource::Restore => "restore",
+        TurnSource::User => "user",
+    };
+    let ack = if ack { 1 } else { 0 };
+    format!(
+        "(function(){{var answer=(window.spikeTurn&&window.spikeTurn({delta},\"{source}\",{target},{ack},{load}))||\"no\";return JSON.stringify({{answer:answer}});}})()"
+    )
+}
+
+/// The page started this turn. `no` did not, so the poll latch clears and the
+/// walk stays where it was.
+pub fn turn_accepted(answer: &str) -> bool {
+    matches!(answer, "ok" | "queued")
+}
+
+/// The eval `drop_swipe` runs for a chapter, a resize, or a reopen.
+pub fn drop_command(load: u64) -> String {
+    format!("window.spikeFollowDrop&&window.spikeFollowDrop({load})")
+}
+
+/// The eval `release_swipe` runs. The page's answer is in the returned JSON.
+pub fn release_command(delta: i32, token: u64) -> String {
+    format!(
+        "(function(){{var answer=(window.spikeFollowEnd&&window.spikeFollowEnd({delta},{token}))||\"no\";return JSON.stringify({{answer:answer,swipe:{token}}});}})()"
+    )
+}
+
+/// The script message, parsed once. Absent fields stay absent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageReport {
+    pub dropped: bool,
+    pub token: Option<u64>,
+    pub kind: String,
+    pub frames: bool,
+    pub page: Option<u32>,
+    pub pages: Option<u32>,
+    pub sentence: Option<u32>,
+    pub pinned: Option<u32>,
+    pub missed: Option<bool>,
+    pub hold: Option<u32>,
+    /// The hold is a caret hit. Absent on a miss, including a miss that
+    /// would otherwise look like character 0.
+    pub measured: bool,
+    /// The resize sample that produced this post. Zero when the page sent none.
+    pub probe: u64,
+    /// The poll's column walk. The same slide as a key, without a reader.
+    pub chase: bool,
+}
+
+pub fn page_report(value: &serde_json::Value) -> PageReport {
+    PageReport {
+        dropped: value["dropped"].as_bool() == Some(true),
+        token: value["swipe"].as_u64().filter(|token| *token > 0),
+        kind: value["kind"].as_str().unwrap_or("").to_string(),
+        frames: value.get("frames").is_some(),
+        page: value["page"].as_u64().map(|page| page as u32),
+        pages: value["pages"].as_u64().map(|pages| pages as u32),
+        sentence: value["sentence"].as_u64().map(|offset| offset as u32),
+        pinned: value["pinned"].as_u64().map(|offset| offset as u32),
+        missed: value["missed"].as_bool(),
+        hold: value["hold"].as_u64().map(|offset| offset as u32),
+        measured: value["measured"].as_bool() == Some(true),
+        probe: value["probe"].as_u64().unwrap_or(0),
+        chase: value["chase"].as_bool() == Some(true),
+    }
+}
+
+/// What the host does after the place is committed. `paint` is the footer.
+/// A rejected or dropped message does not paint.
+#[derive(Clone, Debug)]
+pub struct Apply {
+    pub accepted: bool,
+    pub paint: bool,
+    pub wrote: bool,
+    pub reveal: Option<u32>,
+    pub go: Option<ChapterMove>,
+}
+
+fn apply_idle(accepted: bool) -> Apply {
+    Apply {
+        accepted,
+        paint: false,
+        wrote: false,
+        reveal: None,
+        go: None,
+    }
+}
+
+/// The settings file. An empty book or page 0 is not a successful write:
+/// `record_progress` returns `Ok` and stores nothing in that case.
+pub trait PlaceFile {
+    fn write_place(&mut self, place: &ReadingPlace) -> bool;
+    fn resume(&self) -> ReadingPlace;
+    /// A caret hit, including character 0. The default writes the page row
+    /// and records no caret, which is the old page-only file.
+    fn write_anchor(&mut self, place: &ReadingPlace) -> bool {
+        self.write_place(place)
+    }
+    fn resume_caret(&self) -> bool {
+        false
+    }
+}
+
+/// A swipe token or a key or edge (`kind: "turn"`). A column walk posts
+/// `frames` too, and those frames are the slide timing, not a reader.
+fn user_turn(report: &PageReport) -> bool {
+    if report.token.is_some() {
+        return true;
+    }
+    !report.chase && report.kind == "turn"
+}
+
+/// What one script message does to the column element.
+/// `None` means leave the mailbox. A user turn or a character hold clears it.
+/// A figure is kept when its probe is current, or when the post names the
+/// element already kept and sends no probe. A late probe is left alone.
+/// A figure with no page is not a place message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FigureMail {
+    pub id: Option<String>,
+    pub lost: bool,
+}
+
+pub fn figure_mail(
+    value: &serde_json::Value,
+    probe: u64,
+    known: Option<&str>,
+) -> Option<FigureMail> {
+    let report = page_report(value);
+    if user_turn(&report) || report.hold.is_some() {
+        return Some(FigureMail {
+            id: None,
+            lost: false,
+        });
+    }
+    let Some(id) = value
+        .get("figure")
+        .and_then(|item| item.as_str())
+        .filter(|id| !id.is_empty())
+    else {
+        return None;
+    };
+    if report.page.is_none() {
+        return None;
+    }
+    let generation = value.get("probe").and_then(|item| item.as_u64());
+    let current = generation.is_some_and(|sent| sent == probe);
+    let same = generation.is_none() && known == Some(id);
+    if !(current || same) {
+        return None;
+    }
+    Some(FigureMail {
+        id: Some(id.to_string()),
+        lost: report.missed == Some(true),
+    })
+}
+
+pub fn keep_message_figure(
+    figure: &mut Option<String>,
+    lost: &mut bool,
+    value: &serde_json::Value,
+    probe: u64,
+    known: Option<&str>,
+) {
+    if let Some(mail) = figure_mail(value, probe, known) {
+        *figure = mail.id;
+        *lost = mail.lost;
+    }
+}
+
+pub fn drop_figure_mail(figure: &mut Option<String>, lost: &mut bool) {
+    *figure = None;
+    *lost = false;
+}
+
+pub fn remember_figure(reader: &mut Reader, id: Option<String>) {
+    if let Some(id) = id {
+        reader.figure = Some(id);
+    }
+}
+
+pub fn figure_flags(id: &Option<String>, lost: bool) -> (bool, bool) {
+    (id.is_some() && !lost, lost)
+}
+
+/// A missed lookup is not a new element. Noting it would put the id back
+/// after the frame had dropped it.
+pub fn found_figure(id: Option<String>, lost: bool) -> Option<String> {
+    if lost {
+        None
+    } else {
+        id
+    }
+}
+
+/// The loss was applied. A resting frame has not read it yet.
+pub fn spent_figure_loss(lost: bool, draw: Draw) -> bool {
+    lost && !matches!(draw, Draw::Rest)
+}
+
+/// The find was applied. A later frame should not read it again.
+pub fn spent_figure_find(found: bool, draw: Draw) -> bool {
+    found && !matches!(draw, Draw::Rest)
+}
+
+fn clear_resume(reader: &mut Reader) {
+    reader.jump_href.clear();
+    reader.jump_offset = None;
+    reader.awaiting = None;
+    reader.pending = 0;
+    reader.hold = None;
+    reader.reveal = None;
+    reader.walk = None;
+    reader.measured = None;
+    reader.figure = None;
+    reader.sample_misses = 0;
+    reader.figure_misses = 0;
+    reader.anchoring = false;
+    reader.hold_layout = false;
+}
+
+/// Accept a script message. The place changes only after `write_place`
+/// returns true. A refused token, including one past the floor, changes nothing.
+pub fn handle_page(
+    reader: &mut Reader,
+    value: &serde_json::Value,
+    href: &str,
+    store: &mut dyn PlaceFile,
+) -> Apply {
+    let report = page_report(value);
+    if report.dropped {
+        if let Some(token) = report.token {
+            reader.swipe.retire(token);
+        }
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    if report.hold.is_some()
+        && report.token.is_none()
+        && !report.frames
+        && report.kind != "turn"
+        && report.pinned.is_none()
+    {
+        if report.measured && report.probe == reader.probe {
+            reader.measured = report.hold;
+        }
+        return Apply {
+            accepted: true,
+            paint: true,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    if value.get("figure").is_some()
+        && report.hold.is_none()
+        && report.pinned.is_none()
+        && report.kind != "turn"
+    {
+        return apply_idle(true);
+    }
+    if report.missed == Some(true)
+        && report.token.is_none()
+        && report.kind != "turn"
+        && report.hold.is_none()
+        && report.pinned.is_none()
+    {
+        if report.probe == reader.probe {
+            reader.anchoring = false;
+            reader.hold_layout = true;
+        }
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    if report.missed == Some(true)
+        && report.token.is_none()
+        && report.kind != "turn"
+        && report.hold.is_none()
+        && report.pinned.is_some()
+        && reader.anchoring
+    {
+        reader.anchoring = false;
+        reader.hold_layout = true;
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    let landed = report.missed != Some(true)
+        && report.pinned.is_some()
+        && report.token.is_none()
+        && report.kind != "turn"
+        && (report.kind == "anchor" || reader.anchoring);
+    if landed {
+        let Some(page) = report.page.filter(|page| *page > 0) else {
+            return apply_idle(true);
+        };
+        let offset = report.pinned.unwrap_or(0);
+        let place = ReadingPlace {
+            href: reader.place.href.clone(),
+            page,
+            offset,
+        };
+        let changed = place != reader.place;
+        if !store.write_anchor(&place) {
+            reader.restore_ack = true;
+            reader.anchoring = false;
+            reader.hold_layout = true;
+            reader.measured = Some(offset);
+            return apply_idle(false);
+        }
+        reader.place = place;
+        reader.measured = Some(offset);
+        reader.walk = None;
+        reader.anchoring = false;
+        reader.hold_layout = false;
+        reader.restore_ack = true;
+        return Apply {
+            accepted: true,
+            paint: true,
+            wrote: changed,
+            reveal: None,
+            go: None,
+        };
+    }
+    if let Some(token) = report.token {
+        if !reader.swipe.holds(token) {
+            reader.restore_ack = true;
+            return apply_idle(false);
+        }
+    }
+    if user_turn(&report) {
+        let mut next = reader.clone();
+        if let Some(token) = report.token {
+            if !next.swipe.take_commit_post(token) {
+                reader.restore_ack = true;
+                return apply_idle(false);
+            }
+        }
+        let shown = report.page.unwrap_or(reader.place.page.max(1));
+        let sentence = report.sentence.unwrap_or(0);
+        let (page, offset) = next_sentence(
+            reader.place.page.max(1),
+            reader.place.offset,
+            shown,
+            sentence,
+        );
+        let place = ReadingPlace {
+            href: reader.place.href.clone(),
+            page,
+            offset,
+        };
+        let changed = place != reader.place;
+        if changed && !store.write_place(&place) {
+            reader.restore_ack = true;
+            return apply_idle(false);
+        }
+        next.place = place;
+        clear_resume(&mut next);
+        next.restore_ack = true;
+        *reader = next;
+        return Apply {
+            accepted: true,
+            paint: true,
+            wrote: changed,
+            reveal: None,
+            go: None,
+        };
+    }
+    let shown = report.page.unwrap_or(reader.place.page.max(1));
+    let polled = poll_chapter(ChapterPoll {
+        saved_href: &reader.place.href,
+        saved_page: reader.place.page,
+        saved_offset: reader.place.offset,
+        jump_href: &reader.jump_href,
+        jump_offset: reader.jump_offset,
+        awaiting: reader.awaiting,
+        pending: reader.pending,
+        hold: reader.hold,
+        shown,
+        href,
+        ready: true,
+        reported: report.page.is_some(),
+        pinned: report.pinned,
+        missed: report.missed == Some(true),
+        sentence: report.sentence.unwrap_or(0),
+        still_turning: false,
+    });
+    let pin_match = reader.awaiting.is_some()
+        && report.pinned == reader.awaiting
+        && report.missed != Some(true);
+    let pin_message = report.pinned.is_some() || report.missed.is_some();
+    let write = polled.record
+        && if pin_message {
+            polled.pin_write && pin_match
+        } else {
+            changed_chapter(&reader.place.href, href)
+        };
+    let place = ReadingPlace {
+        href: polled.saved_href,
+        page: polled.saved_page,
+        offset: polled.saved_offset,
+    };
+    if write && !store.write_place(&place) {
+        return apply_idle(false);
+    }
+    let reveal = polled.reveal_jump.or(polled.reveal_pending);
+    reader.jump_offset = polled.jump_offset;
+    reader.awaiting = polled.awaiting;
+    reader.pending = polled.pending;
+    reader.hold = polled.hold;
+    reader.reveal = reveal;
+    if write {
+        reader.place = place;
+    }
+    if !layout_held(reader) && reader.walk.is_some_and(|target| shown >= target) {
+        reader.walk = None;
+    }
+    Apply {
+        accepted: true,
+        paint: true,
+        wrote: write,
+        reveal,
+        go: None,
+    }
+}
+
+/// Chapter and return. The saved place is already the last accepted turn.
+/// This does not read the inbox.
+pub fn handle_chapter(
+    reader: &mut Reader,
+    pick: isize,
+    marks: &[ChapterMark],
+    spine: &[String],
+    href: &str,
+    store: &mut dyn PlaceFile,
+) -> Apply {
+    let nav = navigate(NavIn {
+        shown_href: href,
+        shown_page: reader.place.page.max(1),
+        saved_href: &reader.place.href,
+        saved_page: reader.place.page.max(1),
+        saved_offset: reader.place.offset,
+        jump_href: &reader.jump_href,
+        jump_offset: reader.jump_offset,
+        awaiting: reader.awaiting,
+        pending: reader.pending,
+        back: reader.back.clone(),
+        marks,
+        spine,
+        pick,
+    });
+    let place = ReadingPlace {
+        href: nav.saved_href.clone(),
+        page: nav.saved_page,
+        offset: nav.saved_offset,
+    };
+    if nav.record && !store.write_place(&place) {
+        return apply_idle(false);
+    }
+    reader.place = place;
+    reader.back = nav.back;
+    reader.pending = nav.pending;
+    reader.jump_href = nav.jump_href;
+    reader.jump_offset = nav.jump_offset;
+    reader.awaiting = nav.awaiting;
+    reader.reveal = None;
+    if !matches!(nav.go, ChapterMove::Stay) {
+        reader.walk = None;
+        reader.measured = None;
+        reader.figure = None;
+        reader.sample_misses = 0;
+        reader.figure_misses = 0;
+        reader.anchoring = false;
+        reader.hold_layout = false;
+    }
+    let reveal = match nav.go {
+        ChapterMove::Reveal { offset } => Some(offset),
+        _ => None,
+    };
+    Apply {
+        accepted: true,
+        paint: false,
+        wrote: nav.record,
+        reveal,
+        go: Some(nav.go),
+    }
+}
+
+/// Cancel a gesture that has not posted. The accepted place stays on disk.
+pub fn leave(reader: &mut Reader) {
+    let _ = reader.swipe.cancel_release();
+}
+
+/// The resume row becomes the place. An offset above 0 waits as `pending`.
+/// `caret` is a saved hit, including character 0. An old row has no caret
+/// and a zero offset, and that row still walks. Nothing is written.
+pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str, caret: bool) {
+    let page = page.max(1);
+    reader.place = ReadingPlace {
+        href: href.to_string(),
+        page,
+        offset,
+    };
+    reader.pending = if offset > 0 { offset } else { 0 };
+    reader.jump_href.clear();
+    reader.jump_offset = None;
+    reader.awaiting = None;
+    reader.hold = None;
+    reader.back = None;
+    reader.reveal = None;
+    reader.measured = if caret || offset > 0 {
+        Some(offset)
+    } else {
+        None
+    };
+    reader.figure = None;
+    reader.sample_misses = 0;
+    reader.figure_misses = 0;
+    reader.anchoring = false;
+    reader.hold_layout = false;
+    reader.walk = if caret {
+        None
+    } else {
+        resume_walk(page, offset)
+    };
+}
+
+/// An explicit stop ends the walk. A shell key does not call this before
+/// its post is saved. A resize does not. The saved row is not written here.
+pub fn stop_walk(reader: &mut Reader) {
+    reader.walk = None;
+}
+
+/// The page dropped its gesture, or a new chapter document replaced it.
+/// Empty swipe slots still count: a restore slide is not one of those slots.
+pub fn retire_restore(reader: &mut Reader) -> bool {
+    reader.swipe.cancel_release()
+}
+
+pub fn reset_restore_epoch(reader: &mut Reader) {
+    reader.restore_load = reader.restore_load.saturating_add(1);
+    reader.restore_ack = false;
+    reader.measured = None;
+    reader.figure = None;
+    reader.sample_misses = 0;
+    reader.figure_misses = 0;
+    reader.anchoring = false;
+    reader.hold_layout = false;
+    reader.probe = reader.probe.saturating_add(1);
+}
+
+/// `place_page` on a cancel. The drop stops an animation that has not posted.
+/// The walk and a commit that already posted stay.
+pub fn cancel_placed_page(reader: &mut Reader) -> String {
+    drop_command(reader.restore_load)
+}
+
+pub fn open_resume(reader: &mut Reader, store: &dyn PlaceFile) {
+    let resumed = store.resume();
+    open_place(
+        reader,
+        resumed.page,
+        resumed.offset,
+        &resumed.href,
+        store.resume_caret(),
+    );
+}
+
+/// A stored page with no sentence is walked column by column. A sentence
+/// waits for its reveal and does not walk. Page 1 is already showing.
+pub fn resume_walk(page: u32, offset: u32) -> Option<u32> {
+    let page = page.max(1);
+    if offset > 0 || page <= 1 {
+        None
+    } else {
+        Some(page)
+    }
+}
+
+/// The poll calls the programmatic page turn while the shown column is
+/// still short of `resume_walk`. A turn already in flight is not repeated.
+pub fn resume_turn(target: Option<u32>, shown: u32, pages: u32, turning: bool) -> bool {
+    target.is_some_and(|target| pages > 1 && shown < target && !turning)
+}
+
+/// One poll. Reaching the stored column ends the walk. The command is the
+/// restore eval, or nothing when the walk is over or a turn is in flight.
+pub struct ResumePoll {
+    pub walk: Option<u32>,
+    pub command: Option<String>,
+}
+
+pub fn poll_resume(
+    walk: Option<u32>,
+    shown: u32,
+    pages: u32,
+    turning: bool,
+    ack: bool,
+    load: u64,
+) -> ResumePoll {
+    let walk = match walk {
+        Some(target) if shown >= target => None,
+        other => other,
+    };
+    let command = if resume_turn(walk, shown, pages, turning) {
+        let target = walk.unwrap_or(0);
+        Some(turn_command(1, TurnSource::Restore, target, ack, load))
+    } else {
+        None
+    };
+    ResumePoll { walk, command }
+}
+
+/// The poll while a caret read is in flight, or the saved page number is not
+/// a chase. A column past that page does not end the walk.
+fn layout_held(reader: &Reader) -> bool {
+    reader.anchoring || reader.measured.is_some() || reader.hold_layout
+}
+
+/// One draw, the same inputs `place_page` has. The test drives this for
+/// several frames. A matching box does not cancel a gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameTick {
+    pub fitted_same: bool,
+    pub zoom_same: bool,
+    pub stage_same: bool,
+    pub reflowable: bool,
+    pub settled: bool,
+    pub awaiting: bool,
+    pub hold: Option<u32>,
+    pub hold_probe: u64,
+    pub missed: bool,
+    pub timed_out: bool,
+    pub shown: u32,
+    pub pages: u32,
+    pub pages_known: bool,
+    /// The page found an img or svg in the sampled column.
+    pub figure: bool,
+    /// The page could not find the element it had been asked to align.
+    pub figure_lost: bool,
+}
+
+impl FrameTick {
+    pub fn new(
+        fitted_same: bool,
+        zoom_same: bool,
+        stage_same: bool,
+        reflowable: bool,
+        settled: bool,
+        awaiting: bool,
+    ) -> Self {
+        Self {
+            fitted_same,
+            zoom_same,
+            stage_same,
+            reflowable,
+            settled,
+            awaiting,
+            hold: None,
+            hold_probe: 0,
+            missed: false,
+            timed_out: false,
+            shown: 1,
+            pages: 1,
+            pages_known: true,
+            figure: false,
+            figure_lost: false,
+        }
+    }
+}
+
+/// What this draw does to the web view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Draw {
+    /// Leave the view where it is.
+    Rest,
+    /// Ask the page for the caret. This draw drops a gesture painted for the
+    /// old box. Later draws of the same wait do not.
+    Measure { page: u32, probe: u64 },
+    /// Move the view to the fitted box. `reveal` seeks that character after
+    /// the move. None does not seek a page number.
+    Move { reveal: Option<u32> },
+    /// Move the view, then scroll the stored element into its column.
+    Align,
+}
+
+/// `cancel` drops a gesture that has not posted. `pump` asks for another draw.
+/// A walk that is not being chased does not pump.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawPlan {
+    pub draw: Draw,
+    pub cancel: bool,
+    pub pump: bool,
+}
+
+fn chase_due(reader: &Reader, tick: FrameTick) -> bool {
+    if layout_held(reader) {
+        return false;
+    }
+    if !tick.pages_known {
+        return reader.walk.is_some();
+    }
+    resume_turn(reader.walk, tick.shown, tick.pages, false)
+}
+
+fn plan(draw: Draw, cancel: bool, pump: bool) -> DrawPlan {
+    DrawPlan { draw, cancel, pump }
+}
+
+fn lost(reader: &Reader) -> bool {
+    reader.sample_misses >= 2
+}
+
+fn reveal_char(reader: &mut Reader, offset: u32) -> DrawPlan {
+    reader.anchoring = true;
+    reader.hold_layout = false;
+    reader.sample_misses = 0;
+    reader.figure = None;
+    reader.figure_misses = 0;
+    plan(
+        Draw::Move {
+            reveal: Some(offset),
+        },
+        false,
+        false,
+    )
+}
+
+/// The draw `place_page` applies. A character reveal does not wait for the
+/// chrome settle flag. A page number is measured only while that column's
+/// layout is still the one on screen, and only twice. After that the box
+/// moves and the page number is not sampled again.
+pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
+    // The first align has cleared the wait. A later miss and a later find
+    // both arrive with awaiting false.
+    if tick.figure_lost {
+        reader.figure_misses = reader.figure_misses.saturating_add(1);
+        reader.anchoring = false;
+        reader.hold_layout = true;
+        if reader.figure_misses >= 2 {
+            reader.figure = None;
+            reader.sample_misses = 2;
+            return plan(Draw::Move { reveal: None }, false, false);
+        }
+        return plan(Draw::Align, false, true);
+    }
+    if tick.figure && reader.figure.is_some() {
+        reader.sample_misses = 0;
+        reader.figure_misses = 0;
+        reader.anchoring = false;
+        reader.hold_layout = true;
+        return plan(Draw::Align, false, false);
+    }
+    if tick.awaiting {
+        let hold = current_hold(tick.hold, tick.hold_probe, reader.probe);
+        let missed = tick.missed && hold.is_none();
+        let timed_out = tick.timed_out && hold.is_none();
+        match finish_hold_offset(hold, missed, timed_out) {
+            HoldFinish::Wait => return plan(Draw::Rest, false, true),
+            HoldFinish::Timeout => {
+                if reader.sample_misses == 0 {
+                    reader.sample_misses = 1;
+                    reader.probe = reader.probe.saturating_add(1);
+                    reader.anchoring = true;
+                    reader.hold_layout = true;
+                    let page = reader.walk.unwrap_or(0);
+                    let probe = reader.probe;
+                    return plan(Draw::Measure { page, probe }, false, true);
+                }
+                reader.sample_misses = 2;
+                reader.anchoring = false;
+                reader.hold_layout = true;
+                return plan(Draw::Move { reveal: None }, false, false);
+            }
+            HoldFinish::Miss => {
+                reader.probe = reader.probe.saturating_add(1);
+                reader.sample_misses = 2;
+                reader.figure = None;
+                reader.figure_misses = 0;
+                reader.anchoring = false;
+                reader.hold_layout = true;
+                return plan(Draw::Move { reveal: None }, false, false);
+            }
+            HoldFinish::Reveal(offset) => return reveal_char(reader, offset),
+        }
+    }
+    let chase = chase_due(reader, tick);
+    match place_step(tick.fitted_same, tick.zoom_same, tick.stage_same) {
+        PlaceStep::Hold => plan(Draw::Rest, false, chase),
+        PlaceStep::Cancel { reflow: false } => plan(Draw::Rest, true, chase),
+        PlaceStep::Cancel { reflow: true } => {
+            if tick.reflowable {
+                if let Some(offset) = reader.measured {
+                    return reveal_char(reader, offset);
+                }
+                if reader.figure.is_some() {
+                    reader.anchoring = false;
+                    reader.hold_layout = true;
+                    return plan(Draw::Align, false, false);
+                }
+                if lost(reader) {
+                    reader.hold_layout = true;
+                    return plan(Draw::Move { reveal: None }, false, false);
+                }
+                if tick.settled {
+                    if reader.anchoring {
+                        return plan(Draw::Rest, false, true);
+                    }
+                    reader.probe = reader.probe.saturating_add(1);
+                    reader.anchoring = true;
+                    let page = reader.walk.unwrap_or(0);
+                    let probe = reader.probe;
+                    return plan(Draw::Measure { page, probe }, true, true);
+                }
+            }
+            plan(Draw::Move { reveal: None }, false, chase)
+        }
+    }
+}
+
+pub fn poll_anchored(reader: &mut Reader, shown: u32, pages: u32, turning: bool) -> ResumePoll {
+    if layout_held(reader) {
+        return ResumePoll {
+            walk: reader.walk,
+            command: None,
+        };
+    }
+    let polled = poll_resume(
+        reader.walk,
+        shown,
+        pages,
+        turning,
+        reader.restore_ack,
+        reader.restore_load,
+    );
+    reader.walk = polled.walk;
+    polled
+}
+
+pub fn hold_eval(page: u32, probe: u64) -> String {
+    format!("window.spikeHold&&window.spikeHold({page},{probe})")
+}
+
+/// The offset `finish_hold` may reveal. A miss and a timeout are not character 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldFinish {
+    Wait,
+    Miss,
+    Timeout,
+    Reveal(u32),
+}
+
+pub fn finish_hold_offset(hold: Option<u32>, missed: bool, timed_out: bool) -> HoldFinish {
+    if let Some(ch) = hold {
+        return HoldFinish::Reveal(ch);
+    }
+    if missed {
+        return HoldFinish::Miss;
+    }
+    if timed_out {
+        return HoldFinish::Timeout;
+    }
+    HoldFinish::Wait
+}
+
+/// A hold already in the inbox is current only when it is the sample still
+/// being asked for.
+pub fn current_hold(hold: Option<u32>, hold_probe: u64, reader_probe: u64) -> Option<u32> {
+    hold.filter(|_| hold_probe == reader_probe)
+}
+
+pub fn take_reveal(reader: &mut Reader) -> Option<u32> {
+    reader.reveal.take()
+}
+
+/// A page report from the commit glide. `token` is the value the glide posted.
+/// None means an ordinary report, including a reveal pin. A stale token does
+/// not change the stored page.
+pub fn swipe_progress(
+    swipe: &mut Swipe,
+    token: Option<u64>,
+    page: u32,
+    sentence: u32,
+) -> Option<(u32, u32)> {
+    match token {
+        Some(token) => swipe.take_commit_post(token).then_some((page, sentence)),
+        None => Some((page, sentence)),
+    }
+}
+
+fn shown_travel(travel: f64, page: u32, pages: u32) -> f64 {
+    if end_blocks(if travel > 0.0 { 1 } else { -1 }, page, pages) {
+        0.0
+    } else {
+        travel
+    }
+}
+
+fn end_blocks(delta: i32, page: u32, pages: u32) -> bool {
+    if pages == 0 {
+        return false;
+    }
+    (delta < 0 && page <= 1) || (delta > 0 && page >= pages)
 }
 
 /// Page and offset stored with `href` before that chapter reports its own pin.
@@ -1327,5 +2770,776 @@ mod tests {
         assert!(!on_library());
         publish_surface(Surface::Library);
         assert!(on_library());
+    }
+
+    #[test]
+    fn a_trackpad_swipe_follows_cancels_and_commits_once() {
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mom = |dx: f64| WheelTick {
+            finger: Finger::None,
+            momentum: true,
+            dx,
+            dy: 0.0,
+        };
+        let writes = |effect: WheelMove| matches!(effect, WheelMove::Commit(_));
+
+        let mut swipe = Swipe::default();
+        let small = swipe.offer(down(10.0), 4, 10);
+        assert_eq!(small, WheelMove::Follow(10.0));
+        assert!(!writes(small));
+        let cancelled = swipe.offer(up, 4, 10);
+        assert_eq!(cancelled, WheelMove::Cancel);
+        assert!(!writes(cancelled));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(40.0), 4, 10), WheelMove::Follow(40.0));
+        assert_eq!(swipe.offer(down(-30.0), 4, 10), WheelMove::Follow(10.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Cancel);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(60.0), 4, 10), WheelMove::Follow(60.0));
+        assert_eq!(swipe.offer(down(-120.0), 4, 10), WheelMove::Follow(-60.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(-1));
+        assert_eq!(swipe.offer(mom(200.0), 5, 10), WheelMove::Swallow);
+        assert_eq!(swipe.offer(mom(200.0), 5, 10), WheelMove::Swallow);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(30.0), 4, 10), WheelMove::Follow(30.0));
+        assert_eq!(swipe.offer(down(18.0), 4, 10), WheelMove::Follow(48.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        assert_eq!(
+            swipe.offer(down(SWIPE_POINTS), 5, 10),
+            WheelMove::Follow(SWIPE_POINTS)
+        );
+        assert_eq!(swipe.offer(up, 5, 10), WheelMove::Commit(1));
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert!(swipe.abandon());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+        assert_eq!(swipe.offer(down(80.0), 2, 10), WheelMove::Follow(80.0));
+        assert!(swipe.abandon());
+        assert_eq!(swipe.offer(mom(80.0), 2, 10), WheelMove::Swallow);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(-80.0), 1, 10), WheelMove::Follow(0.0));
+        assert_eq!(swipe.offer(up, 1, 10), WheelMove::Cancel);
+        assert_eq!(swipe.offer(down(80.0), 10, 10), WheelMove::Follow(0.0));
+        assert_eq!(swipe.offer(up, 10, 10), WheelMove::Cancel);
+
+        let mut swipe = Swipe::default();
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::Down,
+                    momentum: false,
+                    dx: 4.0,
+                    dy: 20.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Pass
+        );
+        let held = swipe.offer(
+            WheelTick {
+                finger: Finger::None,
+                momentum: false,
+                dx: 20.0,
+                dy: 0.0,
+            },
+            4,
+            10,
+        );
+        assert_eq!(held, WheelMove::Hold);
+        assert!(!writes(held));
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: 28.0,
+                    dy: 0.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Commit(1)
+        );
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: -SWIPE_POINTS,
+                    dy: 0.0,
+                },
+                1,
+                10,
+            ),
+            WheelMove::Cancel
+        );
+
+        assert_eq!(finger_bits(4), Finger::Down);
+        assert_eq!(finger_bits(8), Finger::Up);
+        assert_eq!(finger_bits(16), Finger::Cancelled);
+        assert_eq!(finger_bits(0), Finger::None);
+        assert_eq!(wheel_points(true, 12.0, 1.0), 12.0);
+        assert_eq!(wheel_points(false, 0.0, 1.0), 16.0);
+    }
+
+    #[test]
+    fn a_release_stays_open_until_chapter_or_resize_cancels_it() {
+        let down = WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down, 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        assert!(swipe.release_open());
+        assert!(!swipe.abandon());
+        assert!(swipe.release_open());
+        assert!(swipe.cancel_release());
+        assert!(!swipe.release_open());
+        assert!(!swipe.cancel_release());
+
+        let mut swipe = Swipe::default();
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::Down,
+                    momentum: false,
+                    dx: 10.0,
+                    dy: 0.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Follow(10.0)
+        );
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Cancel);
+        assert!(swipe.release_open());
+        assert!(swipe.cancel_release());
+
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down, 4, 10), WheelMove::Follow(80.0));
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+
+        let mut notch = Swipe::default();
+        assert_eq!(
+            notch.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: SWIPE_POINTS,
+                    dy: 0.0,
+                },
+                4,
+                10,
+            ),
+            WheelMove::Commit(1)
+        );
+        assert!(notch.release_open());
+        assert!(!notch.abandon());
+        assert!(notch.cancel_release());
+
+        assert_eq!(place_step(true, true, true), PlaceStep::Hold);
+        assert_eq!(
+            place_step(true, true, false),
+            PlaceStep::Cancel { reflow: false }
+        );
+        assert_eq!(
+            place_step(false, true, true),
+            PlaceStep::Cancel { reflow: true }
+        );
+        let mut reader = Reader::default();
+        reader.walk = Some(10);
+        let step = place_step(true, true, false);
+        assert_eq!(step, PlaceStep::Cancel { reflow: false });
+        let command = cancel_placed_page(&mut reader);
+        assert_eq!(reader.walk, Some(10));
+        assert!(command.contains("spikeFollowDrop"));
+        assert!(!reader.swipe.release_open());
+        let mut tick = FrameTick::new(false, true, true, true, true, false);
+        tick.shown = 4;
+        tick.pages = 40;
+        let started = layout_frame(&mut reader, tick);
+        let Draw::Measure { page: 10, probe } = started.draw else {
+            panic!("measure the saved column, {started:?}");
+        };
+        assert!(started.cancel);
+        assert!(started.pump);
+        assert_eq!(probe, reader.probe);
+        tick.awaiting = true;
+        tick.hold_probe = probe;
+        let waiting = layout_frame(&mut reader, tick);
+        assert_eq!(waiting.draw, Draw::Rest);
+        assert!(!waiting.cancel);
+        assert!(waiting.pump);
+        assert_eq!(reader.probe, probe);
+        tick.timed_out = true;
+        let retry = layout_frame(&mut reader, tick);
+        let Draw::Measure {
+            page: 10,
+            probe: retried,
+        } = retry.draw
+        else {
+            panic!("the first timeout samples the same column, {retry:?}");
+        };
+        assert!(!retry.cancel);
+        assert!(retry.pump);
+        assert_ne!(retried, probe);
+        assert_eq!(reader.sample_misses, 1);
+        assert_eq!(reader.walk, Some(10));
+        tick.timed_out = false;
+        tick.hold_probe = retried;
+        let still_waiting = layout_frame(&mut reader, tick);
+        assert_eq!(still_waiting.draw, Draw::Rest);
+        assert!(!still_waiting.cancel);
+        assert!(still_waiting.pump);
+        tick.hold = Some(360);
+        let found = layout_frame(&mut reader, tick);
+        assert_eq!(found.draw, Draw::Move { reveal: Some(360) });
+        assert!(!found.cancel);
+        assert_eq!(reader.sample_misses, 0);
+        reader.measured = None;
+        reader.anchoring = true;
+        reader.hold_layout = true;
+        reader.sample_misses = 1;
+        reader.probe = retried;
+        tick.hold = None;
+        tick.timed_out = true;
+        let failed = layout_frame(&mut reader, tick);
+        assert_eq!(failed.draw, Draw::Move { reveal: None });
+        assert!(!failed.cancel);
+        assert!(!failed.pump);
+        assert!(reader.hold_layout);
+        assert_eq!(reader.sample_misses, 2);
+        assert!(reader.measured.is_none());
+        assert_eq!(reader.walk, Some(10));
+        assert!(current_hold(Some(42), probe, reader.probe).is_none());
+        let polled = poll_anchored(&mut reader, 4, 40, false);
+        assert!(polled.command.is_none());
+        assert_eq!(polled.walk, Some(10));
+        tick.awaiting = false;
+        tick.timed_out = false;
+        tick.fitted_same = true;
+        let mut cancels = 0;
+        let mut pumps = 0;
+        for _ in 0..8 {
+            let rested = layout_frame(&mut reader, tick);
+            assert_eq!(rested.draw, Draw::Rest);
+            if rested.cancel {
+                cancels += 1;
+            }
+            if rested.pump {
+                pumps += 1;
+            }
+            assert_eq!(reader.walk, Some(10));
+        }
+        assert_eq!(cancels, 0);
+        assert_eq!(pumps, 0);
+        for _ in 0..3 {
+            tick.fitted_same = false;
+            let again = layout_frame(&mut reader, tick);
+            assert_eq!(again.draw, Draw::Move { reveal: None }, "{again:?}");
+            assert!(!again.cancel);
+            assert!(!again.pump);
+            assert_eq!(reader.walk, Some(10));
+            tick.fitted_same = true;
+        }
+        assert_eq!(reader.walk, Some(10));
+        let mut fresh = Reader::default();
+        fresh.walk = Some(10);
+        let mut open = FrameTick::new(false, true, true, true, false, false);
+        open.shown = 4;
+        open.pages = 40;
+        fresh.measured = Some(0);
+        let zero_open = layout_frame(&mut fresh, open);
+        assert_eq!(zero_open.draw, Draw::Move { reveal: Some(0) });
+        fresh.measured = Some(360);
+        fresh.anchoring = false;
+        let text_open = layout_frame(&mut fresh, open);
+        assert_eq!(text_open.draw, Draw::Move { reveal: Some(360) });
+        fresh.measured = None;
+        fresh.sample_misses = 0;
+        fresh.anchoring = false;
+        fresh.hold_layout = false;
+        let unloaded = layout_frame(&mut fresh, open);
+        assert_eq!(unloaded.draw, Draw::Move { reveal: None });
+        assert_eq!(fresh.sample_misses, 0);
+        open.settled = true;
+        let loaded = layout_frame(&mut fresh, open);
+        let Draw::Measure { page: 10, .. } = loaded.draw else {
+            panic!("an unsettled book is not a lost book, {loaded:?}");
+        };
+        assert!(loaded.cancel);
+        fresh.figure = Some("img#pic".to_string());
+        let mut lost_figure = open;
+        lost_figure.awaiting = true;
+        lost_figure.figure_lost = true;
+        let looked = layout_frame(&mut fresh, lost_figure);
+        assert_eq!(looked.draw, Draw::Align);
+        assert_eq!(fresh.figure_misses, 1);
+        let gone = layout_frame(&mut fresh, lost_figure);
+        assert_eq!(gone.draw, Draw::Move { reveal: None });
+        assert!(fresh.figure.is_none());
+        assert_eq!(fresh.sample_misses, 2);
+        lost_figure.awaiting = false;
+        lost_figure.figure_lost = false;
+        lost_figure.fitted_same = false;
+        let after = layout_frame(&mut fresh, lost_figure);
+        assert_eq!(after.draw, Draw::Move { reveal: None });
+        reader.measured = Some(42);
+        reader.anchoring = false;
+        tick.fitted_same = false;
+        let known = layout_frame(&mut reader, tick);
+        assert_eq!(known.draw, Draw::Move { reveal: Some(42) });
+        assert!(!known.cancel);
+        assert!(!known.pump);
+        assert!(reader.anchoring);
+        assert_eq!(reader.walk, Some(10));
+        reader.measured = Some(0);
+        let zero = layout_frame(&mut reader, tick);
+        assert_eq!(zero.draw, Draw::Move { reveal: Some(0) });
+        assert!(!zero.pump);
+        assert!(reader.anchoring);
+        assert_eq!(reader.walk, Some(10));
+    }
+
+    #[test]
+    fn a_delayed_reveal_does_not_let_the_lift_replace_the_pin() {
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        // The finger is down when poll reveals. Reveal retires that finger,
+        // so the lift is not a commit.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+
+        // The commit was already handed to the page. Reveal retires its token.
+        // The glide's post can still arrive after that, and it must not apply.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 50), None);
+        let kept = poll_chapter(ChapterPoll {
+            saved_href: "ch",
+            saved_page: 1,
+            saved_offset: 800,
+            jump_href: "",
+            jump_offset: None,
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: "ch",
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 800,
+            still_turning: false,
+        });
+        assert_eq!((kept.saved_page, kept.saved_offset), (1, 800));
+        // The same report, if the handler had applied it, replaces the pin.
+        let replaced = poll_chapter(ChapterPoll {
+            saved_href: "ch",
+            saved_page: 1,
+            saved_offset: 800,
+            jump_href: "",
+            jump_offset: None,
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 2,
+            href: "ch",
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 50,
+            still_turning: false,
+        });
+        assert_eq!((replaced.saved_page, replaced.saved_offset), (2, 50));
+        assert!(replaced.record);
+
+        // A pin report does not retire the commit. The reveal command does.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
+        assert_eq!(
+            swipe_progress(&mut swipe, Some(token), 2, 50),
+            Some((2, 50))
+        );
+
+        // Pin first, then the retired post.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 50), None);
+
+        // Post first, then the pin.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 50), None);
+        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
+    }
+
+    #[test]
+    fn a_second_finger_key_keeps_the_committed_page() {
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let token = swipe.commit_token().expect("commit");
+        assert_eq!(swipe.offer(down(40.0), 4, 10), WheelMove::Follow(40.0));
+        assert!(!swipe.abandon());
+        assert!(swipe.release_open());
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Pass);
+        assert_eq!(swipe_progress(&mut swipe, Some(token), 2, 0), Some((2, 0)));
+        assert!(!swipe.release_open());
+        assert_eq!(swipe.commit_token(), None);
+
+        // A second commit does not retire the first post, and navigation retires both.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let first = swipe.commit_token().expect("first");
+        assert_eq!(swipe.offer(down(80.0), 4, 10), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 10), WheelMove::Commit(1));
+        let second = swipe.commit_token().expect("second");
+        assert_ne!(first, second);
+        assert_eq!(swipe_progress(&mut swipe, Some(first), 2, 0), Some((2, 0)));
+        assert!(swipe.release_open());
+        assert!(swipe.cancel_release());
+        assert_eq!(swipe_progress(&mut swipe, Some(second), 3, 0), None);
+    }
+
+    #[test]
+    fn a_long_chapter_commit_is_never_dropped() {
+        let down = WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mut swipe = Swipe::default();
+        let mut view = PageView::default();
+        for n in 1u64..=128 {
+            assert_eq!(swipe.offer(down, 4, 400), WheelMove::Follow(80.0));
+            assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
+            let token = swipe.commit_token().expect("token");
+            assert_eq!(token, n);
+            swipe.note_answer(token, "glide");
+            let page = n as u32;
+            assert!(deliver_page(
+                &mut swipe,
+                &mut view,
+                Some(token),
+                page,
+                400,
+                Some(0),
+                None,
+                None
+            ));
+            assert_eq!(view.page, Some(page));
+        }
+        let again = swipe.commit_token();
+        assert_eq!(again, None);
+        assert_eq!(swipe.offer(down, 4, 400), WheelMove::Follow(80.0));
+        assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
+        let late = swipe.commit_token().expect("late");
+        assert!(swipe.cancel_release());
+        assert!(!deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(late),
+            2,
+            400,
+            Some(50),
+            None,
+            None
+        ));
+        assert_eq!(view.page, Some(128));
+        assert!(deliver_page(
+            &mut swipe,
+            &mut view,
+            None,
+            1,
+            400,
+            Some(800),
+            None,
+            None
+        ));
+        assert_eq!((view.page, view.sentence), (Some(1), Some(800)));
+        assert!(!deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(1),
+            2,
+            400,
+            Some(0),
+            None,
+            None
+        ));
+        assert_eq!(view.page, Some(1));
+    }
+
+    #[test]
+    fn a_finished_page_is_saved_before_chapter_or_resize() {
+        let down = WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let issue = |swipe: &mut Swipe| {
+            assert_eq!(swipe.offer(down, 4, 400), WheelMove::Follow(80.0));
+            assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
+            swipe.commit_token().expect("token")
+        };
+        let saved_of = |view: &PageView| {
+            poll_chapter(ChapterPoll {
+                saved_href: "ch.xhtml",
+                saved_page: 1,
+                saved_offset: 0,
+                jump_href: "",
+                jump_offset: None,
+                awaiting: None,
+                pending: 0,
+                hold: None,
+                shown: view.page.unwrap_or(1),
+                href: "ch.xhtml",
+                ready: true,
+                reported: view.page.is_some(),
+                pinned: view.pinned,
+                missed: view.pin_missed,
+                sentence: view.sentence.unwrap_or(0),
+                still_turning: false,
+            })
+        };
+
+        let mut missed = Swipe::default();
+        let mut view = PageView {
+            page: Some(1),
+            pages: Some(10),
+            sentence: Some(0),
+            pin_missed: true,
+            pinned: Some(800),
+        };
+        assert!(!deliver_page(
+            &mut missed,
+            &mut view,
+            Some(9),
+            4,
+            10,
+            Some(50),
+            None,
+            Some(1)
+        ));
+        assert!(view.pin_missed);
+        assert_eq!(view.pinned, Some(800));
+        assert_eq!(view.page, Some(1));
+        let still_missed = poll_chapter(ChapterPoll {
+            saved_href: "ch.xhtml",
+            saved_page: 1,
+            saved_offset: 0,
+            jump_href: "ch.xhtml",
+            jump_offset: None,
+            awaiting: Some(800),
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: "ch.xhtml",
+            ready: true,
+            reported: true,
+            pinned: view.pinned,
+            missed: view.pin_missed,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert!(!still_missed.pin_write);
+        assert!(!still_missed.record);
+
+        let mut swipe = Swipe::default();
+        let first = issue(&mut swipe);
+        swipe.note_answer(first, "glide");
+        assert!(deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(first),
+            2,
+            10,
+            Some(100),
+            None,
+            None
+        ));
+        let stored = saved_of(&view);
+        assert!(stored.record);
+        assert_eq!((stored.saved_page, stored.saved_offset), (2, 100));
+        assert!(stored.reveal_jump.is_none());
+        swipe.cancel_release();
+        assert_eq!((view.page, view.sentence), (Some(2), Some(100)));
+
+        let second = issue(&mut swipe);
+        swipe.note_answer(second, "glide");
+        assert!(swipe.cancel_release());
+        assert!(!deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(second),
+            3,
+            10,
+            Some(200),
+            None,
+            None
+        ));
+        assert_eq!((view.page, view.sentence), (Some(2), Some(100)));
+
+        let mut ordered = Swipe::default();
+        let mut pages = PageView::default();
+        let one = issue(&mut ordered);
+        ordered.note_answer(one, "glide");
+        let two = issue(&mut ordered);
+        ordered.note_answer(two, "queued");
+        assert!(deliver_page(
+            &mut ordered,
+            &mut pages,
+            Some(one),
+            2,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert!(deliver_page(
+            &mut ordered,
+            &mut pages,
+            Some(two),
+            3,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert_eq!(pages.page, Some(3));
+
+        let mut late_old = Swipe::default();
+        let mut kept = PageView::default();
+        let older = issue(&mut late_old);
+        late_old.note_answer(older, "glide");
+        let newer = issue(&mut late_old);
+        late_old.note_answer(newer, "queued");
+        assert!(deliver_page(
+            &mut late_old,
+            &mut kept,
+            Some(newer),
+            3,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert!(!deliver_page(
+            &mut late_old,
+            &mut kept,
+            Some(older),
+            2,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert_eq!(kept.page, Some(3));
+
+        let mut retired = Swipe::default();
+        let mut revealed = PageView {
+            page: Some(1),
+            pages: Some(10),
+            sentence: Some(800),
+            pin_missed: false,
+            pinned: Some(800),
+        };
+        let stale = issue(&mut retired);
+        retired.note_answer(stale, "glide");
+        assert!(retired.cancel_release());
+        assert!(!deliver_page(
+            &mut retired,
+            &mut revealed,
+            Some(stale),
+            4,
+            10,
+            Some(50),
+            None,
+            None
+        ));
+        assert_eq!((revealed.page, revealed.sentence), (Some(1), Some(800)));
     }
 }
