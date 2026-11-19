@@ -370,6 +370,151 @@ pub fn chapter_return(
     ChapterStep { go, back }
 }
 
+/// The place that belongs to the href on screen. A jump aimed at that href
+/// wins. A saved offset from a different href does not.
+fn shown_place(
+    shown_href: &str,
+    shown_page: u32,
+    saved_href: &str,
+    saved_page: u32,
+    saved_offset: u32,
+    jump_href: &str,
+    jump_offset: Option<u32>,
+    awaiting: Option<u32>,
+) -> ReadingPlace {
+    if jump_href == shown_href {
+        if let Some(offset) = jump_offset {
+            return ReadingPlace {
+                href: shown_href.to_string(),
+                page: 1,
+                offset,
+            };
+        }
+    }
+    if saved_href == shown_href {
+        return ReadingPlace {
+            href: shown_href.to_string(),
+            page: saved_page.max(1),
+            offset: awaiting.unwrap_or(saved_offset),
+        };
+    }
+    ReadingPlace {
+        href: shown_href.to_string(),
+        page: shown_page.max(1),
+        offset: 0,
+    }
+}
+
+pub struct NavIn<'a> {
+    pub shown_href: &'a str,
+    pub shown_page: u32,
+    pub saved_href: &'a str,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub jump_href: &'a str,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub back: Option<ReadingPlace>,
+    pub marks: &'a [ChapterMark],
+    pub spine: &'a [String],
+    pub pick: isize,
+}
+
+pub struct NavOut {
+    pub go: ChapterMove,
+    pub back: Option<ReadingPlace>,
+    pub pending: u32,
+    pub jump_href: String,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub saved_href: String,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub record: bool,
+}
+
+/// `pickChapter` runs this before reveal or `show_chapter`. A move replaces
+/// the open resume. The saved row becomes the place that move requested.
+pub fn navigate(nav: NavIn<'_>) -> NavOut {
+    let here = shown_place(
+        nav.shown_href,
+        nav.shown_page,
+        nav.saved_href,
+        nav.saved_page,
+        nav.saved_offset,
+        nav.jump_href,
+        nav.jump_offset,
+        nav.awaiting,
+    );
+    let step = if nav.pick < 0 {
+        chapter_return(&here, nav.back, nav.spine)
+    } else {
+        chapter_jump(&here, nav.marks, nav.pick as usize, nav.spine, nav.back)
+    };
+    let pending = if matches!(step.go, ChapterMove::Stay) {
+        nav.pending
+    } else {
+        0
+    };
+    let saved_href = nav.saved_href.to_string();
+    let mut saved_page = nav.saved_page;
+    let mut saved_offset = nav.saved_offset;
+    let mut jump_href = nav.jump_href.to_string();
+    let mut jump_offset = nav.jump_offset;
+    let mut awaiting = nav.awaiting;
+    let mut record = false;
+    match &step.go {
+        ChapterMove::Stay => {}
+        ChapterMove::Reveal { offset } => {
+            let offset = *offset;
+            jump_href.clear();
+            jump_offset = None;
+            awaiting = Some(offset);
+            if saved_href != nav.shown_href || saved_offset != offset {
+                saved_page = if saved_href == nav.shown_href {
+                    saved_page.max(1)
+                } else {
+                    1
+                };
+                saved_offset = offset;
+                record = true;
+            }
+        }
+        ChapterMove::Chapter { index, offset } => {
+            let offset = *offset;
+            if let Some(href) = nav.spine.get(*index) {
+                jump_href = href.clone();
+                jump_offset = Some(offset);
+                awaiting = None;
+                if saved_href != *href || saved_page != 1 || saved_offset != offset {
+                    saved_page = 1;
+                    saved_offset = offset;
+                    record = true;
+                }
+            }
+        }
+        ChapterMove::Page { .. } => {}
+    }
+    let saved_href = match &step.go {
+        ChapterMove::Chapter { index, .. } => nav.spine.get(*index).cloned().unwrap_or(saved_href),
+        ChapterMove::Reveal { .. } => nav.shown_href.to_string(),
+        _ => saved_href,
+    };
+    NavOut {
+        go: step.go,
+        back: step.back,
+        pending,
+        jump_href,
+        jump_offset,
+        awaiting,
+        saved_href,
+        saved_page,
+        saved_offset,
+        record,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenedPlace {
     pub index: usize,
@@ -472,6 +617,9 @@ pub fn poll_chapter(poll: ChapterPoll<'_>) -> PolledChapter {
     let mut jump_offset = poll.jump_offset;
     let mut awaiting = poll.awaiting;
     let mut pending = poll.pending;
+    if jump_offset.is_some() && poll.href == poll.jump_href {
+        pending = 0;
+    }
     let mut reveal_jump = None;
     let mut reveal_pending = None;
     if let Some(offset) = jump_offset {
