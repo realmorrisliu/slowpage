@@ -2564,7 +2564,7 @@ mod tests {
             &mut stdout,
             &format!("now {}", crate::visit::hold_eval(10)),
         );
-        assert_eq!(missed, "null", "{missed_posts:?}");
+        assert!(missed.is_empty(), "{missed:?} {missed_posts:?}");
         assert!(
             missed_posts.iter().all(|post| post.get("hold").is_none()),
             "{missed_posts:?}"
