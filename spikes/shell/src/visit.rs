@@ -430,6 +430,130 @@ pub fn chapter_target(
     (1, aimed)
 }
 
+/// One poll of an open chapter. `poll_web` applies this and then reveals or records.
+pub struct ChapterPoll<'a> {
+    pub saved_href: &'a str,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub jump_href: &'a str,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub hold: Option<u32>,
+    pub shown: u32,
+    pub href: &'a str,
+    pub ready: bool,
+    pub reported: bool,
+    pub pinned: Option<u32>,
+    pub missed: bool,
+    pub sentence: u32,
+    pub still_turning: bool,
+}
+
+/// Fields after `poll_chapter`. `pin_write` is a pin that replaced the stored place.
+pub struct PolledChapter {
+    pub saved_href: String,
+    pub saved_page: u32,
+    pub saved_offset: u32,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub hold: Option<u32>,
+    pub reveal_jump: Option<u32>,
+    pub reveal_pending: Option<u32>,
+    pub pin_write: bool,
+    pub record: bool,
+}
+
+/// The place stored for a new href is the jump this poll started with.
+/// Handing that jump to reveal clears the field and does not clear the place.
+pub fn poll_chapter(poll: ChapterPoll<'_>) -> PolledChapter {
+    let aim = poll.jump_offset;
+    let mut jump_offset = poll.jump_offset;
+    let mut awaiting = poll.awaiting;
+    let mut pending = poll.pending;
+    let mut reveal_jump = None;
+    let mut reveal_pending = None;
+    if let Some(offset) = jump_offset {
+        if poll.ready && poll.href == poll.jump_href {
+            jump_offset = None;
+            awaiting = Some(offset);
+            reveal_jump = Some(offset);
+        }
+    }
+    if pending > 0 && poll.reported {
+        let offset = pending;
+        pending = 0;
+        awaiting = Some(offset);
+        reveal_pending = Some(offset);
+    }
+    let wanted = awaiting;
+    let step = step_restore(
+        pending > 0 || jump_offset.is_some(),
+        awaiting,
+        poll.hold,
+        poll.shown,
+        poll.pinned,
+        poll.missed,
+    );
+    awaiting = step.want;
+    let hold = step.hold;
+    let mut saved_page = poll.saved_page;
+    let mut saved_offset = poll.saved_offset;
+    let mut saved_href = poll.saved_href.to_string();
+    let mut record = false;
+    let pin_write = step.write && !poll.still_turning;
+    if pin_write {
+        let (page, offset) = place_after_pin(
+            poll.saved_page,
+            poll.saved_offset,
+            poll.shown,
+            poll.sentence,
+            wanted,
+            poll.pinned,
+        );
+        if place_changed(
+            poll.saved_page,
+            poll.saved_offset,
+            poll.saved_href,
+            page,
+            offset,
+            poll.href,
+        ) {
+            saved_page = page;
+            saved_offset = offset;
+            saved_href = poll.href.to_string();
+            record = true;
+        }
+    } else if changed_chapter(poll.saved_href, poll.href) {
+        let (page, offset) = chapter_target(
+            poll.saved_href,
+            poll.href,
+            poll.saved_page,
+            poll.saved_offset,
+            poll.jump_href,
+            aim,
+        );
+        saved_page = page;
+        saved_offset = offset;
+        saved_href = poll.href.to_string();
+        record = true;
+    }
+    PolledChapter {
+        saved_href,
+        saved_page,
+        saved_offset,
+        jump_offset,
+        awaiting,
+        pending,
+        hold,
+        reveal_jump,
+        reveal_pending,
+        pin_write,
+        record,
+    }
+}
+
 pub fn place_changed(
     stored_page: u32,
     stored_offset: u32,
@@ -924,20 +1048,32 @@ mod tests {
             panic!("returning across chapters is a chapter move");
         };
         assert_eq!(back_offset, 800);
-        let (back_page, kept) = chapter_target(
-            next,
-            &spine[back_index],
-            1,
-            0,
-            &spine[back_index],
-            Some(back_offset),
-        );
-        assert_eq!((back_page, kept), (1, 800));
+        let ready_first = poll_chapter(ChapterPoll {
+            saved_href: next,
+            saved_page: 1,
+            saved_offset: 0,
+            jump_href: &spine[back_index],
+            jump_offset: Some(back_offset),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: &spine[back_index],
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!(ready_first.reveal_jump, Some(800));
+        assert_eq!(ready_first.jump_offset, None);
+        assert_eq!(ready_first.saved_offset, 800);
         let again = chapter_jump(
             &ReadingPlace {
-                href: spine[back_index].clone(),
-                page: back_page,
-                offset: kept,
+                href: ready_first.saved_href,
+                page: ready_first.saved_page,
+                offset: ready_first.saved_offset,
             },
             &marks,
             1,

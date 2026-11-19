@@ -656,16 +656,35 @@ mod tests {
             panic!("selecting another chapter moves");
         };
         assert_eq!(offset, 0);
-        let (page, stored) = crate::visit::chapter_target(
-            chapter,
-            &spine[index],
-            4,
-            800,
-            &spine[index],
-            Some(offset),
-        );
-        assert_eq!((page, stored), (1, 0));
-        record_progress(&file, path, page, Some(10), stored, next).unwrap();
+        let chosen = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: chapter,
+            saved_page: 4,
+            saved_offset: 800,
+            jump_href: &spine[index],
+            jump_offset: Some(offset),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: &spine[index],
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!((chosen.saved_page, chosen.saved_offset), (1, 0));
+        assert!(chosen.record);
+        record_progress(
+            &file,
+            path,
+            chosen.saved_page,
+            Some(10),
+            chosen.saved_offset,
+            &chosen.saved_href,
+        )
+        .unwrap();
         assert_eq!(resume_href(&file, path), next);
         assert_eq!(resume_page(&file, path), 1);
         assert_eq!(resume_offset(&file, path), 0);
@@ -687,23 +706,106 @@ mod tests {
             panic!("returning across chapters moves");
         };
         assert_eq!(back_offset, 800);
-        let (page, stored) = crate::visit::chapter_target(
-            next,
-            &spine[back_index],
-            1,
-            0,
-            &spine[back_index],
-            Some(back_offset),
-        );
-        assert_eq!((page, stored), (1, 800));
-        record_progress(&file, path, page, Some(10), stored, chapter).unwrap();
+        let ready_first = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: next,
+            saved_page: 1,
+            saved_offset: 0,
+            jump_href: &spine[back_index],
+            jump_offset: Some(back_offset),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: &spine[back_index],
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!(ready_first.reveal_jump, Some(800));
+        assert_eq!(ready_first.jump_offset, None);
+        assert!(!ready_first.pin_write);
+        assert_eq!(ready_first.saved_offset, 800);
+        assert!(ready_first.record);
+        record_progress(
+            &file,
+            path,
+            ready_first.saved_page,
+            Some(10),
+            ready_first.saved_offset,
+            &ready_first.saved_href,
+        )
+        .unwrap();
         assert_eq!(resume_href(&file, path), chapter);
         assert_eq!(resume_page(&file, path), 1);
         assert_eq!(resume_offset(&file, path), 800);
+        let early = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: next,
+            saved_page: 1,
+            saved_offset: 0,
+            jump_href: &spine[back_index],
+            jump_offset: Some(back_offset),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: &spine[back_index],
+            ready: false,
+            reported: false,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!(early.reveal_jump, None);
+        assert_eq!(early.jump_offset, Some(800));
+        assert_eq!(early.saved_offset, 800);
+        let before_pin = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: &ready_first.saved_href,
+            saved_page: ready_first.saved_page,
+            saved_offset: ready_first.saved_offset,
+            jump_href: chapter,
+            jump_offset: ready_first.jump_offset,
+            awaiting: ready_first.awaiting,
+            pending: ready_first.pending,
+            hold: ready_first.hold,
+            shown: 1,
+            href: chapter,
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert!(!before_pin.record);
+        assert_eq!(before_pin.saved_offset, 800);
+        let stale = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: chapter,
+            saved_page: 4,
+            saved_offset: 800,
+            jump_href: chapter,
+            jump_offset: Some(800),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: next,
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!(stale.reveal_jump, None);
+        assert_eq!(stale.saved_offset, 0);
         let here = crate::visit::ReadingPlace {
-            href: chapter.to_string(),
-            page,
-            offset: stored,
+            href: ready_first.saved_href.clone(),
+            page: ready_first.saved_page,
+            offset: ready_first.saved_offset,
         };
         let again = crate::visit::chapter_jump(&here, &marks, 1, &spine, None);
         assert_eq!(again.back.as_ref().map(|place| place.offset), Some(800));
@@ -715,33 +817,111 @@ mod tests {
             panic!("leaving before the pin moves");
         };
         assert_eq!(next_offset, 0);
-        let (page, stored) = crate::visit::chapter_target(
-            &here.href,
-            &spine[next_index],
-            here.page,
-            here.offset,
-            &spine[next_index],
-            Some(next_offset),
-        );
-        assert_eq!((page, stored), (1, 0));
-        record_progress(&file, path, page, Some(10), stored, empty).unwrap();
+        let left = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: &here.href,
+            saved_page: here.page,
+            saved_offset: here.offset,
+            jump_href: &spine[next_index],
+            jump_offset: Some(next_offset),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: &spine[next_index],
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!((left.saved_page, left.saved_offset), (1, 0));
+        record_progress(
+            &file,
+            path,
+            left.saved_page,
+            Some(10),
+            left.saved_offset,
+            &left.saved_href,
+        )
+        .unwrap();
         assert_eq!(resume_href(&file, path), empty);
         assert_eq!(resume_page(&file, path), 1);
         assert_eq!(resume_offset(&file, path), 0);
 
         record_progress(&file, path, 4, Some(10), 800, chapter).unwrap();
-        let missed = crate::visit::step_restore(false, Some(0), None, 1, Some(0), true);
-        assert!(!missed.write);
-        let (page, stored) = crate::visit::chapter_target(chapter, empty, 4, 800, empty, Some(0));
-        assert_eq!((page, stored), (1, 0));
-        record_progress(&file, path, page, Some(10), stored, empty).unwrap();
+        let missed = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: chapter,
+            saved_page: 4,
+            saved_offset: 800,
+            jump_href: empty,
+            jump_offset: Some(0),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: empty,
+            ready: true,
+            reported: true,
+            pinned: Some(0),
+            missed: true,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert!(!missed.pin_write);
+        assert_eq!((missed.saved_page, missed.saved_offset), (1, 0));
+        record_progress(
+            &file,
+            path,
+            missed.saved_page,
+            Some(10),
+            missed.saved_offset,
+            &missed.saved_href,
+        )
+        .unwrap();
         assert_eq!(resume_href(&file, path), empty);
         assert_eq!(resume_page(&file, path), 1);
         assert_eq!(resume_offset(&file, path), 0);
-        assert_eq!(
-            crate::visit::chapter_target(chapter, chapter, 4, 800, chapter, Some(800)),
-            (4, 800)
-        );
+        let same = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: chapter,
+            saved_page: 4,
+            saved_offset: 800,
+            jump_href: "",
+            jump_offset: None,
+            awaiting: Some(800),
+            pending: 0,
+            hold: None,
+            shown: 4,
+            href: chapter,
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 800,
+            still_turning: false,
+        });
+        assert!(!same.pin_write);
+        assert!(!same.record);
+        assert_eq!((same.saved_page, same.saved_offset), (4, 800));
+        let legacy = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: "",
+            saved_page: 4,
+            saved_offset: 800,
+            jump_href: chapter,
+            jump_offset: Some(0),
+            awaiting: None,
+            pending: 0,
+            hold: None,
+            shown: 4,
+            href: chapter,
+            ready: true,
+            reported: true,
+            pinned: None,
+            missed: false,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert_eq!((legacy.saved_page, legacy.saved_offset), (4, 800));
         let back = crate::visit::opened_place(
             &spine,
             &resume_href(&file, path),

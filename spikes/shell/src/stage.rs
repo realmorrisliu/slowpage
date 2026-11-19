@@ -1091,93 +1091,58 @@ impl State {
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
             let shown = self.epub_page as u32 + 1;
             let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-            let reported = web.inbox.borrow().pages.is_some();
-            if let Some(offset) = self.jump_offset {
-                let ready = {
-                    let inbox = web.inbox.borrow();
-                    inbox.nav_done && inbox.pages.is_some()
-                };
-                if ready && web.href() == self.jump_href {
-                    self.jump_offset = None;
-                    self.awaiting_pin = Some(offset);
-                    web.reveal(offset);
-                }
-            }
-            let sentence = web.inbox.borrow().sentence.unwrap_or(0);
-            let pinned = web.inbox.borrow().pinned;
-            let missed = web.inbox.borrow().pin_missed;
-            if self.pending_sentence > 0 && reported {
-                let offset = self.pending_sentence;
-                self.pending_sentence = 0;
-                self.awaiting_pin = Some(offset);
-                web.reveal(offset);
-            }
-            let wanted = self.awaiting_pin;
-            let step = crate::visit::step_restore(
-                self.pending_sentence > 0 || self.jump_offset.is_some(),
-                self.awaiting_pin,
-                self.hold_shown,
+            let (ready, reported, sentence, pinned, missed) = {
+                let inbox = web.inbox.borrow();
+                (
+                    inbox.nav_done && inbox.pages.is_some(),
+                    inbox.pages.is_some(),
+                    inbox.sentence.unwrap_or(0),
+                    inbox.pinned,
+                    inbox.pin_missed,
+                )
+            };
+            let href = web.href();
+            let polled = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+                saved_href: &self.saved_href,
+                saved_page: self.saved_page,
+                saved_offset: self.saved_sentence,
+                jump_href: &self.jump_href,
+                jump_offset: self.jump_offset,
+                awaiting: self.awaiting_pin,
+                pending: self.pending_sentence,
+                hold: self.hold_shown,
                 shown,
+                href: &href,
+                ready,
+                reported,
                 pinned,
                 missed,
-            );
-            self.awaiting_pin = step.want;
-            self.hold_shown = step.hold;
-            if step.write && !still_turning {
-                let href = web.href();
-                let (page, offset) = crate::visit::place_after_pin(
+                sentence,
+                still_turning,
+            });
+            self.jump_offset = polled.jump_offset;
+            self.awaiting_pin = polled.awaiting;
+            self.pending_sentence = polled.pending;
+            self.hold_shown = polled.hold;
+            if let Some(offset) = polled.reveal_jump {
+                web.reveal(offset);
+            }
+            if let Some(offset) = polled.reveal_pending {
+                web.reveal(offset);
+            }
+            if polled.record {
+                let path = self.book_path.clone();
+                self.saved_page = polled.saved_page;
+                self.saved_sentence = polled.saved_offset;
+                self.saved_href = polled.saved_href;
+                let _ = crate::settings::record_progress(
+                    &crate::settings::path(),
+                    &path,
                     self.saved_page,
-                    self.saved_sentence,
-                    shown,
-                    sentence,
-                    wanted,
-                    pinned,
-                );
-                if crate::visit::place_changed(
-                    self.saved_page,
+                    self.page_total,
                     self.saved_sentence,
                     &self.saved_href,
-                    page,
-                    offset,
-                    &href,
-                ) {
-                    let path = self.book_path.clone();
-                    self.saved_page = page;
-                    self.saved_sentence = offset;
-                    self.saved_href = href.clone();
-                    let _ = crate::settings::record_progress(
-                        &crate::settings::path(),
-                        &path,
-                        page,
-                        self.page_total,
-                        offset,
-                        &href,
-                    );
-                }
-            } else {
-                let href = web.href();
-                if crate::visit::changed_chapter(&self.saved_href, &href) {
-                    let (page, offset) = crate::visit::chapter_target(
-                        &self.saved_href,
-                        &href,
-                        self.saved_page,
-                        self.saved_sentence,
-                        &self.jump_href,
-                        self.jump_offset,
-                    );
-                    let path = self.book_path.clone();
-                    self.saved_page = page;
-                    self.saved_sentence = offset;
-                    self.saved_href = href.clone();
-                    let _ = crate::settings::record_progress(
-                        &crate::settings::path(),
-                        &path,
-                        page,
-                        self.page_total,
-                        offset,
-                        &href,
-                    );
-                }
+                );
             }
         }
         if changed || self.chrome_moving() {
