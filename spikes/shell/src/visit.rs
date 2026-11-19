@@ -1706,7 +1706,11 @@ pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
         PlaceStep::Cancel { reflow: true } => {
             if tick.settled && tick.reflowable {
                 if let Some(offset) = reader.measured {
-                    reader.anchoring = false;
+                    // The page marks kind "anchor" only after a fresh hold.
+                    // A later width reveals directly, so this read has to
+                    // accept that pin and save the new column.
+                    reader.anchoring = true;
+                    reader.hold_layout = false;
                     return plan(
                         Draw::Move {
                             reveal: Some(offset),
@@ -2876,11 +2880,13 @@ mod tests {
         assert_eq!(known.draw, Draw::Move { reveal: Some(42) });
         assert!(!known.cancel);
         assert!(!known.pump);
+        assert!(reader.anchoring);
         assert_eq!(reader.walk, Some(10));
         reader.measured = Some(0);
         let zero = layout_frame(&mut reader, tick);
         assert_eq!(zero.draw, Draw::Move { reveal: Some(0) });
         assert!(!zero.pump);
+        assert!(reader.anchoring);
         assert_eq!(reader.walk, Some(10));
     }
 

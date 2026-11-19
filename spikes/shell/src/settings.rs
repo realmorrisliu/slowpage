@@ -2903,6 +2903,7 @@ mod tests {
         let narrower = crate::visit::layout_frame(&mut reader, tick);
         assert_eq!(narrower.draw, crate::visit::Draw::Move { reveal: Some(42) });
         assert!(!narrower.pump);
+        assert!(reader.anchoring);
         let (second_wait, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
