@@ -179,6 +179,17 @@ pub fn page_key_delta(shell: bool, surface: Surface, forward: bool) -> i32 {
 /// Outer fraction of the page that a click turns. The middle stays.
 pub const PAGE_EDGE: f64 = 0.25;
 
+/// A move of this many points is a drag, not a click. The page script uses it.
+pub const CLICK_SLOP: f64 = 3.0;
+
+pub fn click_is_drag(dx: f64, dy: f64) -> bool {
+    dx.abs() >= CLICK_SLOP || dy.abs() >= CLICK_SLOP
+}
+
+pub fn point_in_box(x: f64, y: f64, left: f64, top: f64, width: f64, height: f64) -> bool {
+    width > 0.0 && height > 0.0 && x >= left && y >= top && x <= left + width && y <= top + height
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageEdge {
     Back,
@@ -468,5 +479,18 @@ mod tests {
             page_edge(150.0, 250.0, left, top, 0.0, height),
             PageEdge::None
         );
+        assert!(!click_is_drag(2.9, 2.9));
+        assert!(click_is_drag(3.0, 0.0));
+        assert!(click_is_drag(0.0, 3.0));
+        let (fx, fy, fw, fh) = (0.0, 480.0, 500.0, 40.0);
+        assert!(point_in_box(10.0, 500.0, fx, fy, fw, fh));
+        assert!(point_in_box(450.0, 500.0, fx, fy, fw, fh));
+        assert!(point_in_box(500.0, 520.0, fx, fy, fw, fh));
+        assert!(!point_in_box(10.0, 479.0, fx, fy, fw, fh));
+        assert_eq!(
+            page_edge(450.0, 250.0, left, top, width, height),
+            PageEdge::Forward
+        );
+        assert!(click_is_drag(3.0, 0.0));
     }
 }

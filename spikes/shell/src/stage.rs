@@ -215,7 +215,7 @@ define_class!(
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
-                let click = (point.0 - start.0).abs() < 3.0 && (point.1 - start.1).abs() < 3.0;
+                let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
                 let edge = if click && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
                 {
                     state.page_edge_at(point.0, point.1, bounds.size.width, bounds.size.height)

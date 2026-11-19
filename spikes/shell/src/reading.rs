@@ -404,6 +404,7 @@ pub fn page_script(lang: &str) -> String {
         .replace("__PAGE__", &page)
         .replace("__MS__", &SLIDE_MS.to_string())
         .replace("__EDGE__", &crate::visit::PAGE_EDGE.to_string())
+        .replace("__SLOP__", &crate::visit::CLICK_SLOP.to_string())
         .replace("__PAPER__", PAPER)
         .replace("__TOP__", &face.margin_top.to_string())
         .replace("__BOTTOM__", &face.margin_bottom.to_string())
@@ -891,9 +892,29 @@ const SCRIPT: &str = r#"
     seek((pages - 1) * w);
     post({ kind: "seek" });
   };
+  let edgeX = 0;
+  let edgeY = 0;
+  let edgeDrag = false;
+  window.addEventListener("mousedown", function (event) {
+    if (event.button !== 0) return;
+    edgeX = event.clientX;
+    edgeY = event.clientY;
+    edgeDrag = false;
+  }, true);
+  window.addEventListener("mousemove", function (event) {
+    if (event.buttons !== 1) return;
+    if (Math.abs(event.clientX - edgeX) >= __SLOP__ || Math.abs(event.clientY - edgeY) >= __SLOP__) edgeDrag = true;
+  }, true);
   window.addEventListener("click", function (event) {
     if (event.button !== 0) return;
-    if (event.target && event.target.closest && event.target.closest('#spike-footer')) return;
+    const dragged = edgeDrag;
+    edgeDrag = false;
+    if (dragged) return;
+    const bar = document.getElementById('spike-footer');
+    if (bar) {
+      const box = bar.getBoundingClientRect();
+      if (event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom) return;
+    }
     const w = window.innerWidth;
     if (!(w > 0)) return;
     const band = w * __EDGE__;
