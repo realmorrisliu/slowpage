@@ -3688,6 +3688,129 @@ mod tests {
         let still = crate::visit::layout_frame(&mut pictures, picture_tick);
         assert_eq!(still.draw, crate::visit::Draw::Align, "{still:?}");
         assert_eq!(pictures.figure_misses, 1);
+        let mut recovered = pictures.clone();
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.__images=[{tagName:\"IMG\",id:\"pic\",closest:function(){return null},getBoundingClientRect:function(){var left=3610-(document.body.scrollLeft||0);return{left:left,right:left+80,top:40,bottom:200,width:80,height:160}}}];window.innerWidth=400",
+        );
+        let (found_wait, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeAlign&&window.spikeAlign(\"img#pic\")",
+        );
+        assert!(found_wait.is_empty(), "{found_wait:?}");
+        let (found_posts, _, _) = read_frame(&mut stdin, &mut stdout, "void 0");
+        let found_post = found_posts
+            .iter()
+            .find(|post| post["figure"] == "img#pic" && post.get("missed").is_none())
+            .expect("found figure");
+        assert!(found_post.get("probe").is_none(), "{found_post:?}");
+        let found_saved = found_post.clone();
+        let mut found_mail = None;
+        let mut found_lost = false;
+        let mut wrong = found_saved.clone();
+        wrong["probe"] = serde_json::json!(recovered.probe.saturating_add(9));
+        crate::visit::keep_message_figure(
+            &mut found_mail,
+            &mut found_lost,
+            &wrong,
+            recovered.probe,
+            recovered.figure.as_deref(),
+        );
+        assert!(found_mail.is_none(), "{wrong:?}");
+        assert_eq!(recovered.figure_misses, 1);
+        let found_apply = route_figure(
+            &mut recovered,
+            &mut found_mail,
+            &mut found_lost,
+            &found_saved,
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!found_apply.paint);
+        assert!(!found_apply.wrote);
+        assert_eq!(found_mail.as_deref(), Some("img#pic"));
+        assert!(!found_lost);
+        let (found_saw, found_lost_flag) = crate::visit::figure_flags(&found_mail, found_lost);
+        let mut found_tick = picture_tick;
+        assert!(!found_tick.awaiting);
+        found_tick.figure = found_saw;
+        found_tick.figure_lost = found_lost_flag;
+        found_tick.fitted_same = true;
+        let found_draw = crate::visit::layout_frame(&mut recovered, found_tick);
+        assert_eq!(found_draw.draw, crate::visit::Draw::Align, "{found_draw:?}");
+        assert_eq!(recovered.figure_misses, 0);
+        assert_eq!(recovered.figure.as_deref(), Some("img#pic"));
+        assert!(crate::visit::spent_figure_find(found_saw, found_draw.draw));
+        crate::visit::drop_figure_mail(&mut found_mail, &mut found_lost);
+        found_tick.figure = false;
+        found_tick.figure_lost = false;
+        let found_again = crate::visit::layout_frame(&mut recovered, found_tick);
+        assert_eq!(
+            found_again.draw,
+            crate::visit::Draw::Align,
+            "{found_again:?}"
+        );
+        assert_eq!(recovered.figure_misses, 0);
+        let one_apply = route_figure(
+            &mut recovered,
+            &mut found_mail,
+            &mut found_lost,
+            first_post,
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!one_apply.wrote);
+        assert!(found_lost);
+        let (one_saw, one_lost) = crate::visit::figure_flags(&found_mail, found_lost);
+        found_tick.figure = one_saw;
+        found_tick.figure_lost = one_lost;
+        found_tick.fitted_same = false;
+        let one = crate::visit::layout_frame(&mut recovered, found_tick);
+        assert_eq!(one.draw, crate::visit::Draw::Align, "{one:?}");
+        assert_eq!(recovered.figure_misses, 1);
+        assert_eq!(recovered.figure.as_deref(), Some("img#pic"));
+        assert!(crate::visit::spent_figure_loss(one_lost, one.draw));
+        crate::visit::drop_figure_mail(&mut found_mail, &mut found_lost);
+        found_tick.figure = false;
+        found_tick.figure_lost = false;
+        let one_again = crate::visit::layout_frame(&mut recovered, found_tick);
+        assert_eq!(one_again.draw, crate::visit::Draw::Align, "{one_again:?}");
+        assert_eq!(recovered.figure_misses, 1);
+        let last_apply = route_figure(
+            &mut recovered,
+            &mut found_mail,
+            &mut found_lost,
+            first_post,
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!last_apply.wrote);
+        let (last_saw, last_lost) = crate::visit::figure_flags(&found_mail, found_lost);
+        found_tick.figure = last_saw;
+        found_tick.figure_lost = last_lost;
+        let last = crate::visit::layout_frame(&mut recovered, found_tick);
+        assert_eq!(
+            last.draw,
+            crate::visit::Draw::Move { reveal: None },
+            "{last:?}"
+        );
+        assert!(recovered.figure.is_none());
+        assert_eq!(recovered.figure_misses, 2);
+        assert_eq!(recovered.sample_misses, 2);
+        crate::visit::drop_figure_mail(&mut found_mail, &mut found_lost);
+        let ghost = route_figure(
+            &mut recovered,
+            &mut found_mail,
+            &mut found_lost,
+            &found_saved,
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!ghost.wrote);
+        assert!(found_mail.is_none());
+        assert!(recovered.figure.is_none(), "{recovered:?}");
         let (second_wait, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -3787,6 +3910,16 @@ mod tests {
             &mut turned_mail,
             &mut turned_lost,
             turn_post,
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(turned.figure.is_none(), "{turned:?}");
+        assert!(turned_mail.is_none());
+        let _ = route_figure(
+            &mut turned,
+            &mut turned_mail,
+            &mut turned_lost,
+            &found_saved,
             "ch.xhtml",
             &mut store,
         );

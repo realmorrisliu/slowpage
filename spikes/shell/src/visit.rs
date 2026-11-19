@@ -1277,6 +1277,11 @@ pub fn spent_figure_loss(lost: bool, draw: Draw) -> bool {
     lost && !matches!(draw, Draw::Rest)
 }
 
+/// The find was applied. A later frame should not read it again.
+pub fn spent_figure_find(found: bool, draw: Draw) -> bool {
+    found && !matches!(draw, Draw::Rest)
+}
+
 fn clear_resume(reader: &mut Reader) {
     reader.jump_href.clear();
     reader.jump_offset = None;
@@ -1819,9 +1824,8 @@ fn reveal_char(reader: &mut Reader, offset: u32) -> DrawPlan {
 /// layout is still the one on screen, and only twice. After that the box
 /// moves and the page number is not sampled again.
 pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
-    // The first align already ended the wait and emptied the mailbox.
-    // The miss arrives on the next poll, so this count cannot sit inside
-    // the waiting branch.
+    // The first align has cleared the wait. A later miss and a later find
+    // both arrive with awaiting false.
     if tick.figure_lost {
         reader.figure_misses = reader.figure_misses.saturating_add(1);
         reader.anchoring = false;
@@ -1833,14 +1837,14 @@ pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
         }
         return plan(Draw::Align, false, true);
     }
+    if tick.figure && reader.figure.is_some() {
+        reader.sample_misses = 0;
+        reader.figure_misses = 0;
+        reader.anchoring = false;
+        reader.hold_layout = true;
+        return plan(Draw::Align, false, false);
+    }
     if tick.awaiting {
-        if tick.figure && reader.figure.is_some() {
-            reader.sample_misses = 0;
-            reader.figure_misses = 0;
-            reader.anchoring = false;
-            reader.hold_layout = true;
-            return plan(Draw::Align, false, false);
-        }
         let hold = current_hold(tick.hold, tick.hold_probe, reader.probe);
         let missed = tick.missed && hold.is_none();
         let timed_out = tick.timed_out && hold.is_none();

@@ -1286,7 +1286,8 @@ impl State {
         tick.figure_lost = lost_figure;
         let plan = crate::web::layout_frame(tick);
         let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
-        let spent = crate::visit::spent_figure_loss(lost_figure, plan.draw);
+        let spent = crate::visit::spent_figure_loss(lost_figure, plan.draw)
+            || crate::visit::spent_figure_find(saw_figure, plan.draw);
         if resolved || spent {
             if let Some(web) = &self.web {
                 let mut inbox = web.inbox.borrow_mut();
