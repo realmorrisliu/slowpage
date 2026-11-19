@@ -245,7 +245,6 @@ pub fn step_restore(
     }
 }
 
-/// Where the reader is. `href` is a spine item. An empty `href` is a PDF page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadingPlace {
     pub href: String,
@@ -253,8 +252,6 @@ pub struct ReadingPlace {
     pub offset: u32,
 }
 
-/// One row in the contents list. `offset` is a character in that spine item.
-/// `page` is used when `href` is empty.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChapterMark {
     pub title: String,
@@ -325,8 +322,6 @@ fn move_toward(here: &ReadingPlace, mark: &ChapterMark, spine: &[String]) -> Cha
     }
 }
 
-/// Choosing a contents row lands on that row. The place being read is kept
-/// for one return. A row that is not in the book does not move.
 pub fn chapter_jump(
     here: &ReadingPlace,
     marks: &[ChapterMark],
@@ -350,8 +345,6 @@ pub fn chapter_jump(
     }
 }
 
-/// Return goes to the place kept by the last jump, then clears it.
-/// A place that is not in the book stays kept.
 pub fn chapter_return(
     here: &ReadingPlace,
     back: Option<ReadingPlace>,
@@ -372,16 +365,11 @@ pub fn chapter_return(
     let go = move_toward(here, &mark, spine);
     let already = place.href == here.href && place.offset == here.offset
         || place.href.is_empty() && place.page == here.page;
-    let back = if matches!(go, ChapterMove::Stay) && !already {
-        Some(place)
-    } else {
-        None
-    };
+    let keep_missing = matches!(go, ChapterMove::Stay) && !already;
+    let back = if keep_missing { Some(place) } else { None };
     ChapterStep { go, back }
 }
 
-/// A finished reveal stores the offset it was asked for, including the start
-/// of a chapter. A pin from an earlier reveal does not replace the sentence.
 pub fn place_after_pin(
     stored_page: u32,
     stored_offset: u32,

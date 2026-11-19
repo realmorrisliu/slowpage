@@ -378,6 +378,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     if fullscreen {
         let shown = hover_target(window);
         if shell_on() {
+            // The shell covers the screen, so AppKit's fullscreen title bar
+            // never receives the hover. Put the buttons on the content view
+            // while the pointer is at the top, and hide them otherwise.
             place_fullscreen_lights(window, shown > 0.5);
             rt.lights.set(shown);
             clear_shell_chrome(window);
