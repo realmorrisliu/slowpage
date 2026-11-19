@@ -1257,8 +1257,9 @@ impl State {
                 ),
             }
         };
-        if figure.is_some() {
-            crate::web::note_figure(figure);
+        let has_figure = figure.is_some() && !figure_lost;
+        if let Some(id) = figure {
+            crate::web::note_figure(Some(id));
         }
         let timed_out = self.await_hold
             && self
@@ -1281,7 +1282,7 @@ impl State {
         tick.shown = shown;
         tick.pages = pages;
         tick.pages_known = pages_known;
-        tick.figure = figure.is_some() && !figure_lost;
+        tick.figure = has_figure;
         tick.figure_lost = figure_lost;
         let plan = crate::web::layout_frame(tick);
         let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
