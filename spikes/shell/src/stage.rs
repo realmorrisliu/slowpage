@@ -1230,8 +1230,10 @@ impl State {
             h.round() as i32,
             self.trim_id.clone(),
         );
-        let (hold, hold_probe, missed, shown, pages, pages_known) = {
+        let (hold, hold_probe, missed, shown, pages, pages_known, figure, figure_lost) = {
             let inbox = self.web.as_ref().unwrap().inbox.borrow();
+            let figure = inbox.figure.clone();
+            let figure_lost = inbox.figure_lost;
             match inbox.pages {
                 Some((page, count)) => (
                     inbox.hold,
@@ -1240,10 +1242,24 @@ impl State {
                     page as u32,
                     count as u32,
                     true,
+                    figure,
+                    figure_lost,
                 ),
-                None => (inbox.hold, inbox.hold_probe, inbox.hold_missed, 0, 0, false),
+                None => (
+                    inbox.hold,
+                    inbox.hold_probe,
+                    inbox.hold_missed,
+                    0,
+                    0,
+                    false,
+                    figure,
+                    figure_lost,
+                ),
             }
         };
+        if figure.is_some() {
+            crate::web::note_figure(figure);
+        }
         let timed_out = self.await_hold
             && self
                 .hold_since
@@ -1265,6 +1281,8 @@ impl State {
         tick.shown = shown;
         tick.pages = pages;
         tick.pages_known = pages_known;
+        tick.figure = figure.is_some() && !figure_lost;
+        tick.figure_lost = figure_lost;
         let plan = crate::web::layout_frame(tick);
         let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
         if resolved {
@@ -1273,6 +1291,8 @@ impl State {
                 inbox.hold = None;
                 inbox.hold_probe = 0;
                 inbox.hold_missed = false;
+                inbox.figure = None;
+                inbox.figure_lost = false;
             }
             self.await_hold = false;
             self.hold_since = None;
@@ -1284,6 +1304,20 @@ impl State {
         }
         match plan.draw {
             crate::visit::Draw::Rest => {}
+            crate::visit::Draw::Align => {
+                self.settled = true;
+                self.placed = Some(key);
+                self.placed_zoom = zoom;
+                self.placed_stage_w = self.stage_w;
+                self.placed_stage_h = self.stage_h;
+                if let Some(web) = &self.web {
+                    web.place_at(x, y, w, h, zoom);
+                    web.set_page_target(layout_target(w, zoom));
+                    if let Some(id) = crate::web::reader_figure() {
+                        web.align(&id);
+                    }
+                }
+            }
             crate::visit::Draw::Measure { page, probe } => {
                 self.await_hold = true;
                 self.hold_since = Some(Instant::now());
@@ -1293,6 +1327,8 @@ impl State {
                         inbox.hold = None;
                         inbox.hold_probe = 0;
                         inbox.hold_missed = false;
+                        inbox.figure = None;
+                        inbox.figure_lost = false;
                     }
                     web.measure(page, probe);
                 }

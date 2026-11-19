@@ -1007,15 +1007,22 @@ pub struct Reader {
     /// The caret character for this chapter. `None` until a caret hits,
     /// including a hit on character 0. A miss is not stored as 0.
     pub measured: Option<u32>,
+    /// An img or svg identity for this document. It is not a character and
+    /// it is not written.
+    pub figure: Option<String>,
+    /// Samples of the saved page that found no anchor. Two means a later
+    /// size does not measure that page.
+    pub sample_misses: u8,
+    /// Lookups of `figure` that did not find the element. Two drops it.
+    pub figure_misses: u8,
     /// A caret read is in flight. The poll does not chase and does not end
     /// the walk until the hit or the miss is applied.
     pub anchoring: bool,
     /// The sample this resize asked for. A post from an older sample is not
     /// the current character.
     pub probe: u64,
-    /// The saved page number is not a chase. A miss, a timeout, or a failed
-    /// anchor write sets it. The frame may still move, and a later size may
-    /// measure. It does not freeze the draw.
+    /// The saved page number is not a chase. The frame may still move.
+    /// A lost sample does not measure that page again.
     pub hold_layout: bool,
     /// The next restore answers a user post this reader refused or accepted.
     /// The page blocks an older restore until that answer arrives.
@@ -1043,6 +1050,9 @@ impl Default for Reader {
             reveal: None,
             walk: None,
             measured: None,
+            figure: None,
+            sample_misses: 0,
+            figure_misses: 0,
             anchoring: false,
             probe: 0,
             hold_layout: false,
@@ -1188,6 +1198,9 @@ fn clear_resume(reader: &mut Reader) {
     reader.reveal = None;
     reader.walk = None;
     reader.measured = None;
+    reader.figure = None;
+    reader.sample_misses = 0;
+    reader.figure_misses = 0;
     reader.anchoring = false;
     reader.hold_layout = false;
 }
@@ -1229,6 +1242,13 @@ pub fn handle_page(
             reveal: None,
             go: None,
         };
+    }
+    if value.get("figure").is_some()
+        && report.hold.is_none()
+        && report.pinned.is_none()
+        && report.kind != "turn"
+    {
+        return apply_idle(true);
     }
     if report.missed == Some(true)
         && report.token.is_none()
@@ -1447,6 +1467,9 @@ pub fn handle_chapter(
     if !matches!(nav.go, ChapterMove::Stay) {
         reader.walk = None;
         reader.measured = None;
+        reader.figure = None;
+        reader.sample_misses = 0;
+        reader.figure_misses = 0;
         reader.anchoring = false;
         reader.hold_layout = false;
     }
@@ -1490,6 +1513,9 @@ pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str, caret
     } else {
         None
     };
+    reader.figure = None;
+    reader.sample_misses = 0;
+    reader.figure_misses = 0;
     reader.anchoring = false;
     reader.hold_layout = false;
     reader.walk = if caret {
@@ -1515,6 +1541,9 @@ pub fn reset_restore_epoch(reader: &mut Reader) {
     reader.restore_load = reader.restore_load.saturating_add(1);
     reader.restore_ack = false;
     reader.measured = None;
+    reader.figure = None;
+    reader.sample_misses = 0;
+    reader.figure_misses = 0;
     reader.anchoring = false;
     reader.hold_layout = false;
     reader.probe = reader.probe.saturating_add(1);
@@ -1605,6 +1634,10 @@ pub struct FrameTick {
     pub shown: u32,
     pub pages: u32,
     pub pages_known: bool,
+    /// The page found an img or svg in the sampled column.
+    pub figure: bool,
+    /// The page could not find the element it had been asked to align.
+    pub figure_lost: bool,
 }
 
 impl FrameTick {
@@ -1630,6 +1663,8 @@ impl FrameTick {
             shown: 1,
             pages: 1,
             pages_known: true,
+            figure: false,
+            figure_lost: false,
         }
     }
 }
@@ -1645,6 +1680,8 @@ pub enum Draw {
     /// Move the view to the fitted box. `reveal` seeks that character after
     /// the move. None does not seek a page number.
     Move { reveal: Option<u32> },
+    /// Move the view, then scroll the stored element into its column.
+    Align,
 }
 
 /// `cancel` drops a gesture that has not posted. `pump` asks for another draw.
@@ -1670,33 +1707,79 @@ fn plan(draw: Draw, cancel: bool, pump: bool) -> DrawPlan {
     DrawPlan { draw, cancel, pump }
 }
 
-/// The draw `place_page` applies. A failed sample moves the box and does not
-/// seek the saved page. The next size can measure. A matching box does not
-/// cancel and does not schedule a chase.
+fn lost(reader: &Reader) -> bool {
+    reader.sample_misses >= 2
+}
+
+fn reveal_char(reader: &mut Reader, offset: u32) -> DrawPlan {
+    reader.anchoring = true;
+    reader.hold_layout = false;
+    reader.sample_misses = 0;
+    reader.figure = None;
+    reader.figure_misses = 0;
+    plan(
+        Draw::Move {
+            reveal: Some(offset),
+        },
+        false,
+        false,
+    )
+}
+
+/// The draw `place_page` applies. A character reveal does not wait for the
+/// chrome settle flag. A page number is measured only while that column's
+/// layout is still the one on screen, and only twice. After that the box
+/// moves and the page number is not sampled again.
 pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
     if tick.awaiting {
+        if tick.figure && reader.figure.is_some() {
+            reader.sample_misses = 0;
+            reader.figure_misses = 0;
+            reader.anchoring = false;
+            reader.hold_layout = true;
+            return plan(Draw::Align, false, false);
+        }
+        if tick.figure_lost {
+            reader.figure_misses = reader.figure_misses.saturating_add(1);
+            reader.anchoring = false;
+            reader.hold_layout = true;
+            if reader.figure_misses >= 2 {
+                reader.figure = None;
+                reader.sample_misses = 2;
+                return plan(Draw::Move { reveal: None }, false, false);
+            }
+            return plan(Draw::Align, false, true);
+        }
         let hold = current_hold(tick.hold, tick.hold_probe, reader.probe);
         let missed = tick.missed && hold.is_none();
         let timed_out = tick.timed_out && hold.is_none();
         match finish_hold_offset(hold, missed, timed_out) {
             HoldFinish::Wait => return plan(Draw::Rest, false, true),
-            HoldFinish::Miss => {
-                reader.probe = reader.probe.saturating_add(1);
+            HoldFinish::Timeout => {
+                if reader.sample_misses == 0 {
+                    reader.sample_misses = 1;
+                    reader.probe = reader.probe.saturating_add(1);
+                    reader.anchoring = true;
+                    reader.hold_layout = true;
+                    let page = reader.walk.unwrap_or(0);
+                    let probe = reader.probe;
+                    return plan(Draw::Measure { page, probe }, false, true);
+                }
+                reader.sample_misses = 2;
                 reader.anchoring = false;
                 reader.hold_layout = true;
                 return plan(Draw::Move { reveal: None }, false, false);
             }
-            HoldFinish::Reveal(offset) => {
-                reader.anchoring = true;
-                reader.hold_layout = false;
-                return plan(
-                    Draw::Move {
-                        reveal: Some(offset),
-                    },
-                    false,
-                    false,
-                );
+            HoldFinish::Miss => {
+                reader.probe = reader.probe.saturating_add(1);
+                reader.sample_misses = 2;
+                reader.figure = None;
+                reader.figure_misses = 0;
+                reader.anchoring = false;
+                reader.hold_layout = true;
+                return plan(Draw::Move { reveal: None }, false, false);
             }
+            HoldFinish::Reveal(offset) => return reveal_char(reader, offset),
         }
     }
     let chase = chase_due(reader, tick);
@@ -1704,29 +1787,29 @@ pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
         PlaceStep::Hold => plan(Draw::Rest, false, chase),
         PlaceStep::Cancel { reflow: false } => plan(Draw::Rest, true, chase),
         PlaceStep::Cancel { reflow: true } => {
-            if tick.settled && tick.reflowable {
+            if tick.reflowable {
                 if let Some(offset) = reader.measured {
-                    // The page marks kind "anchor" only after a fresh hold.
-                    // A later width reveals directly, so this read has to
-                    // accept that pin and save the new column.
+                    return reveal_char(reader, offset);
+                }
+                if reader.figure.is_some() {
+                    reader.anchoring = false;
+                    reader.hold_layout = true;
+                    return plan(Draw::Align, false, false);
+                }
+                if lost(reader) {
+                    reader.hold_layout = true;
+                    return plan(Draw::Move { reveal: None }, false, false);
+                }
+                if tick.settled {
+                    if reader.anchoring {
+                        return plan(Draw::Rest, false, true);
+                    }
+                    reader.probe = reader.probe.saturating_add(1);
                     reader.anchoring = true;
-                    reader.hold_layout = false;
-                    return plan(
-                        Draw::Move {
-                            reveal: Some(offset),
-                        },
-                        false,
-                        false,
-                    );
+                    let page = reader.walk.unwrap_or(0);
+                    let probe = reader.probe;
+                    return plan(Draw::Measure { page, probe }, true, true);
                 }
-                if reader.anchoring {
-                    return plan(Draw::Rest, false, true);
-                }
-                reader.probe = reader.probe.saturating_add(1);
-                reader.anchoring = true;
-                let page = reader.walk.unwrap_or(0);
-                let probe = reader.probe;
-                return plan(Draw::Measure { page, probe }, true, true);
             }
             plan(Draw::Move { reveal: None }, false, chase)
         }
@@ -1761,6 +1844,7 @@ pub fn hold_eval(page: u32, probe: u64) -> String {
 pub enum HoldFinish {
     Wait,
     Miss,
+    Timeout,
     Reveal(u32),
 }
 
@@ -1768,11 +1852,13 @@ pub fn finish_hold_offset(hold: Option<u32>, missed: bool, timed_out: bool) -> H
     if let Some(ch) = hold {
         return HoldFinish::Reveal(ch);
     }
-    if missed || timed_out {
-        HoldFinish::Miss
-    } else {
-        HoldFinish::Wait
+    if missed {
+        return HoldFinish::Miss;
     }
+    if timed_out {
+        return HoldFinish::Timeout;
+    }
+    HoldFinish::Wait
 }
 
 /// A hold already in the inbox is current only when it is the sample still
@@ -2819,11 +2905,43 @@ mod tests {
         assert!(waiting.pump);
         assert_eq!(reader.probe, probe);
         tick.timed_out = true;
+        let retry = layout_frame(&mut reader, tick);
+        let Draw::Measure {
+            page: 10,
+            probe: retried,
+        } = retry.draw
+        else {
+            panic!("the first timeout samples the same column, {retry:?}");
+        };
+        assert!(!retry.cancel);
+        assert!(retry.pump);
+        assert_ne!(retried, probe);
+        assert_eq!(reader.sample_misses, 1);
+        assert_eq!(reader.walk, Some(10));
+        tick.timed_out = false;
+        tick.hold_probe = retried;
+        let still_waiting = layout_frame(&mut reader, tick);
+        assert_eq!(still_waiting.draw, Draw::Rest);
+        assert!(!still_waiting.cancel);
+        assert!(still_waiting.pump);
+        tick.hold = Some(360);
+        let found = layout_frame(&mut reader, tick);
+        assert_eq!(found.draw, Draw::Move { reveal: Some(360) });
+        assert!(!found.cancel);
+        assert_eq!(reader.sample_misses, 0);
+        reader.measured = None;
+        reader.anchoring = true;
+        reader.hold_layout = true;
+        reader.sample_misses = 1;
+        reader.probe = retried;
+        tick.hold = None;
+        tick.timed_out = true;
         let failed = layout_frame(&mut reader, tick);
         assert_eq!(failed.draw, Draw::Move { reveal: None });
         assert!(!failed.cancel);
         assert!(!failed.pump);
         assert!(reader.hold_layout);
+        assert_eq!(reader.sample_misses, 2);
         assert!(reader.measured.is_none());
         assert_eq!(reader.walk, Some(10));
         assert!(current_hold(Some(42), probe, reader.probe).is_none());
@@ -2851,28 +2969,54 @@ mod tests {
         for _ in 0..3 {
             tick.fitted_same = false;
             let again = layout_frame(&mut reader, tick);
-            let Draw::Measure {
-                page: 10,
-                probe: next,
-            } = again.draw
-            else {
-                panic!("the next size measures, {again:?}");
-            };
-            assert!(again.cancel);
-            tick.awaiting = true;
-            tick.hold_probe = next;
-            tick.missed = true;
-            let missed = layout_frame(&mut reader, tick);
-            assert_eq!(missed.draw, Draw::Move { reveal: None });
-            assert!(!missed.cancel);
-            assert!(!missed.pump);
-            tick.awaiting = false;
-            tick.missed = false;
+            assert_eq!(again.draw, Draw::Move { reveal: None }, "{again:?}");
+            assert!(!again.cancel);
+            assert!(!again.pump);
+            assert_eq!(reader.walk, Some(10));
             tick.fitted_same = true;
-            let rested = layout_frame(&mut reader, tick);
-            assert!(!rested.cancel && !rested.pump, "{rested:?}");
         }
         assert_eq!(reader.walk, Some(10));
+        let mut fresh = Reader::default();
+        fresh.walk = Some(10);
+        let mut open = FrameTick::new(false, true, true, true, false, false);
+        open.shown = 4;
+        open.pages = 40;
+        fresh.measured = Some(0);
+        let zero_open = layout_frame(&mut fresh, open);
+        assert_eq!(zero_open.draw, Draw::Move { reveal: Some(0) });
+        fresh.measured = Some(360);
+        fresh.anchoring = false;
+        let text_open = layout_frame(&mut fresh, open);
+        assert_eq!(text_open.draw, Draw::Move { reveal: Some(360) });
+        fresh.measured = None;
+        fresh.sample_misses = 0;
+        fresh.anchoring = false;
+        fresh.hold_layout = false;
+        let unloaded = layout_frame(&mut fresh, open);
+        assert_eq!(unloaded.draw, Draw::Move { reveal: None });
+        assert_eq!(fresh.sample_misses, 0);
+        open.settled = true;
+        let loaded = layout_frame(&mut fresh, open);
+        let Draw::Measure { page: 10, .. } = loaded.draw else {
+            panic!("an unsettled book is not a lost book, {loaded:?}");
+        };
+        assert!(loaded.cancel);
+        fresh.figure = Some("img#pic".to_string());
+        let mut lost_figure = open;
+        lost_figure.awaiting = true;
+        lost_figure.figure_lost = true;
+        let looked = layout_frame(&mut fresh, lost_figure);
+        assert_eq!(looked.draw, Draw::Align);
+        assert_eq!(fresh.figure_misses, 1);
+        let gone = layout_frame(&mut fresh, lost_figure);
+        assert_eq!(gone.draw, Draw::Move { reveal: None });
+        assert!(fresh.figure.is_none());
+        assert_eq!(fresh.sample_misses, 2);
+        lost_figure.awaiting = false;
+        lost_figure.figure_lost = false;
+        lost_figure.fitted_same = false;
+        let after = layout_frame(&mut fresh, lost_figure);
+        assert_eq!(after.draw, Draw::Move { reveal: None });
         reader.measured = Some(42);
         reader.anchoring = false;
         tick.fitted_same = false;

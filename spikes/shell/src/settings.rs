@@ -2778,175 +2778,21 @@ mod tests {
         assert_eq!(resume_page(&file, book), 10);
         assert_eq!(resume_offset(&file, book), 0);
         assert_eq!(reader.walk, Some(10));
-        let _ = read_frame(&mut stdin, &mut stdout, "window.__caretOff=42");
         tick.fitted_same = false;
         tick.awaiting = false;
-        let again = crate::visit::layout_frame(&mut reader, tick);
-        let crate::visit::Draw::Measure { page: 10, probe } = again.draw else {
-            panic!("measure the caret, {again:?}");
-        };
-        assert!(again.cancel);
-        let (held_posts, held, _) = read_frame(
-            &mut stdin,
-            &mut stdout,
-            &format!("now {}", crate::visit::hold_eval(10, probe)),
-        );
-        assert_eq!(held, "42", "{held_posts:?}");
-        assert!(
-            held_posts
-                .iter()
-                .any(|post| post["measured"] == true && post["hold"] == 42),
-            "{held_posts:?}"
-        );
-        assert!(
-            held_posts
-                .iter()
-                .all(|post| post["hold"] != 3600 && post["pinned"] != 3600),
-            "{held_posts:?}"
-        );
-        apply_posts(
-            &mut reader,
-            &held_posts,
-            "ch.xhtml",
-            &mut store,
-            4,
-            40,
-            true,
-        );
-        assert_eq!(reader.measured, Some(42));
-        assert!(reader.anchoring);
-        tick.awaiting = true;
-        tick.hold = Some(42);
-        tick.hold_probe = probe;
         tick.missed = false;
-        tick.fitted_same = false;
-        let reveal = crate::visit::layout_frame(&mut reader, tick);
-        assert_eq!(reveal.draw, crate::visit::Draw::Move { reveal: Some(42) });
-        assert!(!reveal.cancel);
-        assert!(!reveal.pump);
-        assert_eq!(resume_page(&file, book), 10);
-        assert_eq!(resume_offset(&file, book), 0);
-        assert_eq!(reader.walk, Some(10));
-        let _ = read_frame(
-            &mut stdin,
-            &mut stdout,
-            "window.innerWidth=250;window.dispatchEvent({type:\"resize\"})",
-        );
-        tick.awaiting = false;
-        tick.hold = None;
-        tick.fitted_same = false;
-        let kept = crate::visit::layout_frame(&mut reader, tick);
-        assert_eq!(kept.draw, crate::visit::Draw::Move { reveal: Some(42) });
-        assert!(!kept.cancel);
-        assert!(!kept.pump);
-        let (waiting, _, waiting_column) = read_frame(
-            &mut stdin,
-            &mut stdout,
-            "now window.spikeReveal&&window.spikeReveal(42)",
-        );
-        assert!(waiting.is_empty(), "{waiting:?}");
-        let past = crate::visit::poll_anchored(&mut reader, 12, 40, false);
-        assert!(past.command.is_none());
-        assert_eq!(reader.walk, Some(10));
-        let early = crate::visit::poll_anchored(&mut reader, waiting_column, 40, false);
-        assert!(early.command.is_none());
-        assert_eq!(reader.walk, Some(10));
-        let (landed, _, column) = read_frame(&mut stdin, &mut stdout, "void 0");
-        assert!(
-            landed
-                .iter()
-                .any(|post| post["kind"] == "anchor" && post["pinned"] == 42),
-            "{landed:?}"
-        );
-        assert_ne!(column, 15, "{landed:?}");
-        assert_eq!(column, 4, "{landed:?}");
-        let mut denied = SettingsBook {
-            file: &file,
-            book: "",
-        };
-        for post in &landed {
-            crate::visit::handle_page(&mut reader, post, "ch.xhtml", &mut denied);
-        }
-        assert!(reader.restore_ack);
-        assert_eq!(reader.measured, Some(42));
-        assert_eq!(reader.walk, Some(10));
-        assert_eq!(resume_page(&file, book), 10);
-        assert_eq!(resume_offset(&file, book), 0);
-        let failed_walk = crate::visit::poll_anchored(&mut reader, 4, 40, false);
-        assert!(failed_walk.command.is_none());
-        assert_eq!(reader.walk, Some(10));
-        tick.fitted_same = false;
-        tick.awaiting = false;
-        let denied_resize = crate::visit::layout_frame(&mut reader, tick);
+        let again = crate::visit::layout_frame(&mut reader, tick);
         assert_eq!(
-            denied_resize.draw,
-            crate::visit::Draw::Move { reveal: Some(42) }
+            again.draw,
+            crate::visit::Draw::Move { reveal: None },
+            "{again:?}"
         );
-        assert!(!denied_resize.pump);
-        apply_posts(
-            &mut reader,
-            &landed,
-            "ch.xhtml",
-            &mut store,
-            column,
-            40,
-            false,
-        );
-        assert_eq!(resume_page(&file, book), column);
-        assert_eq!(resume_offset(&file, book), 42);
-        assert_eq!(reader.place.page, column);
-        assert_eq!(reader.measured, Some(42));
-        assert!(reader.walk.is_none());
-        assert!(!reader.anchoring);
-        let _ = read_frame(&mut stdin, &mut stdout, "window.innerWidth=180");
-        tick.fitted_same = false;
-        let narrower = crate::visit::layout_frame(&mut reader, tick);
-        assert_eq!(narrower.draw, crate::visit::Draw::Move { reveal: Some(42) });
-        assert!(!narrower.pump);
-        assert!(reader.anchoring);
-        let (second_wait, _, _) = read_frame(
-            &mut stdin,
-            &mut stdout,
-            "now window.spikeReveal&&window.spikeReveal(42)",
-        );
-        assert!(second_wait.is_empty(), "{second_wait:?}");
-        let between = crate::visit::poll_anchored(&mut reader, 12, 40, false);
-        assert!(between.command.is_none());
-        let (second, _, second_column) = read_frame(&mut stdin, &mut stdout, "void 0");
-        assert!(second.iter().any(|post| post["pinned"] == 42), "{second:?}");
-        assert!(
-            second
-                .iter()
-                .all(|post| post["pinned"] != 2250 && post["hold"] != 2250),
-            "{second:?}"
-        );
-        assert_eq!(second_column, 6, "{second:?}");
-        apply_posts(
-            &mut reader,
-            &second,
-            "ch.xhtml",
-            &mut store,
-            second_column,
-            40,
-            false,
-        );
-        assert_eq!(resume_page(&file, book), 6);
-        assert_eq!(resume_offset(&file, book), 42);
-        assert_eq!(reader.measured, Some(42));
-        for _ in 0..3 {
-            let again = crate::visit::poll_resume(
-                reader.walk,
-                second_column,
-                40,
-                false,
-                reader.restore_ack,
-                reader.restore_load,
-            );
-            assert!(again.command.is_none());
-            reader.walk = again.walk;
-            assert_eq!(resume_page(&file, book), 6);
-            assert_eq!(resume_offset(&file, book), 42);
-        }
+        assert!(!again.cancel);
+        assert!(!again.pump);
+        assert!(reader.measured.is_none());
+        assert_eq!(reader.walk, Some(10));
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
 
         let (quiet, release_answer, _) = read_frame(
             &mut stdin,
@@ -3246,34 +3092,51 @@ mod tests {
         crate::visit::open_resume(&mut reopened, &store);
         assert_eq!(reopened.walk, Some(10));
         assert!(reopened.measured.is_none());
+        let zero_measure = crate::visit::layout_frame(&mut reopened, fitted_tick(false, false));
+        let crate::visit::Draw::Measure { page: 10, .. } = zero_measure.draw else {
+            panic!("an old page row is measured, {zero_measure:?}");
+        };
+        assert!(reopened.measured.is_none());
+        let _ = read_frame(&mut stdin, &mut stdout, COLUMN_CHARS);
         let _ = read_frame(
             &mut stdin,
             &mut stdout,
-            "window.__caretOff=0;window.innerWidth=250",
+            "document.body.scrollLeft=0;window.innerWidth=400;window.__caretHit=false;window.__lineTop=40;window.__lineBottom=60;window.__text=\"a\".repeat(800);window.__images=[];window.__dead=function(){return false}",
         );
-        let zero_measure = crate::visit::layout_frame(&mut reopened, fitted_tick(false, false));
-        let crate::visit::Draw::Measure { page: 10, probe } = zero_measure.draw else {
-            panic!("an old page row is measured, {zero_measure:?}");
+        record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let mut origin = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut origin, &store);
+        assert!(origin.walk.is_none());
+        let origin_measure = crate::visit::layout_frame(&mut origin, fitted_tick(false, false));
+        let crate::visit::Draw::Measure { page: 0, probe } = origin_measure.draw else {
+            panic!("page 1 reads the visible column, {origin_measure:?}");
         };
-        let (zero_posts, zero, _) = read_frame(
+        let (zero_posts, zero, zero_visible) = read_frame(
             &mut stdin,
             &mut stdout,
-            &format!("now {}", crate::visit::hold_eval(10, probe)),
+            &format!("now {}", crate::visit::hold_eval(0, probe)),
         );
         assert_eq!(zero, "0", "{zero_posts:?}");
+        assert_eq!(zero_visible, 1, "{zero_posts:?}");
         apply_posts(
-            &mut reopened,
+            &mut origin,
             &zero_posts,
             "ch.xhtml",
             &mut store,
-            4,
+            1,
             40,
             true,
         );
-        assert_eq!(reopened.measured, Some(0));
-        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(origin.measured, Some(0));
+        assert_eq!(resume_page(&file, book), 1);
         assert_eq!(resume_offset(&file, book), 0);
         assert!(!resume_caret(&file, book));
+        let mut zero_tick = fitted_tick(false, true);
+        zero_tick.hold = Some(0);
+        zero_tick.hold_probe = probe;
+        let zero_plan = crate::visit::layout_frame(&mut origin, zero_tick);
+        assert_eq!(zero_plan.draw, crate::visit::Draw::Move { reveal: Some(0) });
+        assert!(origin.anchoring);
         let (zero_wait, _, _) = read_frame(
             &mut stdin,
             &mut stdout,
@@ -3281,7 +3144,7 @@ mod tests {
         );
         assert!(zero_wait.is_empty(), "{zero_wait:?}");
         let (zero_landed, _, zero_column) = read_frame(&mut stdin, &mut stdout, "void 0");
-        assert!(zero_column > 1, "{zero_column} {zero_landed:?}");
+        assert_eq!(zero_column, 1, "{zero_landed:?}");
         assert!(
             zero_landed
                 .iter()
@@ -3289,7 +3152,7 @@ mod tests {
             "{zero_landed:?}"
         );
         apply_posts(
-            &mut reopened,
+            &mut origin,
             &zero_landed,
             "ch.xhtml",
             &mut store,
@@ -3351,6 +3214,407 @@ mod tests {
         assert!(!after.pump);
         assert!(!after.cancel);
 
+        let _ = writeln_cmd(&mut stdin, "quit");
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn a_hold_reads_the_column_character() {
+        let dir = std::env::temp_dir().join(format!("superreader-column-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page_js = dir.join("page.js");
+        let drive = dir.join("drive.js");
+        std::fs::write(&page_js, crate::reading::page_script("en")).unwrap();
+        std::fs::write(&drive, PAGE_WALK_DRIVE).unwrap();
+        let mut child = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page_js)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("node");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        let _opened = read_posts(&mut stdout);
+        let _ = read_frame(&mut stdin, &mut stdout, COLUMN_CHARS);
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        let mut store = SettingsBook { file: &file, book };
+        let mut reader = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut reader, &store);
+        assert_eq!(reader.walk, Some(10));
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "document.body.scrollLeft=1200;window.innerWidth=400;window.innerHeight=800;window.__caretHit=false;window.__lineTop=40;window.__lineBottom=60;window.__text=\"a\".repeat(5000);window.__images=[];window.__dead=function(){return false}",
+        );
+        let mut tick = fitted_tick(false, false);
+        let measured = crate::visit::layout_frame(&mut reader, tick);
+        let crate::visit::Draw::Measure { page: 10, probe } = measured.draw else {
+            panic!("measure the saved column, {measured:?}");
+        };
+        let (held_posts, held, held_column) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::hold_eval(10, probe)),
+        );
+        assert_eq!(held, "360", "{held_posts:?}");
+        assert_eq!(held_column, 4, "{held_posts:?}");
+        assert!(
+            held_posts
+                .iter()
+                .any(|post| post["measured"] == true && post["hold"] == 360),
+            "{held_posts:?}"
+        );
+        apply_posts(
+            &mut reader,
+            &held_posts,
+            "ch.xhtml",
+            &mut store,
+            4,
+            40,
+            true,
+        );
+        assert_eq!(reader.measured, Some(360));
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        tick.awaiting = true;
+        tick.hold = Some(360);
+        tick.hold_probe = probe;
+        let reveal = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(reveal.draw, crate::visit::Draw::Move { reveal: Some(360) });
+        assert!(!reveal.cancel);
+        assert!(reader.anchoring);
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.__caretHit=true;window.__lineTop=100;window.__lineBottom=220",
+        );
+        let (hit_posts, hit, hit_column) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeHold&&window.spikeHold(10,9)",
+        );
+        assert_eq!(hit, "368", "{hit_posts:?}");
+        assert_ne!(hit, "360");
+        assert_eq!(hit_column, 4, "{hit_posts:?}");
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.__caretHit=false;window.__lineTop=40;window.__lineBottom=60;window.__text=\" \".repeat(363)+\"x\".repeat(2000)",
+        );
+        let (gap_posts, gap, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeHold&&window.spikeHold(10,9)",
+        );
+        assert_eq!(gap, "363", "{gap_posts:?}");
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.__text=\"a\".repeat(5000);window.__dead=function(i){return i<360}",
+        );
+        let (dead_posts, dead, dead_column) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeHold&&window.spikeHold(10,9)",
+        );
+        assert_eq!(dead, "360", "{dead_posts:?}");
+        assert_eq!(dead_column, 4, "{dead_posts:?}");
+        let _ = read_frame(&mut stdin, &mut stdout, "window.innerWidth=250");
+        let (waiting, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeReveal&&window.spikeReveal(360)",
+        );
+        assert!(waiting.is_empty(), "{waiting:?}");
+        let (landed, _, column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert_eq!(column, 15, "{landed:?}");
+        assert!(
+            landed
+                .iter()
+                .any(|post| post["kind"] == "anchor" && post["pinned"] == 360),
+            "{landed:?}"
+        );
+        assert!(
+            landed
+                .iter()
+                .all(|post| post["pinned"] != 225 && post["hold"] != 225),
+            "{landed:?}"
+        );
+        let mut denied = SettingsBook {
+            file: &file,
+            book: "",
+        };
+        for post in &landed {
+            crate::visit::handle_page(&mut reader, post, "ch.xhtml", &mut denied);
+        }
+        assert!(reader.restore_ack);
+        assert_eq!(reader.measured, Some(360));
+        assert_eq!(reader.walk, Some(10));
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        assert!(crate::visit::poll_anchored(&mut reader, 15, 40, false)
+            .command
+            .is_none());
+        tick.awaiting = false;
+        tick.hold = None;
+        tick.fitted_same = false;
+        let denied_resize = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(
+            denied_resize.draw,
+            crate::visit::Draw::Move { reveal: Some(360) }
+        );
+        assert!(!denied_resize.cancel);
+        apply_posts(
+            &mut reader,
+            &landed,
+            "ch.xhtml",
+            &mut store,
+            column,
+            40,
+            false,
+        );
+        assert_eq!(resume_page(&file, book), 15);
+        assert_eq!(resume_offset(&file, book), 360);
+        assert!(resume_caret(&file, book));
+        assert!(reader.walk.is_none());
+        let _ = read_frame(&mut stdin, &mut stdout, "window.innerWidth=180");
+        tick.fitted_same = false;
+        let narrower = crate::visit::layout_frame(&mut reader, tick);
+        assert_eq!(
+            narrower.draw,
+            crate::visit::Draw::Move { reveal: Some(360) }
+        );
+        assert!(!narrower.cancel);
+        let (second_wait, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeReveal&&window.spikeReveal(360)",
+        );
+        assert!(second_wait.is_empty(), "{second_wait:?}");
+        let (second, _, second_column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert_eq!(second_column, 21, "{second:?}");
+        assert!(
+            second.iter().any(|post| post["pinned"] == 360),
+            "{second:?}"
+        );
+        apply_posts(
+            &mut reader,
+            &second,
+            "ch.xhtml",
+            &mut store,
+            second_column,
+            40,
+            false,
+        );
+        assert_eq!(resume_page(&file, book), 21);
+        assert_eq!(resume_offset(&file, book), 360);
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeReveal&&window.spikeReveal(360)",
+        );
+        let _ = read_frame(&mut stdin, &mut stdout, "frame");
+        let user = crate::visit::turn_command(1, crate::visit::TurnSource::User, 0, false, 0);
+        let (during, during_answer, _) =
+            read_frame(&mut stdin, &mut stdout, &format!("now {user}"));
+        assert!(during.is_empty(), "{during:?}");
+        assert_eq!(script_answer(&during_answer), "ok");
+        let (after_turn, _, _) = read_frame(&mut stdin, &mut stdout, "frame");
+        assert!(
+            after_turn.iter().all(|post| post.get("pinned").is_none()),
+            "{after_turn:?}"
+        );
+        let (turned, _, _) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert!(
+            turned.iter().any(|post| post["kind"] == "turn"),
+            "{turned:?}"
+        );
+        assert!(
+            turned.iter().all(|post| post.get("pinned").is_none()),
+            "{turned:?}"
+        );
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.spikeJustify={whenVisibleCommitted:function(){return{then:function(fn){window.__go=fn}}}}",
+        );
+        let (armed, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeReveal&&window.spikeReveal(999999)",
+        );
+        assert!(armed.is_empty(), "{armed:?}");
+        let (preempted, _, _) = read_frame(&mut stdin, &mut stdout, &format!("now {user}"));
+        assert!(preempted.is_empty(), "{preempted:?}");
+        let (late, _, _) = read_frame(&mut stdin, &mut stdout, "now window.__go&&window.__go()");
+        assert!(
+            late.iter().all(|post| post.get("pinned").is_none()),
+            "{late:?}"
+        );
+        let (late_turn, _, _) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert!(
+            late_turn.iter().all(|post| post.get("pinned").is_none()),
+            "{late_turn:?}"
+        );
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.spikeJustify=null;window.innerWidth=250",
+        );
+        let (kept_wait, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeReveal&&window.spikeReveal(360)",
+        );
+        assert!(kept_wait.is_empty(), "{kept_wait:?}");
+        let _ = read_frame(&mut stdin, &mut stdout, "now window.innerWidth=250");
+        let (kept_land, _, kept_column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert_eq!(kept_column, 15, "{kept_land:?}");
+        assert!(
+            kept_land.iter().any(|post| post["pinned"] == 360),
+            "{kept_land:?}"
+        );
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        let mut pictures = crate::visit::Reader::default();
+        crate::visit::open_resume(&mut pictures, &store);
+        assert_eq!(pictures.walk, Some(10));
+        assert!(!resume_caret(&file, book));
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "document.body.scrollLeft=1200;window.innerWidth=400;window.__text=\"\";window.__caretHit=false;window.__imageAt=3610;window.__images=[{tagName:\"IMG\",id:\"pic\",closest:function(){return null},getBoundingClientRect:function(){var left=(window.__imageAt||0)-(document.body.scrollLeft||0);return{left:left,right:left+80,top:40,bottom:200,width:80,height:160}}}]",
+        );
+        let mut picture_tick = fitted_tick(false, false);
+        let picture_measure = crate::visit::layout_frame(&mut pictures, picture_tick);
+        let crate::visit::Draw::Measure { page: 10, probe } = picture_measure.draw else {
+            panic!("an image column is still sampled once, {picture_measure:?}");
+        };
+        let (picture_posts, picture, picture_column) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::hold_eval(10, probe)),
+        );
+        assert!(picture.is_empty(), "{picture:?} {picture_posts:?}");
+        assert_eq!(picture_column, 4, "{picture_posts:?}");
+        assert!(
+            picture_posts.iter().any(|post| post["figure"] == "img#pic"),
+            "{picture_posts:?}"
+        );
+        assert!(
+            picture_posts.iter().all(|post| post.get("hold").is_none()),
+            "{picture_posts:?}"
+        );
+        apply_posts(
+            &mut pictures,
+            &picture_posts,
+            "ch.xhtml",
+            &mut store,
+            4,
+            40,
+            true,
+        );
+        assert!(pictures.measured.is_none());
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        pictures.figure = Some("img#pic".to_string());
+        picture_tick.awaiting = true;
+        picture_tick.figure = true;
+        let aligned = crate::visit::layout_frame(&mut pictures, picture_tick);
+        assert_eq!(aligned.draw, crate::visit::Draw::Align);
+        assert!(!aligned.cancel);
+        let _ = read_frame(&mut stdin, &mut stdout, "window.innerWidth=250");
+        picture_tick.awaiting = false;
+        picture_tick.figure = false;
+        picture_tick.fitted_same = false;
+        let again = crate::visit::layout_frame(&mut pictures, picture_tick);
+        assert_eq!(again.draw, crate::visit::Draw::Align, "{again:?}");
+        let (align_wait, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeAlign&&window.spikeAlign(\"img#pic\")",
+        );
+        assert!(align_wait.is_empty(), "{align_wait:?}");
+        let (aligned_posts, _, aligned_column) = read_frame(&mut stdin, &mut stdout, "void 0");
+        assert_eq!(aligned_column, 15, "{aligned_posts:?}");
+        assert!(
+            aligned_posts.iter().any(|post| post["figure"] == "img#pic"),
+            "{aligned_posts:?}"
+        );
+        apply_posts(
+            &mut pictures,
+            &aligned_posts,
+            "ch.xhtml",
+            &mut store,
+            aligned_column,
+            40,
+            false,
+        );
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
+        assert!(!resume_caret(&file, book));
+        assert!(pictures.measured.is_none());
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.__images=[{tagName:\"SVG\",id:\"\",closest:function(){return null},getBoundingClientRect:function(){var left=3610-(document.body.scrollLeft||0);return{left:left,right:left+40,top:40,bottom:200,width:40,height:160}}}];window.innerWidth=400",
+        );
+        let (indexed_posts, _, _) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "now window.spikeHold&&window.spikeHold(10,1)",
+        );
+        assert!(
+            indexed_posts.iter().any(|post| post["figure"] == "svg@0"),
+            "{indexed_posts:?}"
+        );
+        let _ = read_frame(
+            &mut stdin,
+            &mut stdout,
+            "window.__text=\"\";window.__images=[];window.innerWidth=400;document.body.scrollLeft=1200",
+        );
+        let mut blank = crate::visit::Reader::default();
+        record_progress(&file, book, 10, None, 0, "ch.xhtml").unwrap();
+        crate::visit::open_resume(&mut blank, &store);
+        let mut blank_tick = fitted_tick(false, false);
+        let blank_measure = crate::visit::layout_frame(&mut blank, blank_tick);
+        let crate::visit::Draw::Measure { page: 10, probe } = blank_measure.draw else {
+            panic!("a blank column is sampled on the old frame, {blank_measure:?}");
+        };
+        let (blank_posts, blank_answer, blank_column) = read_frame(
+            &mut stdin,
+            &mut stdout,
+            &format!("now {}", crate::visit::hold_eval(10, probe)),
+        );
+        assert!(blank_answer.is_empty(), "{blank_answer:?} {blank_posts:?}");
+        assert_eq!(blank_column, 4, "{blank_posts:?}");
+        assert!(
+            blank_posts.iter().any(|post| post["missed"] == true),
+            "{blank_posts:?}"
+        );
+        blank_tick.awaiting = true;
+        blank_tick.hold_probe = probe;
+        blank_tick.missed = true;
+        let lost = crate::visit::layout_frame(&mut blank, blank_tick);
+        assert_eq!(lost.draw, crate::visit::Draw::Move { reveal: None });
+        assert_eq!(blank.sample_misses, 2);
+        assert!(blank.measured.is_none());
+        blank_tick.awaiting = false;
+        blank_tick.missed = false;
+        blank_tick.fitted_same = false;
+        let skipped = crate::visit::layout_frame(&mut blank, blank_tick);
+        assert_eq!(
+            skipped.draw,
+            crate::visit::Draw::Move { reveal: None },
+            "{skipped:?}"
+        );
+        assert_eq!(resume_page(&file, book), 10);
+        assert_eq!(resume_offset(&file, book), 0);
         let _ = writeln_cmd(&mut stdin, "quit");
         let _ = child.wait();
         let _ = std::fs::remove_dir_all(&dir);
@@ -3453,6 +3717,73 @@ mod tests {
     }
 }
 
+const COLUMN_CHARS: &str = r#"
+if (window.__text == null) window.__text = "a".repeat(5000);
+if (!window.__dead) window.__dead = function () { return false; };
+if (!window.__images) window.__images = [];
+function columnNode() {
+  var text = window.__text || "";
+  var n = window.__textNode;
+  if (!n) {
+    n = { nodeType: 3, parentNode: document.body, parentElement: document.body };
+    window.__textNode = n;
+  }
+  n.textContent = text;
+  n.nodeValue = text;
+  document.body.firstChild = n;
+  document.body.textContent = text;
+  return n;
+}
+document.createTreeWalker = function () {
+  var sent = false;
+  return { currentNode: columnNode(), nextNode: function () {
+    var n = columnNode();
+    if (sent || !(n.textContent || "").length) return null;
+    sent = true;
+    this.currentNode = n;
+    return n;
+  } };
+};
+document.createRange = function () {
+  var start = 0;
+  return {
+    setStart: function (_n, offset) { start = offset; },
+    setEnd: function () {},
+    selectNodeContents: function () { start = 0; },
+    getClientRects: function () {
+      var rect = this.getBoundingClientRect();
+      return rect.width ? [rect] : [];
+    },
+    getBoundingClientRect: function () {
+      if (window.__dead(start)) return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+      var left = start * 10 - (document.body.scrollLeft || 0);
+      var top = window.__lineTop == null ? 40 : window.__lineTop;
+      var bottom = window.__lineBottom == null ? 60 : window.__lineBottom;
+      return { left: left, right: left + 10, top: top, bottom: bottom, width: 10, height: 20 };
+    }
+  };
+};
+document.caretRangeFromPoint = function (x, y) {
+  if (!window.__caretHit) return null;
+  var top = window.__lineTop == null ? 40 : window.__lineTop;
+  var bottom = window.__lineBottom == null ? 60 : window.__lineBottom;
+  if (y < top || y >= bottom) return null;
+  var n = columnNode();
+  var index = Math.floor(((document.body.scrollLeft || 0) + x) / 10);
+  if (index < 0 || index >= (n.textContent || "").length) return null;
+  if (window.__dead(index)) return null;
+  return { startContainer: n, startOffset: index };
+};
+document.querySelectorAll = function (sel) {
+  var images = window.__images || [];
+  if (sel === "img, svg") return images.slice();
+  if (sel === "img") return images.filter(function (el) { return String(el.tagName).toLowerCase() === "img"; });
+  if (sel === "svg") return images.filter(function (el) { return String(el.tagName).toLowerCase() === "svg"; });
+  return [];
+};
+columnNode();
+"#;
+
 const PAGE_WALK_DRIVE: &str = r#"
 const fs = require('fs');
 const script = fs.readFileSync(process.argv[2], 'utf8');
@@ -3528,6 +3859,10 @@ rl.on('line', (line) => {
   let answer = null;
   if (line.startsWith('keydown ')) {
     fire('keydown', Object.assign({ repeat: false, shiftKey: false, preventDefault() {} }, JSON.parse(line.slice(8))));
+  } else if (line === 'frame') {
+    global.__now += 1000;
+    const fn = raf.shift();
+    if (fn) fn(global.__now);
   } else if (line.startsWith('click ')) {
     const spec = JSON.parse(line.slice(6));
     fire('mousedown', { button: 0, clientX: spec.clientX, clientY: spec.clientY || 0 });
@@ -3536,7 +3871,7 @@ rl.on('line', (line) => {
     const defer = line.startsWith('now ');
     answer = eval(defer ? line.slice(4) : line);
   }
-  if (!line.startsWith('now ')) drain();
+  if (!line.startsWith('now ') && line !== 'frame') drain();
   emit({ posts: posts.slice(), answer: answer == null ? null : String(answer) });
 });
 "#;

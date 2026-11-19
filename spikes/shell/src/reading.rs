@@ -805,27 +805,136 @@ const SCRIPT: &str = r#"
     const hit = measureCaret();
     return hit == null ? 0 : hit;
   }
-  function goalOffset(page) {
-    const stride = columnStride();
-    const saved = root.scrollLeft;
-    seek((page - 1) * stride);
-    const hit = measureCaret();
-    seek(saved);
-    return hit;
+  function charRect(node, index) {
+    const text = node.textContent || "";
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, Math.min(text.length, index + 1));
+    return range.getBoundingClientRect();
+  }
+  function liveRect(rect) {
+    return !!rect && rect.width > 0 && rect.height > 0;
+  }
+  function intersectsColumn(rect) {
+    const w = columnStride();
+    const h = window.innerHeight || 0;
+    return liveRect(rect) && rect.right > 0 && rect.bottom > 0 && rect.left < w && rect.top < h;
+  }
+  function beforeColumn(rect) {
+    return liveRect(rect) && (rect.right <= 0 || rect.bottom <= 0);
+  }
+  function afterColumn(rect) {
+    const w = columnStride();
+    const h = window.innerHeight || 0;
+    return liveRect(rect) && (rect.left >= w || rect.top >= h);
+  }
+  function firstVisibleIndex(node) {
+    const text = node.textContent || "";
+    const len = text.length;
+    let i = 0;
+    while (i < len) {
+      const rect = charRect(node, i);
+      if (liveRect(rect) && beforeColumn(rect)) {
+        let step = 1;
+        let next = i;
+        while (i + step < len) {
+          const ahead = charRect(node, i + step);
+          if (!liveRect(ahead) || !beforeColumn(ahead)) break;
+          next = i + step;
+          step *= 2;
+        }
+        i = next + 1;
+        continue;
+      }
+      if (liveRect(rect) && afterColumn(rect)) return null;
+      if (intersectsColumn(rect) && text.charAt(i).trim()) return i;
+      i++;
+    }
+    return null;
+  }
+  function columnTextOffset() {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.textContent || "";
+      const at = firstVisibleIndex(node);
+      if (at != null) return seen + at;
+      seen += text.length;
+    }
+    return null;
+  }
+  function inFooter(el) {
+    return !!(el && el.closest && el.closest('#spike-footer'));
+  }
+  function figureIdentity(el) {
+    if (!el || !el.tagName) return "";
+    const tag = String(el.tagName).toLowerCase();
+    if (tag !== "img" && tag !== "svg") return "";
+    if (inFooter(el)) return "";
+    if (el.id) return tag + '#' + el.id;
+    const list = document.querySelectorAll(tag);
+    let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      if (inFooter(item)) continue;
+      if (item === el) return tag + "@" + n;
+      n++;
+    }
+    return "";
+  }
+  function columnFigure() {
+    const nodes = document.querySelectorAll("img, svg");
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (inFooter(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (!intersectsColumn(rect)) continue;
+      const id = figureIdentity(el);
+      if (id) return id;
+    }
+    return "";
+  }
+  function findFigure(id) {
+    const nodes = document.querySelectorAll("img, svg");
+    for (let i = 0; i < nodes.length; i++) {
+      if (figureIdentity(nodes[i]) === id) return nodes[i];
+    }
+    return null;
+  }
+  function readAnchor() {
+    const caret = measureCaret();
+    if (caret != null) return { hold: caret };
+    const text = columnTextOffset();
+    if (text != null) return { hold: text };
+    const figure = columnFigure();
+    if (figure) return { figure: figure };
+    return { missed: true };
   }
   window.spikeHold = function (page, probe) {
     const goal = page | 0;
     const generation = probe | 0;
-    const offset = goal > 0 ? goalOffset(goal) : measureCaret();
-    if (offset == null) {
-      holdGoal = 0;
-      post({ missed: true, goal: goal, probe: generation });
+    const saved = root.scrollLeft;
+    let read = { missed: true };
+    try {
+      if (goal > 0) seek((goal - 1) * columnStride());
+      read = readAnchor();
+    } finally {
+      seek(saved);
+    }
+    if (read.hold != null) {
+      holdGoal = 1;
+      window.spikeHeld = read.hold;
+      post({ hold: read.hold, measured: true, goal: goal, probe: generation });
+      return read.hold;
+    }
+    holdGoal = 0;
+    if (read.figure) {
+      post({ figure: read.figure, goal: goal, probe: generation });
       return null;
     }
-    holdGoal = goal;
-    window.spikeHeld = offset;
-    post({ hold: offset, measured: true, goal: goal, probe: generation });
-    return offset;
+    post({ missed: true, goal: goal, probe: generation });
+    return null;
   };
   function snapSettled() {
     const box = column();
@@ -857,11 +966,12 @@ const SCRIPT: &str = r#"
     flying = "";
     flyingDelta = 0;
   }
-  window.spikeReveal = function (offset) {
-    endFollow();
-    const seekOffset = function () {
+  function revealAt(offset, gen) {
+    if (gen !== followGen) return;
     requestAnimationFrame(function () {
+      if (gen !== followGen) return;
       requestAnimationFrame(function () {
+        if (gen !== followGen) return;
         const found = locate(offset);
         if (!found) {
           holdGoal = 0;
@@ -878,6 +988,7 @@ const SCRIPT: &str = r#"
         const w = columnStride();
         const index = Math.max(0, Math.floor((rect.left + 8) / w));
         root.style.transform = prev;
+        if (gen !== followGen) return;
         seek(index * w);
         settled = column().page;
         measured = false;
@@ -887,9 +998,52 @@ const SCRIPT: &str = r#"
         post(landed);
       });
     });
+  }
+  window.spikeReveal = function (offset) {
+    endFollow();
+    const gen = followGen;
+    if (window.spikeJustify && window.spikeJustify.whenVisibleCommitted) {
+      window.spikeJustify.whenVisibleCommitted().then(function () {
+        if (gen !== followGen) return;
+        revealAt(offset, gen);
+      });
+    } else {
+      revealAt(offset, gen);
+    }
+  };
+  window.spikeAlign = function (id) {
+    endFollow();
+    const gen = followGen;
+    const run = function () {
+      if (gen !== followGen) return;
+      requestAnimationFrame(function () {
+        if (gen !== followGen) return;
+        requestAnimationFrame(function () {
+          if (gen !== followGen) return;
+          const el = findFigure(id);
+          if (!el) {
+            post({ missed: true, figure: id });
+            return;
+          }
+          const rect = el.getBoundingClientRect();
+          const w = columnStride();
+          const abs = rect.left + (root.scrollLeft || 0);
+          const index = Math.max(0, Math.floor((abs + 8) / w));
+          if (gen !== followGen) return;
+          seek(index * w);
+          settled = column().page;
+          post({ figure: id });
+        });
+      });
     };
-    if (window.spikeJustify) window.spikeJustify.whenVisibleCommitted().then(seekOffset);
-    else seekOffset();
+    if (window.spikeJustify && window.spikeJustify.whenVisibleCommitted) {
+      window.spikeJustify.whenVisibleCommitted().then(function () {
+        if (gen !== followGen) return;
+        run();
+      });
+    } else {
+      run();
+    }
   };
   function settle(frames, token, source) {
     document.documentElement.style.transform = "none";

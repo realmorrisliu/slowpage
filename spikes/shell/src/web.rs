@@ -164,6 +164,8 @@ pub struct Inbox {
     pub hold: Option<u32>,
     pub hold_probe: u64,
     pub hold_missed: bool,
+    pub figure: Option<String>,
+    pub figure_lost: bool,
     pub sentence: Option<u32>,
     pub pinned: Option<u32>,
     pub pin_missed: bool,
@@ -308,12 +310,27 @@ define_class!(
                         if let Some(scroll) = value["sx"].as_f64() {
                             inbox.scroll = scroll;
                         }
+                        if let Some(id) = value["figure"].as_str() {
+                            let generation = value["probe"].as_u64();
+                            let (current, known) = SESSION.with(|session| {
+                                let reader = &session.borrow().reader;
+                                (reader.probe, reader.figure.as_deref() == Some(id))
+                            });
+                            let current_sample = generation.is_some_and(|probe| probe == current);
+                            if current_sample || (generation.is_none() && known) {
+                                inbox.figure = Some(id.to_string());
+                                inbox.figure_lost = value["missed"].as_bool() == Some(true);
+                            }
+                        }
                         if let Some(hold) = value["hold"].as_u64() {
                             inbox.hold = Some(hold as u32);
                             inbox.hold_probe = value["probe"].as_u64().unwrap_or(0);
                             inbox.hold_missed = false;
+                            inbox.figure = None;
+                            inbox.figure_lost = false;
                         } else if value["missed"].as_bool() == Some(true)
                             && value.get("pinned").is_none()
+                            && value.get("figure").is_none()
                         {
                             let generation = value["probe"].as_u64().unwrap_or(0);
                             let current = SESSION.with(|session| session.borrow().reader.probe);
@@ -877,6 +894,19 @@ impl WebChapter {
         );
     }
 
+    pub fn align(&self, id: &str) {
+        self.drop_swipe();
+        let quoted = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".to_string());
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeAlign&&window.spikeAlign({quoted})"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
     pub fn reveal(&self, offset: u32) {
         // Stop an animation that has not posted. A commit that already posted
         // keeps its token, and the walk keeps its goal.
@@ -1252,6 +1282,14 @@ pub fn anchor_missed() {
     SESSION.with(|session| {
         session.borrow_mut().reader.anchoring = false;
     });
+}
+
+pub fn note_figure(id: Option<String>) {
+    SESSION.with(|session| session.borrow_mut().reader.figure = id);
+}
+
+pub fn reader_figure() -> Option<String> {
+    SESSION.with(|session| session.borrow().reader.figure.clone())
 }
 
 pub fn layout_frame(tick: crate::visit::FrameTick) -> crate::visit::DrawPlan {
