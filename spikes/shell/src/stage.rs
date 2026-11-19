@@ -1258,7 +1258,7 @@ impl State {
             }
         };
         let (saw_figure, lost_figure) = crate::visit::figure_flags(&figure, figure_lost);
-        if let Some(id) = figure {
+        if let Some(id) = crate::visit::found_figure(figure, figure_lost) {
             crate::web::note_figure(Some(id));
         }
         let timed_out = self.await_hold
@@ -1286,16 +1286,21 @@ impl State {
         tick.figure_lost = lost_figure;
         let plan = crate::web::layout_frame(tick);
         let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
-        if resolved {
+        let spent = crate::visit::spent_figure_loss(lost_figure, plan.draw);
+        if resolved || spent {
             if let Some(web) = &self.web {
                 let mut inbox = web.inbox.borrow_mut();
-                inbox.hold = None;
-                inbox.hold_probe = 0;
-                inbox.hold_missed = false;
+                if resolved {
+                    inbox.hold = None;
+                    inbox.hold_probe = 0;
+                    inbox.hold_missed = false;
+                }
                 inbox.clear_figure();
             }
-            self.await_hold = false;
-            self.hold_since = None;
+            if resolved {
+                self.await_hold = false;
+                self.hold_since = None;
+            }
         }
         if plan.cancel {
             crate::web::cancel_placed_page();

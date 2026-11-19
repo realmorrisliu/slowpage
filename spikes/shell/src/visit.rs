@@ -1819,6 +1819,20 @@ fn reveal_char(reader: &mut Reader, offset: u32) -> DrawPlan {
 /// layout is still the one on screen, and only twice. After that the box
 /// moves and the page number is not sampled again.
 pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
+    // The first align already ended the wait and emptied the mailbox.
+    // The miss arrives on the next poll, so this count cannot sit inside
+    // the waiting branch.
+    if tick.figure_lost {
+        reader.figure_misses = reader.figure_misses.saturating_add(1);
+        reader.anchoring = false;
+        reader.hold_layout = true;
+        if reader.figure_misses >= 2 {
+            reader.figure = None;
+            reader.sample_misses = 2;
+            return plan(Draw::Move { reveal: None }, false, false);
+        }
+        return plan(Draw::Align, false, true);
+    }
     if tick.awaiting {
         if tick.figure && reader.figure.is_some() {
             reader.sample_misses = 0;
@@ -1826,17 +1840,6 @@ pub fn layout_frame(reader: &mut Reader, tick: FrameTick) -> DrawPlan {
             reader.anchoring = false;
             reader.hold_layout = true;
             return plan(Draw::Align, false, false);
-        }
-        if tick.figure_lost {
-            reader.figure_misses = reader.figure_misses.saturating_add(1);
-            reader.anchoring = false;
-            reader.hold_layout = true;
-            if reader.figure_misses >= 2 {
-                reader.figure = None;
-                reader.sample_misses = 2;
-                return plan(Draw::Move { reveal: None }, false, false);
-            }
-            return plan(Draw::Align, false, true);
         }
         let hold = current_hold(tick.hold, tick.hold_probe, reader.probe);
         let missed = tick.missed && hold.is_none();
