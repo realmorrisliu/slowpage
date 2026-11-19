@@ -458,6 +458,7 @@ const SCRIPT: &str = r#"
   let shift = 0;
   let followX = 0;
   let followGen = 0;
+  let committing = false;
   let measured = false;
   let layoutReport = null;
   let justifyReady = false;
@@ -828,9 +829,15 @@ const SCRIPT: &str = r#"
     if (next) begin(next);
   }
   window.spikeTurn = function (delta) {
-    followGen++;
-    followX = 0;
-    root.style.transform = "none";
+    // A commit glide is the turn that was already decided. Bumping the
+    // generation here kills the only callback that clears `busy` and runs
+    // the queued key, so the page stops accepting turns. A return glide has
+    // not committed, and a key cancels it.
+    if (!committing) {
+      followGen++;
+      followX = 0;
+      root.style.transform = "none";
+    }
     delta = delta < 0 ? -1 : 1;
     if (busy) {
       queued = delta;
@@ -943,6 +950,7 @@ const SCRIPT: &str = r#"
     followX = 0;
     queued = 0;
     busy = false;
+    committing = false;
     root.style.transform = "none";
   };
   window.spikeFollow = function (offset) {
@@ -977,9 +985,16 @@ const SCRIPT: &str = r#"
   }
   window.spikeFollowEnd = function (delta) {
     if (busy) {
-      followGen++;
-      followX = 0;
-      root.style.transform = "none";
+      // A key slide is not a commit. Drop the follow paint and let that slide
+      // finish. A commit glide is the turn already decided: cancelling its
+      // frame leaves `busy` set. A second lift queues one page; a cancel does not.
+      if (!committing) {
+        followGen++;
+        followX = 0;
+        root.style.transform = "none";
+      } else if (delta) {
+        queued = delta < 0 ? -1 : 1;
+      }
       return;
     }
     const from = followX;
@@ -994,8 +1009,10 @@ const SCRIPT: &str = r#"
       return;
     }
     const step = delta > 0 ? 1 : -1;
+    committing = true;
     busy = true;
     glide(from, step > 0 ? w : -w, function () {
+      committing = false;
       followX = 0;
       root.style.transform = "none";
       seek(box.w * (box.page + step - 1));
@@ -1058,6 +1075,49 @@ mod tests {
         assert!(script.contains("window.spikeFollowEnd"));
         assert!(script.contains("DURATION"));
         assert!(!script.contains("addEventListener(\"wheel\""));
+    }
+
+    #[test]
+    fn a_key_during_the_release_still_turns() {
+        let script = page_script("en");
+        assert!(!script.contains("addEventListener(\"wheel\""));
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-release-glide.js");
+        let drive = dir.join("superreader-release-glide-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::RELEASE_GLIDE_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        let queued = serde_json::json!(["queued"]);
+        let turned = serde_json::json!(["ok"]);
+        assert_eq!(v["key"]["space"], queued);
+        assert_eq!(v["key"]["arrow"], queued);
+        assert_eq!(v["key"]["edge"], queued);
+        // 400 is the harness page width. The release seeks one page and the
+        // single queued turn seeks the next, so the column is 800.
+        assert_eq!(v["key"]["scroll"], 800);
+        assert_eq!(v["key"]["after"], turned);
+        assert_eq!(v["drop"]["droppedScroll"], 0);
+        assert_eq!(v["drop"]["after"], turned);
+        assert_eq!(v["drop"]["scroll"], 400);
+        assert_eq!(v["cancel"]["during"], turned);
+        assert_eq!(v["cancel"]["scroll"], 400);
+        assert_eq!(v["again"]["scroll"], 800);
+        assert_eq!(v["again"]["after"], turned);
+        assert_eq!(v["ignored"]["scroll"], 400);
+        assert_eq!(v["ignored"]["after"], turned);
     }
 
     #[test]
@@ -1261,3 +1321,129 @@ mod tests {
         assert!(!lower.contains("spread"));
     }
 }
+
+const RELEASE_GLIDE_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(){} } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+}
+const seen = [];
+function spy() {
+  const orig = window.spikeTurn;
+  window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+}
+function take() { const out = seen.slice(); seen.length = 0; return out; }
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+fire('keydown', { key: ' ', shiftKey: false, repeat: false, preventDefault(){} });
+const space = take();
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+const arrow = take();
+fire('click', { button: 0, clientX: 390, clientY: 100, preventDefault(){} });
+const edge = take();
+flush();
+flush();
+const key = { space, arrow, edge, scroll: body.scrollLeft };
+fire('keydown', { key: ' ', shiftKey: true, repeat: false, preventDefault(){} });
+key.after = take();
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollowDrop();
+flush();
+flush();
+const droppedScroll = body.scrollLeft;
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+const drop = { droppedScroll, after: take(), scroll: body.scrollLeft };
+
+boot(); spy();
+window.spikeFollow(-30);
+window.spikeFollowEnd(0);
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+flush();
+const cancel = { during: take(), scroll: body.scrollLeft };
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollow(60);
+window.spikeFollowEnd(1);
+flush();
+flush();
+const again = { scroll: body.scrollLeft };
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+again.after = take();
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollow(20);
+window.spikeFollowEnd(0);
+flush();
+flush();
+const ignored = { scroll: body.scrollLeft };
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+ignored.after = take();
+
+console.log(JSON.stringify({ key, drop, cancel, again, ignored }));
+"#;

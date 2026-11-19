@@ -1764,14 +1764,18 @@ impl Stage {
             .as_deref()
             .map(|path| crate::settings::resume_page(&crate::settings::path(), path));
         let shelf = crate::launches_full();
-        match crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored) {
+        let target =
+            crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored);
+        if target.engages_shell() {
+            crate::chrome::engage_shell();
+        }
+        match target {
             crate::LaunchTarget::File { page } if product => {
                 if let Some(path) = explicit {
                     state.borrow_mut().open_at(&view, &path, page);
                 }
             }
             crate::LaunchTarget::Shelf => {
-                crate::chrome::engage_shell();
                 state.borrow_mut().mode = Mode::Empty;
                 state.borrow_mut().publish();
             }

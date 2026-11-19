@@ -301,6 +301,14 @@ pub enum LaunchTarget {
     Forced,
 }
 
+impl LaunchTarget {
+    /// The shelf flag is the library. A file open stays off it. The wheel
+    /// monitor is separate and is installed on every sync.
+    pub fn engages_shell(self) -> bool {
+        matches!(self, LaunchTarget::Shelf)
+    }
+}
+
 pub fn launch_target(
     explicit_file: bool,
     reader_forcing: bool,
@@ -1144,5 +1152,26 @@ mod launch_tests {
     #[test]
     fn a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place() {
         assert_eq!(launch_target(false, true, Some(2)), LaunchTarget::Forced);
+    }
+
+    #[test]
+    fn a_direct_file_arms_the_wheel_without_the_shelf() {
+        let file = launch_target(true, false, Some(4));
+        assert_eq!(file, LaunchTarget::File { page: 4 });
+        assert!(!file.engages_shell());
+        assert!(launch_target(false, false, None).engages_shell());
+        assert!(!launch_target(false, true, None).engages_shell());
+        let stage = include_str!("stage.rs");
+        assert!(stage.contains("target.engages_shell()"));
+        let chrome = include_str!("chrome.rs");
+        let install = chrome
+            .lines()
+            .position(|line| line.trim() == "install_shelf_wheel();")
+            .expect("sync installs the wheel monitor");
+        let before = chrome.lines().nth(install.saturating_sub(1)).unwrap_or("");
+        assert!(
+            !before.contains("shell_on()"),
+            "sync still installs the wheel monitor only while the shelf is on"
+        );
     }
 }

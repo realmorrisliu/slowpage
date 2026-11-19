@@ -329,9 +329,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     // first style.
     keep_fullscreen_primary(window);
     style_window(window, rt);
-    if shell_on() {
-        install_shelf_wheel();
-    }
+    // The shelf and the EPUB page share this monitor. A direct file open
+    // never engages the shelf, and the page script no longer handles the wheel.
+    install_shelf_wheel();
     window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
     note_immersive(rt);
     settle_bar(window, rt);
