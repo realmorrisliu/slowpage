@@ -17,7 +17,7 @@ jobs:
   fmt:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust 1.98.1
         run: |
           rustup toolchain install 1.98.1
@@ -35,7 +35,7 @@ jobs:
   clippy:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust 1.98.1
         run: |
           rustup toolchain install 1.98.1
@@ -56,7 +56,7 @@ jobs:
   test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust 1.98.1
         run: rustup toolchain install 1.98.1 && rustup default 1.98.1
       - uses: Swatinem/rust-cache@v2
@@ -94,7 +94,7 @@ jobs:
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done
       - name: Cache typesetter fixture fonts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             /tmp/superreader-fixtures/EBGaramond-Regular.ttf
@@ -111,7 +111,7 @@ jobs:
           fi
           just fixtures-fonts
       - name: Cache typesetter books
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             /tmp/superreader-fixtures/pride-se.epub
@@ -172,7 +172,7 @@ jobs:
   doc:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust 1.98.1
         run: rustup toolchain install 1.98.1 && rustup default 1.98.1
       - uses: Swatinem/rust-cache@v2
@@ -187,7 +187,7 @@ jobs:
   deny:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust 1.98.1
         run: rustup toolchain install 1.98.1 && rustup default 1.98.1
       - uses: Swatinem/rust-cache@v2
@@ -205,7 +205,7 @@ jobs:
   no-fast-models:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 40
       - name: Reject fast model ids in agent text
@@ -235,7 +235,7 @@ jobs:
   bold-word-starts-ip:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust 1.98.1
         run: rustup toolchain install 1.98.1 && rustup default 1.98.1
       - uses: Swatinem/rust-cache@v2
