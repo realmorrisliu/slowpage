@@ -28,7 +28,38 @@ fi
 
 stage="$(mktemp -d)"
 mount="$(mktemp -d)"
-trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true; rm -rf "$stage" "$mount"' EXIT
+
+# SetFile -a C and codesign --deep leave diskimages-helper holding the volume.
+# One detach then exits 16 (Resource busy) and the image never converts.
+# Retry, then force, and stop if the mount is still there.
+detach_mount() {
+  point="$1"
+  attempt=1
+  err="$(mktemp)"
+  while [ "$attempt" -le 5 ]; do
+    if hdiutil detach "$point" >/dev/null 2>"$err"; then
+      rm -f "$err"
+      return 0
+    fi
+    echo "hdiutil detach busy at ${point}, retry ${attempt}" >&2
+    cat "$err" >&2 || true
+    sleep "$attempt"
+    attempt=$((attempt + 1))
+  done
+  echo "hdiutil detach still busy at ${point}; forcing" >&2
+  if ! hdiutil detach -force "$point" >/dev/null 2>"$err"; then
+    cat "$err" >&2 || true
+    rm -f "$err"
+    return 1
+  fi
+  rm -f "$err"
+  if hdiutil info | grep -F "$point" >/dev/null; then
+    echo "volume still mounted at ${point}" >&2
+    return 1
+  fi
+}
+
+trap 'hdiutil detach "$mount" >/dev/null 2>&1 || hdiutil detach -force "$mount" >/dev/null 2>&1 || true; rm -rf "$stage" "$mount"' EXIT
 ditto "$app" "$stage/${name}.app"
 ln -s /Applications "$stage/Applications"
 rm -f "$dmg"
@@ -38,7 +69,7 @@ hdiutil create -volname "$name" -srcfolder "$stage" -ov -format UDRW "$writable"
 hdiutil attach "$writable" -mountpoint "$mount" -nobrowse >/dev/null
 cp "$icns" "$mount/.VolumeIcon.icns"
 SetFile -a C "$mount"
-hdiutil detach "$mount" >/dev/null
+detach_mount "$mount"
 hdiutil convert "$writable" -format UDZO -ov -o "$dmg" >/dev/null
 rm -f "$writable"
 
@@ -54,7 +85,7 @@ verify_mounted_app() {
   codesign --verify --deep --strict --verbose=2 "$point/${name}.app"
   status=$?
   set -e
-  hdiutil detach "$point" >/dev/null || true
+  detach_mount "$point"
   rmdir "$point" || true
   if [ "$status" -ne 0 ]; then
     echo "codesign verify failed for the app inside $dmg" >&2
