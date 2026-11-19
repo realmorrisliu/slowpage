@@ -162,6 +162,7 @@ pub struct Inbox {
     /// The last `turn_command` returned `no`. The poll latch clears; the walk stays.
     pub turn_declined: bool,
     pub hold: Option<u32>,
+    pub hold_missed: bool,
     pub sentence: Option<u32>,
     pub pinned: Option<u32>,
     pub pin_missed: bool,
@@ -308,6 +309,11 @@ define_class!(
                         }
                         if let Some(hold) = value["hold"].as_u64() {
                             inbox.hold = Some(hold as u32);
+                            inbox.hold_missed = false;
+                        } else if value["missed"].as_bool() == Some(true)
+                            && value.get("pinned").is_none()
+                        {
+                            inbox.hold_missed = true;
                         }
                         if value.get("sample").map(|item| !item.is_null()).unwrap_or(false) {
                             inbox.sample = Some(value["sample"].clone());
@@ -853,15 +859,24 @@ impl WebChapter {
     }
 
     pub fn hold(&self) {
-        let (web, _, href) = self.shown();
-        let page = SESSION.with(|session| session.borrow().reader.walk.unwrap_or(0));
-        eval(
-            &web,
-            &format!("window.spikeHold&&window.spikeHold({page})"),
-            self.inbox.clone(),
-            href,
-            false,
-        );
+        let plan =
+            SESSION.with(|session| crate::visit::begin_reflow(&mut session.borrow_mut().reader));
+        match plan {
+            crate::visit::ReflowHold::Keep(ch) => {
+                self.inbox.borrow_mut().hold = Some(ch);
+            }
+            crate::visit::ReflowHold::Pending => {}
+            crate::visit::ReflowHold::Measure(page) => {
+                let (web, _, href) = self.shown();
+                eval(
+                    &web,
+                    &crate::visit::hold_eval(page),
+                    self.inbox.clone(),
+                    href,
+                    false,
+                );
+            }
+        }
     }
 
     pub fn reveal(&self, offset: u32) {
@@ -1225,20 +1240,20 @@ pub fn take_turn_declined(inbox: &RefCell<Inbox>) -> bool {
 }
 
 /// One poll of the reader's walk. Reaching the column clears it.
+/// A caret read in flight does not chase and does not clear the walk.
 pub fn poll_reader_walk(shown: u32, pages: u32, turning: bool) -> bool {
     SESSION.with(|session| {
         let mut session = session.borrow_mut();
-        let polled = crate::visit::poll_resume(
-            session.reader.walk,
-            shown,
-            pages,
-            turning,
-            session.reader.restore_ack,
-            session.reader.restore_load,
-        );
-        session.reader.walk = polled.walk;
+        let polled = crate::visit::poll_anchored(&mut session.reader, shown, pages, turning);
         polled.command.is_some()
     })
+}
+
+/// The caret read failed or timed out. Do not reveal character 0.
+pub fn anchor_missed() {
+    SESSION.with(|session| {
+        session.borrow_mut().reader.anchoring = false;
+    });
 }
 
 pub fn take_reader_reveal() -> Option<u32> {

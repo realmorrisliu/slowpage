@@ -624,7 +624,6 @@ impl State {
                 let delta = args.as_i64().unwrap_or(0);
                 if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
-                        crate::web::stop_walk();
                         web.turn(delta as i32, crate::visit::TurnSource::User);
                     }
                 } else if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
@@ -1136,21 +1135,33 @@ impl State {
         if !self.await_hold {
             return;
         }
-        let offset = self.web.as_ref().and_then(|web| web.inbox.borrow().hold);
+        let (offset, missed) = match self.web.as_ref() {
+            Some(web) => {
+                let inbox = web.inbox.borrow();
+                (inbox.hold, inbox.hold_missed)
+            }
+            None => (None, false),
+        };
         let timed_out = self
             .hold_since
             .map(|at| at.elapsed().as_millis() > 700)
             .unwrap_or(false);
-        if offset.is_none() && !timed_out {
+        let finish = crate::visit::finish_hold_offset(offset, missed, timed_out);
+        if finish == crate::visit::HoldFinish::Wait {
             return;
         }
         if let Some(web) = &self.web {
-            web.inbox.borrow_mut().hold = None;
+            let mut inbox = web.inbox.borrow_mut();
+            inbox.hold = None;
+            inbox.hold_missed = false;
         }
         self.await_hold = false;
-        let offset = offset.unwrap_or(0);
         self.hold_ready = true;
         self.place_page();
+        let crate::visit::HoldFinish::Reveal(offset) = finish else {
+            crate::web::anchor_missed();
+            return;
+        };
         if let Some(web) = &self.web {
             web.reveal(offset);
             if let (Some(start), Some(end)) = (

@@ -1004,6 +1004,12 @@ pub struct Reader {
     /// shown column reaches it, or when a reader turn is saved. A resize does
     /// not end it.
     pub walk: Option<u32>,
+    /// The caret character for this chapter. `None` until a caret hits,
+    /// including a hit on character 0. A miss is not stored as 0.
+    pub measured: Option<u32>,
+    /// A caret read is in flight. The poll does not chase and does not end
+    /// the walk until the hit or the miss is applied.
+    pub anchoring: bool,
     /// The next restore answers a user post this reader refused or accepted.
     /// The page blocks an older restore until that answer arrives.
     pub restore_ack: bool,
@@ -1029,6 +1035,8 @@ impl Default for Reader {
             hold: None,
             reveal: None,
             walk: None,
+            measured: None,
+            anchoring: false,
             restore_ack: false,
             restore_load: 0,
         }
@@ -1090,6 +1098,9 @@ pub struct PageReport {
     pub pinned: Option<u32>,
     pub missed: Option<bool>,
     pub hold: Option<u32>,
+    /// The hold is a caret hit. Absent on a miss, including a miss that
+    /// would otherwise look like character 0.
+    pub measured: bool,
     /// The poll's column walk. The same slide as a key, without a reader.
     pub chase: bool,
 }
@@ -1106,6 +1117,7 @@ pub fn page_report(value: &serde_json::Value) -> PageReport {
         pinned: value["pinned"].as_u64().map(|offset| offset as u32),
         missed: value["missed"].as_bool(),
         hold: value["hold"].as_u64().map(|offset| offset as u32),
+        measured: value["measured"].as_bool() == Some(true),
         chase: value["chase"].as_bool() == Some(true),
     }
 }
@@ -1155,6 +1167,8 @@ fn clear_resume(reader: &mut Reader) {
     reader.hold = None;
     reader.reveal = None;
     reader.walk = None;
+    reader.measured = None;
+    reader.anchoring = false;
 }
 
 /// Accept a script message. The place changes only after `write_place`
@@ -1178,7 +1192,44 @@ pub fn handle_page(
             go: None,
         };
     }
-    if report.kind == "anchor" {
+    if report.hold.is_some()
+        && report.token.is_none()
+        && !report.frames
+        && report.kind != "turn"
+        && report.pinned.is_none()
+    {
+        if report.measured {
+            reader.measured = report.hold;
+        }
+        return Apply {
+            accepted: true,
+            paint: true,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    if report.missed == Some(true)
+        && report.token.is_none()
+        && report.kind != "turn"
+        && report.hold.is_none()
+        && (report.pinned.is_none() || reader.anchoring)
+    {
+        reader.anchoring = false;
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    let landed = report.missed != Some(true)
+        && report.pinned.is_some()
+        && report.token.is_none()
+        && report.kind != "turn"
+        && (report.kind == "anchor" || reader.anchoring);
+    if landed {
         let Some(page) = report.page.filter(|page| *page > 0) else {
             return apply_idle(true);
         };
@@ -1191,10 +1242,13 @@ pub fn handle_page(
         let changed = place != reader.place;
         if changed && !store.write_place(&place) {
             reader.restore_ack = true;
+            reader.anchoring = false;
             return apply_idle(false);
         }
         reader.place = place;
+        reader.measured = Some(offset);
         reader.walk = None;
+        reader.anchoring = false;
         reader.restore_ack = true;
         return Apply {
             accepted: true,
@@ -1209,23 +1263,6 @@ pub fn handle_page(
             reader.restore_ack = true;
             return apply_idle(false);
         }
-    }
-    // `{hold}` is the character offset the script posts for `finish_hold`.
-    // `Reader.hold` is the page a missed pin kept. This message sets neither
-    // the saved place nor that page.
-    if report.hold.is_some()
-        && report.token.is_none()
-        && !report.frames
-        && report.kind != "turn"
-        && report.pinned.is_none()
-    {
-        return Apply {
-            accepted: true,
-            paint: true,
-            wrote: false,
-            reveal: None,
-            go: None,
-        };
     }
     if user_turn(&report) {
         let mut next = reader.clone();
@@ -1311,7 +1348,7 @@ pub fn handle_page(
     if write {
         reader.place = place;
     }
-    if reader.walk.is_some_and(|target| shown >= target) {
+    if !reader.anchoring && reader.walk.is_some_and(|target| shown >= target) {
         reader.walk = None;
     }
     Apply {
@@ -1365,6 +1402,8 @@ pub fn handle_chapter(
     reader.reveal = None;
     if !matches!(nav.go, ChapterMove::Stay) {
         reader.walk = None;
+        reader.measured = None;
+        reader.anchoring = false;
     }
     let reveal = match nav.go {
         ChapterMove::Reveal { offset } => Some(offset),
@@ -1400,11 +1439,13 @@ pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str) {
     reader.hold = None;
     reader.back = None;
     reader.reveal = None;
+    reader.measured = if offset > 0 { Some(offset) } else { None };
+    reader.anchoring = false;
     reader.walk = resume_walk(page, offset);
 }
 
-/// A shell key that has already taken the page ends the walk.
-/// A resize does not. The saved row is not written here.
+/// An explicit stop ends the walk. A shell key does not call this before
+/// its post is saved. A resize does not. The saved row is not written here.
 pub fn stop_walk(reader: &mut Reader) {
     reader.walk = None;
 }
@@ -1418,6 +1459,8 @@ pub fn retire_restore(reader: &mut Reader) -> bool {
 pub fn reset_restore_epoch(reader: &mut Reader) {
     reader.restore_load = reader.restore_load.saturating_add(1);
     reader.restore_ack = false;
+    reader.measured = None;
+    reader.anchoring = false;
 }
 
 /// `place_page` on a cancel. The drop stops an animation that has not posted.
@@ -1474,6 +1517,71 @@ pub fn poll_resume(
         None
     };
     ResumePoll { walk, command }
+}
+
+/// The poll while a caret read is in flight. The old page is not chased,
+/// and a column past that page does not end the walk.
+pub fn poll_anchored(reader: &mut Reader, shown: u32, pages: u32, turning: bool) -> ResumePoll {
+    if reader.anchoring {
+        return ResumePoll {
+            walk: reader.walk,
+            command: None,
+        };
+    }
+    let polled = poll_resume(
+        reader.walk,
+        shown,
+        pages,
+        turning,
+        reader.restore_ack,
+        reader.restore_load,
+    );
+    reader.walk = polled.walk;
+    polled
+}
+
+/// What a reflow asks the page to measure. A known character is not measured
+/// again at the new width. A probe already in flight is not started again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReflowHold {
+    Measure(u32),
+    Keep(u32),
+    Pending,
+}
+
+pub fn begin_reflow(reader: &mut Reader) -> ReflowHold {
+    if let Some(ch) = reader.measured {
+        reader.anchoring = true;
+        return ReflowHold::Keep(ch);
+    }
+    if reader.anchoring {
+        return ReflowHold::Pending;
+    }
+    reader.anchoring = true;
+    ReflowHold::Measure(reader.walk.unwrap_or(0))
+}
+
+pub fn hold_eval(page: u32) -> String {
+    format!("window.spikeHold&&window.spikeHold({page})")
+}
+
+/// The offset `finish_hold` may reveal. A miss and a timeout are not character 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldFinish {
+    Wait,
+    Miss,
+    Reveal(u32),
+}
+
+pub fn finish_hold_offset(hold: Option<u32>, missed: bool, timed_out: bool) -> HoldFinish {
+    if let Some(ch) = hold {
+        return HoldFinish::Reveal(ch);
+    }
+    if missed || timed_out {
+        HoldFinish::Miss
+    } else {
+        HoldFinish::Wait
+    }
 }
 
 pub fn take_reveal(reader: &mut Reader) -> Option<u32> {
@@ -2496,6 +2604,18 @@ mod tests {
         assert_eq!(reader.walk, Some(10));
         assert!(command.contains("spikeFollowDrop"));
         assert!(!reader.swipe.release_open());
+        assert_eq!(begin_reflow(&mut reader), ReflowHold::Measure(10));
+        assert!(reader.anchoring);
+        assert_eq!(begin_reflow(&mut reader), ReflowHold::Pending);
+        assert_eq!(finish_hold_offset(None, false, false), HoldFinish::Wait);
+        assert_eq!(finish_hold_offset(None, true, false), HoldFinish::Miss);
+        assert_eq!(finish_hold_offset(None, false, true), HoldFinish::Miss);
+        assert_eq!(
+            finish_hold_offset(Some(0), false, false),
+            HoldFinish::Reveal(0)
+        );
+        reader.measured = Some(42);
+        assert_eq!(begin_reflow(&mut reader), ReflowHold::Keep(42));
     }
 
     #[test]

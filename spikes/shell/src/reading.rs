@@ -783,32 +783,47 @@ const SCRIPT: &str = r#"
     }
     return "ok";
   };
-  function heldOffset() {
+  function measureCaret() {
     const x = Math.max(24, Math.min(80, window.innerWidth * 0.2));
     const y = Math.max(48, Math.min(140, window.innerHeight * 0.18));
     const caret = document.caretRangeFromPoint(x, y) || document.caretRangeFromPoint(x, y + 40);
-    if (!caret || !caret.startContainer) return 0;
+    if (!caret || !caret.startContainer) return null;
     const node = caret.startContainer.nodeType === 3
       ? caret.startContainer
       : (caret.startContainer.firstChild || null);
-    if (!node || node.nodeType !== 3) return 0;
-    return offsetOf(node, caret.startOffset || 0);
+    if (!node || node.nodeType !== 3) return null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    const off = caret.startOffset || 0;
+    while (walker.nextNode()) {
+      if (walker.currentNode === node) return seen + off;
+      seen += walker.currentNode.textContent.length;
+    }
+    return null;
+  }
+  function heldOffset() {
+    const hit = measureCaret();
+    return hit == null ? 0 : hit;
   }
   function goalOffset(page) {
     const stride = columnStride();
     const saved = root.scrollLeft;
     seek((page - 1) * stride);
-    const caret = heldOffset();
+    const hit = measureCaret();
     seek(saved);
-    if (caret) return caret;
-    return (page - 1) * stride;
+    return hit;
   }
   window.spikeHold = function (page) {
     const goal = page | 0;
+    const offset = goal > 0 ? goalOffset(goal) : measureCaret();
+    if (offset == null) {
+      holdGoal = 0;
+      post({ missed: true, goal: goal });
+      return null;
+    }
     holdGoal = goal;
-    const offset = goal > 0 ? goalOffset(goal) : heldOffset();
     window.spikeHeld = offset;
-    post({ hold: offset, goal: goal });
+    post({ hold: offset, measured: true, goal: goal });
     return offset;
   };
   function snapSettled() {
@@ -817,7 +832,7 @@ const SCRIPT: &str = r#"
     seek(box.w * (page - 1));
   }
   function endFollow() {
-    if (flying === "restore") releaseFlying();
+    if (flying === "restore" || (flying === "user" && !committing)) releaseFlying();
     followGen++;
     motion++;
     followX = 0;
@@ -835,7 +850,7 @@ const SCRIPT: &str = r#"
     const leaf = document.getElementById("spike-leaf");
     if (leaf) leaf.remove();
     document.documentElement.style.transform = "none";
-    if (flying === "restore") snapSettled();
+    if (flying === "restore" || flying === "user") snapSettled();
     busy = false;
     window.spikeBusy = false;
     flying = "";
@@ -848,16 +863,6 @@ const SCRIPT: &str = r#"
       requestAnimationFrame(function () {
         const found = locate(offset);
         if (!found) {
-          const w = columnStride();
-          if (holdGoal && offset > 0 && w > 0) {
-            seek(Math.floor(offset / w) * w);
-            settled = column().page;
-            const landed = { pinned: offset };
-            if (holdGoal) landed.kind = "anchor";
-            holdGoal = 0;
-            post(landed);
-            return;
-          }
           holdGoal = 0;
           post({ pinned: offset, missed: true });
           return;
