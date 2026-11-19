@@ -282,16 +282,41 @@ define_class!(
                 {
                     let sentence = value["sentence"].as_u64().map(|offset| offset as u32);
                     let posted = value["swipe"].as_u64();
+                    let missed = value["missed"].as_bool();
+                    let pinned = value["pinned"].as_u64().map(|offset| offset as u32);
+                    let mut view = {
+                        let inbox = self.ivars().inbox.borrow();
+                        crate::visit::PageView {
+                            page: inbox.pages.map(|(shown, _)| shown as u32),
+                            pages: inbox.pages.map(|(_, count)| count as u32),
+                            sentence: inbox.sentence,
+                            pin_missed: inbox.pin_missed,
+                            pinned: inbox.pinned,
+                        }
+                    };
+                    let stored = SWIPE.with(|swipe| {
+                        crate::visit::deliver_page(
+                            &mut swipe.borrow_mut(),
+                            &mut view,
+                            posted,
+                            page as u32,
+                            pages as u32,
+                            sentence,
+                            missed,
+                            pinned,
+                        )
+                    });
+                    if !stored {
+                        return;
+                    }
                     let mut inbox = self.ivars().inbox.borrow_mut();
                     let previous = inbox.pages;
-                    if let Some(token) = posted {
-                        inbox.swipe_posts
-                            .push((token, page as usize, pages as usize, sentence));
-                    } else {
-                        settle_swipe_posts(&mut inbox);
-                        inbox.pages = Some((page as usize, pages as usize));
-                        inbox.sentence = sentence;
+                    if let (Some(shown), Some(count)) = (view.page, view.pages) {
+                        inbox.pages = Some((shown as usize, count as usize));
                     }
+                    inbox.sentence = view.sentence;
+                    inbox.pin_missed = view.pin_missed;
+                    inbox.pinned = view.pinned;
                     if let Some(tofu) = value["tofu"].as_u64() {
                         inbox.tofu = tofu as u32;
                     }
@@ -304,10 +329,6 @@ define_class!(
                     if let Some(hold) = value["hold"].as_u64() {
                         inbox.hold = Some(hold as u32);
                     }
-                    if let Some(pinned) = value["pinned"].as_u64() {
-                        inbox.pinned = Some(pinned as u32);
-                    }
-                    inbox.pin_missed = value["missed"].as_bool().unwrap_or(false);
                     if value.get("sample").map(|item| !item.is_null()).unwrap_or(false) {
                         inbox.sample = Some(value["sample"].clone());
                     }

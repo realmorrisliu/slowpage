@@ -651,6 +651,7 @@ impl State {
     }
 
     fn apply_chapter(&mut self, tag: isize) {
+        self.absorb_completed_swipe();
         crate::web::cancel_swipe();
         let next = {
             let Some(web) = self.web.as_ref() else {
@@ -1086,6 +1087,72 @@ impl State {
         }
     }
 
+    /// A commit post is already in the inbox. Copy it into the saved place
+    /// before a chapter or a resize cancels the gesture. A reveal that is
+    /// still waiting keeps its own pin. This does not draw and does not reveal.
+    fn absorb_completed_swipe(&mut self) {
+        let Some(web) = &self.web else {
+            return;
+        };
+        web.apply_pending_swipe();
+        let (pages, sentence, pinned, missed, ready) = {
+            let inbox = web.inbox.borrow();
+            (
+                inbox.pages,
+                inbox.sentence.unwrap_or(0),
+                inbox.pinned,
+                inbox.pin_missed,
+                inbox.nav_done && inbox.pages.is_some(),
+            )
+        };
+        let Some((page, count)) = pages else {
+            return;
+        };
+        self.epub_page = page.saturating_sub(1);
+        self.web_pages = count.max(1);
+        if self.book_path.is_empty() || self.mode != Mode::WebKit {
+            return;
+        }
+        if self.jump_offset.is_some() || self.awaiting_pin.is_some() || self.pending_sentence > 0 {
+            return;
+        }
+        let shown = self.epub_page as u32 + 1;
+        let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
+        let href = web.href();
+        let polled = crate::visit::poll_chapter(crate::visit::ChapterPoll {
+            saved_href: &self.saved_href,
+            saved_page: self.saved_page,
+            saved_offset: self.saved_sentence,
+            jump_href: &self.jump_href,
+            jump_offset: self.jump_offset,
+            awaiting: self.awaiting_pin,
+            pending: self.pending_sentence,
+            hold: self.hold_shown,
+            shown,
+            href: &href,
+            ready,
+            reported: true,
+            pinned,
+            missed,
+            sentence,
+            still_turning,
+        });
+        if polled.record {
+            let path = self.book_path.clone();
+            self.saved_page = polled.saved_page;
+            self.saved_sentence = polled.saved_offset;
+            self.saved_href = polled.saved_href;
+            let _ = crate::settings::record_progress(
+                &crate::settings::path(),
+                &path,
+                self.saved_page,
+                self.page_total,
+                self.saved_sentence,
+                &self.saved_href,
+            );
+        }
+    }
+
     fn poll_web(&mut self) {
         self.finish_hold();
         let Some(web) = &self.web else {
@@ -1389,6 +1456,7 @@ impl State {
         match crate::visit::place_step(fitted_same, zoom_same, stage_same) {
             crate::visit::PlaceStep::Hold => return,
             crate::visit::PlaceStep::Cancel { reflow } => {
+                self.absorb_completed_swipe();
                 crate::web::cancel_swipe();
                 self.placed_stage_w = self.stage_w;
                 self.placed_stage_h = self.stage_h;

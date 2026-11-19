@@ -681,6 +681,9 @@ pub struct Swipe {
     next_id: u64,
     /// Tokens at or below this were retired by navigation.
     floor: u64,
+    /// The newest commit whose post was stored. An older post does not
+    /// move the saved page backward.
+    last_applied: u64,
     /// The glide the page is running. Its post carries this token.
     flying: Option<u64>,
     /// The one queued page. A newer commit replaces it. A key that takes
@@ -700,6 +703,7 @@ impl Default for Swipe {
             release: false,
             next_id: 0,
             floor: 0,
+            last_applied: 0,
             flying: None,
             queued: None,
             last_commit: None,
@@ -739,7 +743,11 @@ impl Swipe {
                 if self.queued == Some(token) {
                     self.queued = None;
                 }
-                self.flying = Some(token);
+                if self.flying.is_none() || self.flying == Some(token) {
+                    self.flying = Some(token);
+                } else {
+                    self.queued = Some(token);
+                }
             }
             "queued" => {
                 if self.flying == Some(token) {
@@ -762,10 +770,14 @@ impl Swipe {
     /// refused, replaced, or navigation retired does not change the stored page.
     /// Either of the two slots may arrive first. A repeat does not apply.
     pub fn take_commit_post(&mut self, token: u64) -> bool {
-        if !self.holds(token) {
+        let held = self.holds(token);
+        if held {
+            self.clear_token(token);
+        }
+        if !held || token <= self.last_applied {
             return false;
         }
-        self.clear_token(token);
+        self.last_applied = token;
         true
     }
 
@@ -821,6 +833,7 @@ impl Swipe {
             if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
                 let next_id = self.next_id;
                 let floor = self.floor;
+                let last_applied = self.last_applied;
                 let flying = self.flying;
                 let queued = self.queued;
                 let last_commit = self.last_commit;
@@ -828,6 +841,7 @@ impl Swipe {
                 *self = Self::default();
                 self.next_id = next_id;
                 self.floor = floor;
+                self.last_applied = last_applied;
                 self.flying = flying;
                 self.queued = queued;
                 self.last_commit = last_commit;
@@ -921,6 +935,55 @@ impl Swipe {
         }
         self.release = true;
     }
+}
+
+/// The page the message handler stores. A rejected report leaves it unchanged.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageView {
+    pub page: Option<u32>,
+    pub pages: Option<u32>,
+    pub sentence: Option<u32>,
+    pub pin_missed: bool,
+    pub pinned: Option<u32>,
+}
+
+impl Default for PageView {
+    fn default() -> Self {
+        Self {
+            page: None,
+            pages: None,
+            sentence: None,
+            pin_missed: false,
+            pinned: None,
+        }
+    }
+}
+
+/// The script-message entry. `token` is the commit post. None is an ordinary
+/// report. A token that was refused or retired does not change `view`.
+pub fn deliver_page(
+    swipe: &mut Swipe,
+    view: &mut PageView,
+    token: Option<u64>,
+    page: u32,
+    pages: u32,
+    sentence: Option<u32>,
+    missed: Option<bool>,
+    pinned: Option<u32>,
+) -> bool {
+    if let Some(token) = token {
+        if !swipe.take_commit_post(token) {
+            return false;
+        }
+    }
+    view.page = Some(page);
+    view.pages = Some(pages);
+    view.sentence = sentence;
+    view.pin_missed = missed.unwrap_or(false);
+    if let Some(pinned) = pinned {
+        view.pinned = Some(pinned);
+    }
+    true
 }
 
 /// A page report from the commit glide. `token` is the value the glide posted.
@@ -2089,6 +2152,7 @@ mod tests {
             dy: 0.0,
         };
         let mut swipe = Swipe::default();
+        let mut view = PageView::default();
         for n in 1u64..=128 {
             assert_eq!(swipe.offer(down, 4, 400), WheelMove::Follow(80.0));
             assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
@@ -2096,10 +2160,17 @@ mod tests {
             assert_eq!(token, n);
             swipe.note_answer(token, "glide");
             let page = n as u32;
-            assert_eq!(
-                swipe_progress(&mut swipe, Some(token), page, 0),
-                Some((page, 0))
-            );
+            assert!(deliver_page(
+                &mut swipe,
+                &mut view,
+                Some(token),
+                page,
+                400,
+                Some(0),
+                None,
+                None
+            ));
+            assert_eq!(view.page, Some(page));
         }
         let again = swipe.commit_token();
         assert_eq!(again, None);
@@ -2107,8 +2178,235 @@ mod tests {
         assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
         let late = swipe.commit_token().expect("late");
         assert!(swipe.cancel_release());
-        assert_eq!(swipe_progress(&mut swipe, Some(late), 2, 50), None);
-        assert_eq!(swipe_progress(&mut swipe, None, 1, 800), Some((1, 800)));
-        assert_eq!(swipe_progress(&mut swipe, Some(1), 2, 0), None);
+        assert!(!deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(late),
+            2,
+            400,
+            Some(50),
+            None,
+            None
+        ));
+        assert_eq!(view.page, Some(128));
+        assert!(deliver_page(
+            &mut swipe,
+            &mut view,
+            None,
+            1,
+            400,
+            Some(800),
+            None,
+            None
+        ));
+        assert_eq!((view.page, view.sentence), (Some(1), Some(800)));
+        assert!(!deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(1),
+            2,
+            400,
+            Some(0),
+            None,
+            None
+        ));
+        assert_eq!(view.page, Some(1));
+    }
+
+    #[test]
+    fn a_finished_page_is_saved_before_chapter_or_resize() {
+        let down = WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let issue = |swipe: &mut Swipe| {
+            assert_eq!(swipe.offer(down, 4, 400), WheelMove::Follow(80.0));
+            assert_eq!(swipe.offer(up, 4, 400), WheelMove::Commit(1));
+            swipe.commit_token().expect("token")
+        };
+        let saved_of = |view: &PageView| {
+            poll_chapter(ChapterPoll {
+                saved_href: "ch.xhtml",
+                saved_page: 1,
+                saved_offset: 0,
+                jump_href: "",
+                jump_offset: None,
+                awaiting: None,
+                pending: 0,
+                hold: None,
+                shown: view.page.unwrap_or(1),
+                href: "ch.xhtml",
+                ready: true,
+                reported: view.page.is_some(),
+                pinned: view.pinned,
+                missed: view.pin_missed,
+                sentence: view.sentence.unwrap_or(0),
+                still_turning: false,
+            })
+        };
+
+        let mut missed = Swipe::default();
+        let mut view = PageView {
+            page: Some(1),
+            pages: Some(10),
+            sentence: Some(0),
+            pin_missed: true,
+            pinned: Some(800),
+        };
+        assert!(!deliver_page(
+            &mut missed,
+            &mut view,
+            Some(9),
+            4,
+            10,
+            Some(50),
+            None,
+            Some(1)
+        ));
+        assert!(view.pin_missed);
+        assert_eq!(view.pinned, Some(800));
+        assert_eq!(view.page, Some(1));
+        let still_missed = poll_chapter(ChapterPoll {
+            saved_href: "ch.xhtml",
+            saved_page: 1,
+            saved_offset: 0,
+            jump_href: "ch.xhtml",
+            jump_offset: None,
+            awaiting: Some(800),
+            pending: 0,
+            hold: None,
+            shown: 1,
+            href: "ch.xhtml",
+            ready: true,
+            reported: true,
+            pinned: view.pinned,
+            missed: view.pin_missed,
+            sentence: 0,
+            still_turning: false,
+        });
+        assert!(!still_missed.pin_write);
+        assert!(!still_missed.record);
+
+        let mut swipe = Swipe::default();
+        let first = issue(&mut swipe);
+        swipe.note_answer(first, "glide");
+        assert!(deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(first),
+            2,
+            10,
+            Some(100),
+            None,
+            None
+        ));
+        let stored = saved_of(&view);
+        assert!(stored.record);
+        assert_eq!((stored.saved_page, stored.saved_offset), (2, 100));
+        assert!(stored.reveal_jump.is_none());
+        swipe.cancel_release();
+        assert_eq!((view.page, view.sentence), (Some(2), Some(100)));
+
+        let second = issue(&mut swipe);
+        swipe.note_answer(second, "glide");
+        assert!(swipe.cancel_release());
+        assert!(!deliver_page(
+            &mut swipe,
+            &mut view,
+            Some(second),
+            3,
+            10,
+            Some(200),
+            None,
+            None
+        ));
+        assert_eq!((view.page, view.sentence), (Some(2), Some(100)));
+
+        let mut ordered = Swipe::default();
+        let mut pages = PageView::default();
+        let one = issue(&mut ordered);
+        ordered.note_answer(one, "glide");
+        let two = issue(&mut ordered);
+        ordered.note_answer(two, "queued");
+        assert!(deliver_page(
+            &mut ordered,
+            &mut pages,
+            Some(one),
+            2,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert!(deliver_page(
+            &mut ordered,
+            &mut pages,
+            Some(two),
+            3,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert_eq!(pages.page, Some(3));
+
+        let mut late_old = Swipe::default();
+        let mut kept = PageView::default();
+        let older = issue(&mut late_old);
+        late_old.note_answer(older, "glide");
+        let newer = issue(&mut late_old);
+        late_old.note_answer(newer, "queued");
+        assert!(deliver_page(
+            &mut late_old,
+            &mut kept,
+            Some(newer),
+            3,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert!(!deliver_page(
+            &mut late_old,
+            &mut kept,
+            Some(older),
+            2,
+            10,
+            Some(0),
+            None,
+            None
+        ));
+        assert_eq!(kept.page, Some(3));
+
+        let mut retired = Swipe::default();
+        let mut revealed = PageView {
+            page: Some(1),
+            pages: Some(10),
+            sentence: Some(800),
+            pin_missed: false,
+            pinned: Some(800),
+        };
+        let stale = issue(&mut retired);
+        retired.note_answer(stale, "glide");
+        assert!(retired.cancel_release());
+        assert!(!deliver_page(
+            &mut retired,
+            &mut revealed,
+            Some(stale),
+            4,
+            10,
+            Some(50),
+            None,
+            None
+        ));
+        assert_eq!((revealed.page, revealed.sentence), (Some(1), Some(800)));
     }
 }
