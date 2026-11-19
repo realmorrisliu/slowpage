@@ -364,9 +364,10 @@ MOCK_GRID = {
     "caption_h": 42.0,
 }
 SHELL_CLICK_GAP = (
-    "S3/S4 has not built the reading form. A click on 继续阅读 can write reader.json "
-    "while the window stays on the library. The reader-forcing launch is SPIKE_BOOK. "
-    "This gap stays until the reading form."
+    "A cover click leaves the library and shows the existing reader chrome. "
+    "Escape or Command-[ returns while editing is idle and immersive is off. "
+    "This window check has not been driven, so it stays pending. "
+    "The margin form still waits on the mockup."
 )
 
 

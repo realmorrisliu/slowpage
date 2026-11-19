@@ -632,9 +632,17 @@ fn remember_shelf(shelf: &ElementRef) {
     SHELF_SCROLL.with(|slot| *slot.borrow_mut() = Some(shelf.clone()));
 }
 
+pub fn shelf_scroll() -> f32 {
+    SHELF_OFFSET.with(|stored| stored.get())
+}
+
+pub fn restore_shelf_scroll(offset: f32) {
+    SHELF_OFFSET.with(|stored| stored.set(crate::visit::shelf_origin(offset)));
+}
+
 fn note_shelf_offset(offset: f32) {
     if offset.is_finite() {
-        SHELF_OFFSET.with(|stored| stored.set(offset.max(0.0)));
+        SHELF_OFFSET.with(|stored| stored.set(crate::visit::shelf_origin(offset)));
     }
 }
 
@@ -2438,6 +2446,7 @@ fn card_face(
         CardFace::Grid => {
             let shelf = element_ref();
             remember_shelf(&shelf);
+            let saved = shelf_scroll();
             column.child(
                 scroll()
                     .element_ref(&shelf)
@@ -2449,6 +2458,7 @@ fn card_face(
                     .flex()
                     .flex_col()
                     .scrollable(true)
+                    .content_offset(point(px(0.0), px(saved)))
                     .on_scroll(|scroll: &ScrollEvent| note_shelf_offset(scroll.offset.y.0))
                     .child(book_grid(library, content_w, on_open)),
             )
