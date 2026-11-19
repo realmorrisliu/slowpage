@@ -332,7 +332,6 @@ fn install(registry: &mut Registry) {
 
 #[component]
 pub fn SpikeApp() -> impl IntoElement {
-    listen_for_opens();
     let app_owner = Owner::current();
     let mut title_bar = TitleBarOptions::default();
     title_bar.style = TitleBarStyle::Hidden;
@@ -353,19 +352,22 @@ pub fn SpikeApp() -> impl IntoElement {
     let epoch = signal(0_u64);
     let visit = signal(visit::Visit::shelf());
     visit::publish_surface(visit::Surface::Library);
+    let notice = signal(String::new());
+    let arrival = signal((0_u64, String::new()));
+    let arrival_menu = arrival.clone();
     effect({
         let trim_id = trim_id.clone();
         let bold_on = bold_on.clone();
         let stage = stage.clone();
         let catalog = catalog.clone();
         let epoch = epoch.clone();
+        let arrival_menu = arrival_menu.clone();
         move || {
             let current = trim_id.get();
             let bold = bold_on.get();
             let needs_folder = shelf_on && catalog.get().needs_folder();
             let stage_trim = stage.clone();
             let stage_bold = stage.clone();
-            let stage_open = stage.clone();
             let bold_slot = bold_on.clone();
             let catalog_slot = catalog.clone();
             let epoch_slot = epoch.clone();
@@ -382,7 +384,10 @@ pub fn SpikeApp() -> impl IntoElement {
                     bold_slot.set(next);
                     stage_bold.command("bold", json!(next));
                 },
-                move || choose_book(stage_open.clone()),
+                {
+                    let arrival_pick = arrival_menu.clone();
+                    move || choose_book(arrival_pick.clone())
+                },
             ));
         }
     });
@@ -509,6 +514,25 @@ pub fn SpikeApp() -> impl IntoElement {
         }
     });
     effect({
+        let arrival = arrival.clone();
+        let visit = visit.clone();
+        let notice = notice.clone();
+        let stage = stage.clone();
+        let title = title.clone();
+        let variant = variant.clone();
+        let history = history.clone();
+        let seen = std::cell::Cell::new(0_u64);
+        move || {
+            let (seq, path) = arrival.get();
+            if path.is_empty() || !visit::fresh_arrival(seq, seen.get()) {
+                return;
+            }
+            seen.set(seq);
+            receive_file(&visit, &notice, &stage, &title, &variant, &history, &path);
+        }
+    });
+    listen_for_opens(arrival);
+    effect({
         let catalog = catalog.clone();
         let shell_selected = shell_selected.clone();
         let shell_library = shell_library.clone();
@@ -566,9 +590,12 @@ pub fn SpikeApp() -> impl IntoElement {
         }
     }
     let drop_visit = visit.clone();
+    let drop_notice = notice.clone();
     let drop_title = title.clone();
     let drop_variant = variant.clone();
+    let drop_history = history.clone();
     let root_visit = visit.clone();
+    let root_notice = notice.clone();
     view()
         .flex_1()
         .bg(move || {
@@ -584,20 +611,37 @@ pub fn SpikeApp() -> impl IntoElement {
                 .iter()
                 .find_map(|uri| books::path_from_file_url(uri))
             {
-                if shelf_on {
+                receive_file(
+                    &drop_visit,
+                    &drop_notice,
+                    &dropped,
+                    &drop_title,
+                    &drop_variant,
+                    &drop_history,
+                    &path,
+                );
+                if drop_visit.get().path == path {
                     if let Some(cmd) = spike_library::dropped_open(std::path::Path::new(&path)) {
-                        let name = cmd.title().to_string();
-                        drop_variant.set(name.clone());
-                        drop_title.set(name);
+                        drop_title.set(cmd.title().to_string());
                     }
-                    let page = settings::resume_page(&settings::path(), &path);
-                    let mut current = drop_visit.get();
-                    current.scroll = form::shelf_scroll();
-                    commit_visit(&drop_visit, visit::open_cover(&current, &path, page));
                 }
-                dropped.command("open", json!(path));
             }
         })
+        .child(when(
+            {
+                let notice = root_notice.clone();
+                move || !notice.get().is_empty()
+            },
+            {
+                let notice = root_notice.clone();
+                move || {
+                    text(move || notice.get())
+                        .text_size(px(13.0))
+                        .px_4()
+                        .h(px(28.0))
+                }
+            },
+        ))
         .child(when(
             {
                 let bars_row = bars_row.clone();
@@ -748,12 +792,14 @@ pub fn SpikeApp() -> impl IntoElement {
                         let visit = visit.clone();
                         let title = title.clone();
                         let variant = variant.clone();
+                        let notice = notice.clone();
                         move || {
                             let stage_open = stage.clone();
                             let history_open = history.clone();
                             let visit_open = visit.clone();
                             let title_open = title.clone();
                             let variant_open = variant.clone();
+                            let notice_open = notice.clone();
                             let library_open = shell_library.clone();
                             form::mount(
                                 shell_form,
@@ -781,6 +827,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                         None,
                                         next_opened_at(&settings_path),
                                     );
+                                    notice_open.set(String::new());
                                     let mut current = visit_open.get();
                                     current.scroll = form::shelf_scroll();
                                     commit_visit(
@@ -832,19 +879,88 @@ pub fn SpikeApp() -> impl IntoElement {
         ))
 }
 
-fn listen_for_opens() {
+fn deliver(arrival: &Signal<(u64, String)>, path: &Path) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let text = path.display().to_string();
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    arrival.set((seq, text));
+}
+
+fn listen_for_opens(arrival: Signal<(u64, String)>) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::Relaxed) {
         return;
     }
-    spawn(async {
+    spawn(async move {
         loop {
             for path in next_open_files().await {
-                crate::launch::accept_path(&path);
+                deliver(&arrival, &path);
             }
         }
     });
+}
+
+fn ready_book(path: &str) -> bool {
+    let Some(book) = books::parse_book(path) else {
+        return false;
+    };
+    if !books::can_open(path) {
+        return false;
+    }
+    if book.kind == books::BookKind::Epub && Path::new(&book.path).is_dir() {
+        return true;
+    }
+    let mut file = match std::fs::File::open(&book.path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    use std::io::Read;
+    let mut buf = [0_u8; 4];
+    let n = file.read(&mut buf).unwrap_or(0);
+    visit::prefix_is_book(book.kind == books::BookKind::Pdf, &buf[..n])
+}
+
+fn receive_file(
+    visit: &Signal<visit::Visit>,
+    notice: &Signal<String>,
+    stage: &ElementRef,
+    title: &Signal<String>,
+    variant: &Signal<String>,
+    history: &Signal<Vec<settings::ReadingRecord>>,
+    path: &str,
+) {
+    let page = settings::resume_page(&settings::path(), path);
+    let open = visit::file_open(ready_book(path), path, page);
+    let visit::FileOpen::Read { path, page } = &open else {
+        notice.set(visit::OPEN_REFUSAL.to_string());
+        return;
+    };
+    notice.set(String::new());
+    let mut current = visit.get();
+    if current.surface == visit::Surface::Library {
+        current.scroll = form::shelf_scroll();
+    }
+    if let Some(name) = Path::new(path).file_stem().and_then(|stem| stem.to_str()) {
+        title.set(name.to_string());
+    }
+    variant.set(String::new());
+    let settings_path = settings::path();
+    let _ = settings::record_open(
+        &settings_path,
+        path,
+        *page,
+        None,
+        next_opened_at(&settings_path),
+    );
+    commit_visit(visit, visit::apply_file_open(&current, &open));
+    match visit::stage_open(&open, stage.node().is_some()) {
+        visit::StageOpen::Command => stage.command("open", json!(path)),
+        visit::StageOpen::Queue => crate::launch::accept_path(Path::new(path)),
+        visit::StageOpen::None => {}
+    }
+    history.set(settings::load_history(&settings::path()));
 }
 
 fn commit_visit(slot: &Signal<visit::Visit>, next: visit::Visit) {
@@ -876,7 +992,7 @@ fn cover_title(library: &form::LibraryIn, path: &str) -> Option<String> {
         .map(|card| card.title.clone())
 }
 
-fn choose_book(stage: ElementRef) {
+fn choose_book(arrival: Signal<(u64, String)>) {
     spawn(async move {
         let dialog = OpenDialog::files().filter(FileFilter::new("Books", ["epub", "pdf"]));
         if let Ok(Some(paths)) = pick_paths(dialog).await {
@@ -884,7 +1000,7 @@ fn choose_book(stage: ElementRef) {
                 let text = path.display().to_string();
                 books::parse_book(&text).map(|_| text)
             }) {
-                stage.command("open", json!(path));
+                deliver(&arrival, Path::new(&path));
             }
         }
     });
