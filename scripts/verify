@@ -3777,6 +3777,7 @@ def signature_problems(source):
 
 
 def self_test():
+    provided_binary_self_test()
     form_diff_self_check()
     left, right = light_gaps(12.0, 70.0, 0.0, 82.0)
     assert abs(left - right) <= 0.5
@@ -5161,13 +5162,240 @@ def cargo_target_dir() -> Path:
     return _TARGET_DIR
 
 
+# Rust sources and package manifests. A fixture script is not a new shell.
+PRODUCT_RUST_TREES = ("rust-toolchain.toml", "spikes", "crates")
+SHELL_ENV = ("SR_VERIFY_SHELL", "SR_VERIFY_SHELL_SHA", "SR_VERIFY_SHELL_SOURCE")
+MEASURE_ENV = ("SR_VERIFY_MEASURE", "SR_VERIFY_MEASURE_SHA", "SR_VERIFY_MEASURE_SOURCE")
+_PROVIDED: dict[str, dict | None] = {}
+PROVIDED_BINARIES: list[dict] = []
+
+
+def reset_provided_cache() -> None:
+    _PROVIDED.clear()
+
+
+def is_product_rust(path: str) -> bool:
+    name = Path(path).name
+    if name in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml"}:
+        return True
+    return path.endswith(".rs")
+
+
+def product_rust_names(source: str) -> list[str]:
+    """Committed and uncommitted product Rust that is not `source`."""
+    diff = subprocess.run(
+        ["git", "diff", "--name-only", source, "HEAD", "--", *PRODUCT_RUST_TREES],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if diff.returncode != 0:
+        raise SystemExit(
+            f"cannot compare product Rust to {source}: {(diff.stderr or diff.stdout).strip()}"
+        )
+    work = subprocess.run(
+        ["git", "status", "--porcelain", "--", *PRODUCT_RUST_TREES],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if work.returncode != 0:
+        raise SystemExit(
+            f"cannot read the product Rust worktree: {(work.stderr or work.stdout).strip()}"
+        )
+    names: list[str] = []
+    for line in diff.stdout.splitlines():
+        if line.strip():
+            names.append(line.strip())
+    for line in work.stdout.splitlines():
+        path = line[3:].strip() if len(line) >= 4 else ""
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
+        if path:
+            names.append(path)
+    relevant: list[str] = []
+    seen: set[str] = set()
+    for path in names:
+        if path in seen or not is_product_rust(path):
+            continue
+        seen.add(path)
+        relevant.append(path)
+    return relevant
+
+
+def provided_binary(path_env: str, sha_env: str, source_env: str) -> dict | None:
+    """A prebuilt binary. Unset means cargo still builds that package.
+
+    A wrong sha, or a product tree that is not `source`, stops here. This does
+    not run cargo and does not start the app. `source` is the commit that
+    produced the binary, never the verify script's HEAD.
+    """
+    if path_env in _PROVIDED:
+        return _PROVIDED[path_env]
+    raw = os.environ.get(path_env, "").strip()
+    if not raw:
+        _PROVIDED[path_env] = None
+        return None
+    path = Path(raw)
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise SystemExit(f"{path_env} is not an executable file: {path}")
+    want = os.environ.get(sha_env, "").strip().lower()
+    if len(want) != 64 or any(char not in "0123456789abcdef" for char in want):
+        raise SystemExit(f"{sha_env} must be the 64-character sha256 when {path_env} is set")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != want:
+        raise SystemExit(f"{path_env} sha256 {digest} != {want}")
+    source = os.environ.get(source_env, "").strip().lower()
+    if len(source) != 40 or any(char not in "0123456789abcdef" for char in source):
+        raise SystemExit(f"{source_env} must be the 40-character source commit of this binary")
+    changed = product_rust_names(source)
+    if changed:
+        shown = ", ".join(changed[:12])
+        extra = f" (+{len(changed) - 12})" if len(changed) > 12 else ""
+        raise SystemExit(
+            f"product Rust differs from {source}: {shown}{extra}. Rebuild the candidate."
+        )
+    info = {"path": path, "sha256": digest, "source": source}
+    _PROVIDED[path_env] = info
+    return info
+
+
+def gate_provided_binaries() -> None:
+    """Check every prebuilt binary before doctor, cargo, or the app."""
+    provided_binary(*SHELL_ENV)
+    provided_binary(*MEASURE_ENV)
+
+
+def provided_binary_self_test() -> None:
+    keys = SHELL_ENV + MEASURE_ENV
+    saved = {key: os.environ.get(key) for key in keys}
+    try:
+        reset_provided_cache()
+        for key in keys:
+            os.environ.pop(key, None)
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "spike-shell"
+            binary.write_bytes(b"not-a-real-shell")
+            binary.chmod(0o755)
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            os.environ["SR_VERIFY_SHELL"] = str(binary)
+            os.environ["SR_VERIFY_SHELL_SHA"] = "0" * 64
+            os.environ["SR_VERIFY_SHELL_SOURCE"] = git_head()
+            reset_provided_cache()
+            try:
+                provided_binary(*SHELL_ENV)
+            except SystemExit as exc:
+                message = str(exc)
+                assert "sha256" in message and "!=" in message, message
+                assert "cargo" not in message, message
+            else:
+                raise AssertionError("wrong sha was accepted")
+            older = subprocess.run(
+                ["git", "rev-list", "--max-count=40", "HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            mismatch = ""
+            for sha in older.stdout.split():
+                if product_rust_names(sha):
+                    mismatch = sha
+                    break
+            assert mismatch, "no ancestor with different product Rust"
+            os.environ["SR_VERIFY_SHELL_SHA"] = digest
+            os.environ["SR_VERIFY_SHELL_SOURCE"] = mismatch
+            reset_provided_cache()
+            try:
+                provided_binary(*SHELL_ENV)
+            except SystemExit as exc:
+                message = str(exc)
+                assert message.startswith("product Rust differs"), message
+                assert "Rebuild the candidate" in message, message
+                assert "cargo" not in message, message
+            else:
+                raise AssertionError("changed product Rust was accepted")
+            os.environ["SR_VERIFY_SHELL_SOURCE"] = git_head()
+            reset_provided_cache()
+            info = provided_binary(*SHELL_ENV)
+            assert info is not None
+            assert info["sha256"] == digest
+            assert info["source"] == git_head()
+            for key in SHELL_ENV:
+                os.environ.pop(key, None)
+            reset_provided_cache()
+            assert provided_binary(*SHELL_ENV) is None
+            assert provided_binary(*MEASURE_ENV) is None
+    finally:
+        reset_provided_cache()
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def release_bin(name: str) -> Path:
+    if name == "spike-shell":
+        info = provided_binary(*SHELL_ENV)
+        if info is not None:
+            return info["path"]
+    elif name == "spike-measure":
+        info = provided_binary(*MEASURE_ENV)
+        if info is not None:
+            return info["path"]
     return cargo_target_dir() / "release" / name
 
 
 def build(log_path):
-    logs = []
-    for package in ("spike-shell", "spike-measure"):
+    global PROVIDED_BINARIES
+    shell = provided_binary(*SHELL_ENV)
+    measure = provided_binary(*MEASURE_ENV)
+    if shell is None and measure is None:
+        PROVIDED_BINARIES = []
+        logs = []
+        for package in ("spike-shell", "spike-measure"):
+            proc = subprocess.run(
+                [cargo_bin(), "build", "--release", "-p", package],
+                cwd=SPIKES,
+                capture_output=True,
+                text=True,
+            )
+            logs.append(proc.stdout + "\n" + proc.stderr)
+            if proc.returncode != 0:
+                log_path.write_text("\n".join(logs))
+                tail = "\n".join((proc.stderr or proc.stdout).splitlines()[-20:])
+                return check("build", "open-a-pdf", "doctor", "fail", tail or f"cargo build -p {package} failed")
+        log_path.write_text("\n".join(logs))
+        return check(
+            "build",
+            "open-a-pdf",
+            "doctor",
+            "pass",
+            "release spike-shell and spike-measure, built separately so taffy's calc feature stays off the shell",
+        )
+    logs = [f"script_head {git_head()}\n"]
+    packages = []
+    records = []
+    lines = []
+    for name, info in (("spike-shell", shell), ("spike-measure", measure)):
+        if info is None:
+            packages.append(name)
+            continue
+        line = f"{name} not rebuilt sha256 {info['sha256']} source {info['source']}"
+        lines.append(line)
+        logs.append(line + "\n")
+        records.append(
+            {
+                "name": name,
+                "sha256": info["sha256"],
+                "source": info["source"],
+                "recompiled": False,
+                "path": str(info["path"]),
+            }
+        )
+    PROVIDED_BINARIES = records
+    for package in packages:
         proc = subprocess.run(
             [cargo_bin(), "build", "--release", "-p", package],
             cwd=SPIKES,
@@ -5179,14 +5407,13 @@ def build(log_path):
             log_path.write_text("\n".join(logs))
             tail = "\n".join((proc.stderr or proc.stdout).splitlines()[-20:])
             return check("build", "open-a-pdf", "doctor", "fail", tail or f"cargo build -p {package} failed")
+    if packages:
+        lines.append("cargo built " + ", ".join(packages))
+    else:
+        lines.append("no cargo build")
+    lines.append(f"script_head {git_head()}")
     log_path.write_text("\n".join(logs))
-    return check(
-        "build",
-        "open-a-pdf",
-        "doctor",
-        "pass",
-        "release spike-shell and spike-measure, built separately so taffy's calc feature stays off the shell",
-    )
+    return check("build", "open-a-pdf", "doctor", "pass", "; ".join(lines))
 
 
 def nsh_cases(junit, proc):
@@ -8962,6 +9189,8 @@ def write_summary(out, rows, version, load_start):
         "head": git_head(),
         "checks": rows,
     }
+    if PROVIDED_BINARIES:
+        summary["provided_binaries"] = PROVIDED_BINARIES
     path = out / "summary.json"
     path.write_text(json.dumps(summary, indent=2) + "\n")
     for row in rows:
@@ -10110,6 +10339,7 @@ def main():
         self_test()
         print("self-test passed")
         return 0
+    gate_provided_binaries()
     try:
         self_test()
     except Exception as exc:

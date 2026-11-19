@@ -1,7 +1,10 @@
-# Push of this file is the trigger. workflow_dispatch is not used: this file is
-# not on the default branch, so that entry is not claimed.
-# baseline runs only for the commit that introduced it. Later pushes build the
-# candidate from that push's branch head, not from a pull-request merge ref.
+# Push of this file, or of the Rust product tree, is the trigger.
+# workflow_dispatch is not used: this file is not on the default branch.
+# baseline runs only for the commit that introduced it.
+# The published spike-shell stays e1daf10 unless Rust sources or package
+# manifests differ from that commit. A script-only change must not upload a
+# new spike-shell. spike-measure is built from that same product commit when
+# the tree matches, and from the push sha when it does not.
 name: Bold baseline fdd8183
 
 on:
@@ -10,6 +13,9 @@ on:
       - cursor/shell-form-tokens-d356
     paths:
       - .github/workflows/bold-baseline-fdd8183.yml
+      - rust-toolchain.toml
+      - spikes/**
+      - crates/**
 
 concurrency:
   group: bold-baseline-fdd8183
@@ -118,8 +124,50 @@ jobs:
           path: ${{ runner.temp }}/baseline-provenance
           if-no-files-found: warn
 
-  candidate:
+  product:
     if: github.sha != '25922152c63f33abd64a327067f475e60b0e9b14'
+    runs-on: macos-latest
+    outputs:
+      rebuild: ${{ steps.decide.outputs.rebuild }}
+      measure_ref: ${{ steps.decide.outputs.measure_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Compare product Rust with the published candidate
+        id: decide
+        run: |
+          set -euo pipefail
+          published=e1daf10bee77ecb24eb9e072c2d815e7ce86406b
+          git fetch --depth 1 origin "$published"
+          echo "workflow_sha $(git rev-parse HEAD)"
+          echo "published_shell_source ${published}"
+          echo "published_shell_sha256 61a4192996b99d44c9f3f618ba60273e1ab297b68908d5c004c664a5582ee95b"
+          set +e
+          git diff --name-only "$published" HEAD -- rust-toolchain.toml spikes crates > "${RUNNER_TEMP}/product-names"
+          state=$?
+          set -e
+          if [ "$state" -gt 1 ]; then
+            exit "$state"
+          fi
+          relevant=$(grep -E '(^|/)(Cargo\.toml|Cargo\.lock|rust-toolchain\.toml)$|\.rs$' "${RUNNER_TEMP}/product-names" || true)
+          if [ -z "$relevant" ]; then
+            echo "product_rust_matches ${published}"
+            echo "spike-shell not rebuilt"
+            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+            echo "measure_ref=${published}" >> "$GITHUB_OUTPUT"
+          else
+            echo "product_rust_differs ${published}"
+            echo "$relevant"
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+            echo "measure_ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  candidate:
+    needs: product
+    if: needs.product.result == 'success' && needs.product.outputs.rebuild == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -257,4 +305,132 @@ jobs:
         with:
           name: spike-shell-candidate
           path: ${{ runner.temp }}/candidate-provenance
+          if-no-files-found: warn
+
+  measure:
+    needs: product
+    if: needs.product.result == 'success'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.product.outputs.measure_ref }}
+          fetch-depth: 1
+
+      - name: Require the product commit selected for spike-measure
+        run: |
+          set -euo pipefail
+          got=$(git rev-parse HEAD)
+          echo "role spike-measure"
+          echo "built_source_sha ${got}"
+          echo "measure_ref ${{ needs.product.outputs.measure_ref }}"
+          echo "workflow_sha ${{ github.sha }}"
+          test "$got" = "${{ needs.product.outputs.measure_ref }}"
+          test -z "$(git status --porcelain)"
+          test "$(uname -m)" = "arm64"
+          uname -a
+          sw_vers
+
+      - name: Install the toolchain pinned by the product commit
+        run: |
+          set -euo pipefail
+          channel=$(awk -F'"' '/^channel/{print $2; exit}' rust-toolchain.toml)
+          echo "pinned_channel ${channel}"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+          rustc --version
+          rustc -vV
+          cargo --version
+          cargo -vV
+          test "$(rustc --version | awk '{print $2}')" = "$channel"
+
+      - name: Release spike-measure
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/measure-target
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path spikes/Cargo.toml -p spike-measure --release
+          test "$(git rev-parse HEAD)" = "${{ needs.product.outputs.measure_ref }}"
+          test -z "$(git status --porcelain)"
+
+      - name: Record identity, architecture, and linked libraries
+        if: always()
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/measure-target
+        run: |
+          set -euo pipefail
+          bin="${CARGO_TARGET_DIR}/release/spike-measure"
+          out="${RUNNER_TEMP}/measure-provenance"
+          mkdir -p "$out"
+          if [ ! -f "$bin" ]; then
+            echo "role spike-measure" > "$out/provenance.txt"
+            echo "built_source_sha $(git rev-parse HEAD)" >> "$out/provenance.txt"
+            echo "release_binary absent" >> "$out/provenance.txt"
+            exit 1
+          fi
+          cp "$bin" "$out/spike-measure"
+          {
+            echo "role spike-measure"
+            echo "built_source_sha $(git rev-parse HEAD)"
+            echo "measure_ref ${{ needs.product.outputs.measure_ref }}"
+            echo "workflow_sha ${{ github.sha }}"
+            echo "published_shell_source e1daf10bee77ecb24eb9e072c2d815e7ce86406b"
+            echo "published_shell_sha256 61a4192996b99d44c9f3f618ba60273e1ab297b68908d5c004c664a5582ee95b"
+            echo "not_a_spike_shell"
+            if [ "$(git rev-parse HEAD)" = "e1daf10bee77ecb24eb9e072c2d815e7ce86406b" ]; then
+              echo "product_rust_matches e1daf10bee77ecb24eb9e072c2d815e7ce86406b"
+              echo "spike-shell not rebuilt"
+            else
+              echo "product_rust_matches no"
+              echo "built_because_product_rust_changed"
+            fi
+            echo "source_subject $(git log -1 --format=%s)"
+            echo "rustc $(rustc --version)"
+            rustc -vV
+            echo "cargo $(cargo --version)"
+            cargo -vV
+            echo "runner_arch $(uname -m)"
+            uname -a
+            sw_vers
+            echo "host_target $(rustc -vV | awk '/^host:/{print $2}')"
+            echo "binary_sha256 $(shasum -a 256 "$bin" | awk '{print $1}')"
+            file "$bin"
+            echo "--- otool -L ---"
+            otool -L "$bin"
+            echo "--- LC_BUILD_VERSION ---"
+            otool -l "$bin" | awk '
+              $1 == "cmd" && $2 == "LC_BUILD_VERSION" { show = 1 }
+              show && $1 == "cmd" && $2 != "LC_BUILD_VERSION" { show = 0 }
+              show { print }
+            '
+            if otool -L "$bin" | grep -i pdfium >/dev/null; then
+              echo "pdfium_linked yes"
+            else
+              echo "pdfium_linked no"
+            fi
+          } > "$out/provenance.txt"
+          otool -L "$bin" | awk 'NR > 1 && $1 != "" { print $1 }' > "$out/libs.txt"
+          bad=0
+          while IFS= read -r lib; do
+            case "$lib" in
+              /usr/lib/*|/System/Library/*) ;;
+              *)
+                echo "not a system library: $lib" | tee -a "$out/provenance.txt"
+                bad=1
+                ;;
+            esac
+          done < "$out/libs.txt"
+          if [ "$bad" -ne 0 ]; then
+            echo "mach_o_system_libs_only no" | tee -a "$out/provenance.txt"
+            exit 1
+          fi
+          echo "mach_o_system_libs_only yes" | tee -a "$out/provenance.txt"
+          echo "pdfium_is_runtime PDF still needs libpdfium.dylib from SPIKE_PDFIUM, the app Frameworks directory, or /tmp/pdfium/lib. This artifact does not include it. Static presence is not a load." | tee -a "$out/provenance.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-measure
+          path: ${{ runner.temp }}/measure-provenance
           if-no-files-found: warn
