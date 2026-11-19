@@ -1261,60 +1261,47 @@ mod tests {
         assert_eq!(v["second"]["first"], "glide");
         assert_eq!(v["second"]["second"], "queued");
         assert_eq!(v["second"]["swipes"], serde_json::json!([1, 2]));
-        let mut paired = crate::visit::Swipe::default();
-        let mut pages = crate::visit::PageView::default();
-        let first = issue(&mut paired);
-        paired.note_answer(first, v["second"]["first"].as_str().unwrap());
-        let second = issue(&mut paired);
-        paired.note_answer(second, v["second"]["second"].as_str().unwrap());
-        assert!(crate::visit::deliver_page(
-            &mut paired,
-            &mut pages,
-            Some(first),
-            2,
-            10,
-            Some(0),
-            None,
-            None
-        ));
-        assert!(crate::visit::deliver_page(
-            &mut paired,
-            &mut pages,
-            Some(second),
-            3,
-            10,
-            Some(0),
-            None,
-            None
-        ));
-        assert_eq!(pages.page, Some(3));
-        let mut rewind = crate::visit::Swipe::default();
-        let mut kept = crate::visit::PageView::default();
-        let older = issue(&mut rewind);
-        rewind.note_answer(older, "glide");
-        let newer = issue(&mut rewind);
-        rewind.note_answer(newer, "queued");
-        assert!(crate::visit::deliver_page(
-            &mut rewind,
-            &mut kept,
-            Some(newer),
-            3,
-            10,
-            Some(0),
-            None,
-            None
-        ));
-        assert!(!crate::visit::deliver_page(
-            &mut rewind,
-            &mut kept,
-            Some(older),
-            2,
-            10,
-            Some(0),
-            None,
-            None
-        ));
-        assert_eq!(kept.page, Some(3));
+        let bodies = v["second"]["bodies"].as_array().expect("bodies");
+        let dir =
+            std::env::temp_dir().join(format!("superreader-node-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        crate::settings::record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let apply_bodies = |reader: &mut crate::visit::Reader, ordered: &[serde_json::Value]| {
+            let mut store = crate::settings::SettingsBook { file: &file, book };
+            for body in ordered {
+                crate::visit::handle_page(reader, body, "ch.xhtml", &mut store);
+            }
+        };
+        let mut paired = crate::visit::Reader::default();
+        paired.place.href = "ch.xhtml".to_string();
+        paired
+            .swipe
+            .note_answer(1, v["second"]["first"].as_str().unwrap());
+        paired
+            .swipe
+            .note_answer(2, v["second"]["second"].as_str().unwrap());
+        apply_bodies(&mut paired, bodies);
+        let last_page = bodies.last().unwrap()["page"].as_u64().unwrap() as u32;
+        assert_ne!(bodies[0]["page"].as_u64().unwrap() as u32, last_page);
+        assert_eq!(paired.place.page, last_page);
+        assert_eq!(crate::settings::resume_page(&file, book), last_page);
+        let mut rewind = crate::visit::Reader::default();
+        rewind.place.href = "ch.xhtml".to_string();
+        rewind
+            .swipe
+            .note_answer(1, v["second"]["first"].as_str().unwrap());
+        rewind
+            .swipe
+            .note_answer(2, v["second"]["second"].as_str().unwrap());
+        let mut reversed = bodies.clone();
+        reversed.reverse();
+        apply_bodies(&mut rewind, &reversed);
+        assert_eq!(rewind.place.page, last_page);
+        assert_eq!(crate::settings::resume_page(&file, book), last_page);
 
         assert_eq!(v["key"]["dropped"], serde_json::json!([2]));
         assert_eq!(v["key"]["swipes"], serde_json::json!([1, null]));
@@ -1337,55 +1324,32 @@ mod tests {
         assert_eq!(v["killed"]["pinned"], 800);
 
         let swipes = v["long"]["swipes"].as_array().expect("swipes");
+        let bodies = v["long"]["bodies"].as_array().expect("bodies");
         assert_eq!(swipes.len(), 128);
-        assert_eq!(v["long"]["answers"], "glide");
-        let mut chapter = crate::visit::Swipe::default();
-        let mut chapter_page = crate::visit::PageView::default();
-        for posted in swipes {
-            let token = posted.as_u64().unwrap();
-            let issued = issue(&mut chapter);
-            assert_eq!(issued, token);
-            chapter.note_answer(issued, "glide");
-            let page = token as u32;
-            assert!(crate::visit::deliver_page(
-                &mut chapter,
-                &mut chapter_page,
-                Some(token),
-                page,
-                200,
-                Some(0),
-                None,
-                None
-            ));
-            assert_eq!(chapter_page.page, Some(page));
-        }
-        let late = issue(&mut chapter);
-        assert!(chapter.cancel_release());
-        assert!(!crate::visit::deliver_page(
-            &mut chapter,
-            &mut chapter_page,
-            Some(late),
-            2,
-            200,
-            Some(50),
-            None,
-            None
-        ));
-        assert_eq!(chapter_page.page, Some(128));
-        assert!(crate::visit::deliver_page(
-            &mut chapter,
-            &mut chapter_page,
-            None,
-            1,
-            200,
-            Some(800),
-            None,
-            None
-        ));
-        assert_eq!(
-            (chapter_page.page, chapter_page.sentence),
-            (Some(1), Some(800))
+        assert_eq!(bodies.len(), 128);
+        assert_ne!(
+            bodies[0]["page"].as_u64().unwrap(),
+            bodies[127]["page"].as_u64().unwrap()
         );
+        assert_eq!(v["long"]["answers"], "glide");
+        crate::settings::record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let mut chapter = crate::visit::Reader::default();
+        chapter.place.href = "ch.xhtml".to_string();
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        for body in bodies {
+            let token = body["swipe"].as_u64().unwrap();
+            chapter.swipe.note_answer(token, "glide");
+            let applied = crate::visit::handle_page(&mut chapter, body, "ch.xhtml", &mut store);
+            assert!(applied.accepted);
+            assert_eq!(chapter.place.page, body["page"].as_u64().unwrap() as u32);
+        }
+        let kept = chapter.place.page;
+        let older = bodies[0].clone();
+        let refused = crate::visit::handle_page(&mut chapter, &older, "ch.xhtml", &mut store);
+        assert!(!refused.accepted);
+        assert_eq!(chapter.place.page, kept);
+        assert_eq!(crate::settings::resume_page(&file, book), kept);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1998,7 +1962,7 @@ boot();
 const firstAnswer = window.spikeFollowEnd(1, 1);
 const secondAnswer = window.spikeFollowEnd(1, 2);
 flush(); flush(); flush();
-const second = { first: firstAnswer, second: secondAnswer, swipes: swipeOf(posts), pages: posts.map(function (p) { return p.page; }) };
+const second = { first: firstAnswer, second: secondAnswer, swipes: swipeOf(posts), pages: posts.map(function (p) { return p.page; }), bodies: posts.filter(function (p) { return p.swipe != null; }) };
 
 boot();
 const queuedAnswer = window.spikeFollowEnd(1, 1);
@@ -2032,7 +1996,7 @@ for (let i = 1; i <= 128; i++) {
   flush();
 }
 const swipes = posts.map(function (p) { return p.swipe; }).filter(function (s) { return s != null; });
-const long = { answers: answers[0], count: swipes.length, first: swipes[0], last: swipes[swipes.length - 1], swipes: swipes };
+const long = { answers: answers[0], count: swipes.length, first: swipes[0], last: swipes[swipes.length - 1], swipes: swipes, bodies: posts.filter(function (p) { return p.swipe != null; }) };
 
 console.log(JSON.stringify({ second, key, killed, long }));
 "#;

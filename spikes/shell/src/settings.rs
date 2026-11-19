@@ -229,6 +229,38 @@ pub fn record_open(
 }
 
 /// Updates the stored page. Keeps the previous open time and a known total.
+/// The book row `handle_page` writes. An empty book or page 0 is a failed
+/// write: `record_progress` would return `Ok` and leave the file alone.
+pub struct SettingsBook<'a> {
+    pub file: &'a std::path::Path,
+    pub book: &'a str,
+}
+
+impl crate::visit::PlaceFile for SettingsBook<'_> {
+    fn write_place(&mut self, place: &crate::visit::ReadingPlace) -> bool {
+        if self.book.is_empty() || place.page == 0 {
+            return false;
+        }
+        record_progress(
+            self.file,
+            self.book,
+            place.page,
+            None,
+            place.offset,
+            &place.href,
+        )
+        .is_ok()
+    }
+
+    fn resume(&self) -> crate::visit::ReadingPlace {
+        crate::visit::ReadingPlace {
+            href: resume_href(self.file, self.book),
+            page: resume_page(self.file, self.book),
+            offset: resume_offset(self.file, self.book),
+        }
+    }
+}
+
 pub fn record_progress(
     path: &Path,
     book: &str,
@@ -446,6 +478,7 @@ pub fn store_bold(path: &Path, on: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::visit::PlaceFile;
 
     #[test]
     fn round_trip_keeps_a_known_trim_and_rejects_unknown() {
@@ -1154,6 +1187,299 @@ mod tests {
         assert_eq!(back.index, 1);
         assert_eq!(back.page, 1);
         assert_eq!(back.offset, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_finished_swipe_is_the_place_a_later_open_reads() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-swipe-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.place = crate::visit::ReadingPlace {
+            href: "ch.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        reader.pending = 800;
+        reader.awaiting = Some(800);
+        reader.jump_href = "ch.xhtml".to_string();
+        reader.jump_offset = Some(800);
+        let down = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        assert_eq!(
+            reader.swipe.offer(down, 1, 10),
+            crate::visit::WheelMove::Follow(80.0)
+        );
+        assert_eq!(
+            reader.swipe.offer(up, 1, 10),
+            crate::visit::WheelMove::Commit(1)
+        );
+        let token = reader.swipe.commit_token().unwrap();
+        reader.swipe.note_answer(token, "glide");
+        let message = serde_json::json!({
+            "page": 2,
+            "pages": 10,
+            "sentence": 50,
+            "swipe": token,
+            "missed": true,
+            "pinned": 800,
+            "kind": "box"
+        });
+        let mut store = SettingsBook { file: &file, book };
+        let applied = crate::visit::handle_page(&mut reader, &message, "ch.xhtml", &mut store);
+        assert!(applied.accepted);
+        assert!(applied.reveal.is_none());
+        assert_eq!(reader.place.page, 2);
+        assert_eq!(reader.place.offset, 50);
+        assert!(reader.pending == 0 && reader.awaiting.is_none() && reader.jump_offset.is_none());
+        crate::visit::leave(&mut reader);
+        crate::visit::open_resume(&mut reader, &store);
+        assert_eq!(resume_page(&file, book), 2);
+        assert_eq!(resume_offset(&file, book), 50);
+        assert_eq!(reader.place.page, 2);
+        assert_eq!(reader.place.offset, 50);
+        assert_eq!(reader.pending, 50);
+        assert!(
+            reader.awaiting.is_none()
+                && reader.jump_offset.is_none()
+                && reader.hold.is_none()
+                && reader.back.is_none()
+        );
+
+        let mut reader = crate::visit::Reader::default();
+        reader.place.href = "ch.xhtml".to_string();
+        reader.pending = 800;
+        reader.awaiting = Some(800);
+        reader.jump_href = "ch.xhtml".to_string();
+        reader.jump_offset = Some(800);
+        assert_eq!(
+            reader.swipe.offer(down, 1, 10),
+            crate::visit::WheelMove::Follow(80.0)
+        );
+        assert_eq!(
+            reader.swipe.offer(up, 1, 10),
+            crate::visit::WheelMove::Commit(1)
+        );
+        let token = reader.swipe.commit_token().unwrap();
+        reader.swipe.note_answer(token, "glide");
+        let mut store = SettingsBook { file: &file, book };
+        crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 2, "pages": 10, "sentence": 50, "swipe": token}),
+            "ch.xhtml",
+            &mut store,
+        );
+        let spine = vec!["ch.xhtml".to_string(), "next.xhtml".to_string()];
+        let marks = vec![
+            crate::visit::ChapterMark {
+                title: "Here".to_string(),
+                href: "ch.xhtml".to_string(),
+                offset: 50,
+                page: 2,
+            },
+            crate::visit::ChapterMark {
+                title: "Next".to_string(),
+                href: "next.xhtml".to_string(),
+                offset: 0,
+                page: 1,
+            },
+        ];
+        let chapter =
+            crate::visit::handle_chapter(&mut reader, 1, &marks, &spine, "ch.xhtml", &mut store);
+        assert!(chapter.accepted);
+        let back = reader.back.clone().expect("back");
+        assert_eq!((back.page, back.offset), (2, 50));
+        assert_eq!(
+            reader.swipe.offer(down, 1, 10),
+            crate::visit::WheelMove::Follow(80.0)
+        );
+        assert_eq!(
+            reader.swipe.offer(up, 1, 10),
+            crate::visit::WheelMove::Commit(1)
+        );
+        assert!(reader.swipe.commit_token().is_some());
+        crate::visit::leave(&mut reader);
+        assert!(reader.swipe.commit_token().is_none());
+        assert_eq!(resume_offset(&file, book), 0);
+        assert_eq!(resume_href(&file, book), "next.xhtml");
+        assert_eq!(reader.place.page, 1);
+
+        record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.place = crate::visit::ReadingPlace {
+            href: "ch.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        reader.awaiting = Some(800);
+        reader.hold = None;
+        let mut store = SettingsBook { file: &file, book };
+        let refused = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 4, "pages": 10, "sentence": 9, "swipe": 9, "pinned": 1, "missed": false}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!refused.accepted);
+        assert_eq!(reader.place.offset, 0);
+        assert_eq!(reader.awaiting, Some(800));
+        assert_eq!(resume_offset(&file, book), 0);
+
+        reader.awaiting = None;
+        let late = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 2, "pages": 10, "pinned": 800, "kind": "box"}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!late.wrote);
+        assert_eq!(reader.place.page, 1);
+        assert_eq!(resume_page(&file, book), 1);
+
+        reader.pending = 800;
+        reader.awaiting = None;
+        reader.jump_offset = None;
+        let turned = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 3, "pages": 10, "sentence": 40, "frames": [8.0], "kind": "box"}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(turned.wrote);
+        assert!(turned.reveal.is_none());
+        assert_eq!((reader.place.page, reader.place.offset), (3, 40));
+        assert_eq!(reader.pending, 0);
+        assert!(reader.awaiting.is_none() && reader.hold.is_none());
+
+        let same = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 3, "pages": 10, "sentence": 0, "kind": "turn", "frames": []}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!same.wrote);
+        assert_eq!(reader.place.offset, 40);
+
+        reader.pending = 800;
+        let boxed = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 9, "pages": 10, "sentence": 12, "kind": "box"}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!boxed.wrote);
+        assert_eq!(boxed.reveal, Some(800));
+        assert_eq!(reader.place.page, 3);
+        assert_eq!(resume_page(&file, book), 3);
+
+        reader.place.page = 2;
+        reader.place.offset = 10;
+        reader.pending = 0;
+        reader.awaiting = Some(800);
+        reader.jump_offset = None;
+        reader.reveal = None;
+        let missed = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 2, "pages": 10, "sentence": 10, "pinned": 800, "missed": true, "kind": "box"}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!missed.wrote);
+        assert!(reader.awaiting.is_none());
+        assert_eq!(reader.hold, Some(2));
+        assert_eq!(reader.place.offset, 10);
+        let later = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 2, "pages": 10, "sentence": 77, "kind": "box"}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!later.wrote);
+        assert_eq!(reader.place.offset, 10);
+        assert_eq!(resume_offset(&file, book), 40);
+
+        let held = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 8, "pages": 10, "sentence": 3, "hold": 800, "kind": "box"}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!held.wrote);
+        assert_eq!(reader.place.page, 2);
+
+        let mut failed = reader.clone();
+        failed.place.page = 1;
+        failed.place.offset = 0;
+        failed.swipe = crate::visit::Swipe::default();
+        assert_eq!(
+            failed.swipe.offer(down, 1, 10),
+            crate::visit::WheelMove::Follow(80.0)
+        );
+        assert_eq!(
+            failed.swipe.offer(up, 1, 10),
+            crate::visit::WheelMove::Commit(1)
+        );
+        let token = failed.swipe.commit_token().unwrap();
+        failed.swipe.note_answer(token, "glide");
+        let before = failed.place.clone();
+        let mut empty = SettingsBook {
+            file: &file,
+            book: "",
+        };
+        let denied = crate::visit::handle_page(
+            &mut failed,
+            &serde_json::json!({"page": 2, "pages": 10, "sentence": 50, "swipe": token}),
+            "ch.xhtml",
+            &mut empty,
+        );
+        assert!(!denied.accepted);
+        assert_eq!(failed.place, before);
+        assert!(failed.swipe.commit_token().is_some());
+        let mut zero = SettingsBook { file: &file, book };
+        assert!(!zero.write_place(&crate::visit::ReadingPlace {
+            href: "ch.xhtml".to_string(),
+            page: 0,
+            offset: 1,
+        }));
+
+        let mut reader = crate::visit::Reader::default();
+        reader.place.href = "ch.xhtml".to_string();
+        assert_eq!(
+            reader.swipe.offer(down, 1, 10),
+            crate::visit::WheelMove::Follow(80.0)
+        );
+        assert_eq!(
+            reader.swipe.offer(up, 1, 10),
+            crate::visit::WheelMove::Commit(1)
+        );
+        let token = reader.swipe.commit_token().unwrap();
+        reader.swipe.note_answer(token, "glide");
+        let dropped = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"swipe": token, "dropped": true, "page": 6, "pinned": 1}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(dropped.accepted);
+        assert!(!dropped.paint);
+        assert_eq!(reader.place.page, 1);
+        assert!(reader.swipe.commit_token().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

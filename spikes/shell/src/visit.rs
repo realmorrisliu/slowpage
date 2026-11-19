@@ -986,6 +986,331 @@ pub fn deliver_page(
     true
 }
 
+/// The one EPUB place. The gesture, the saved row, and the unfinished resume
+/// live here. The inbox does not.
+#[derive(Clone, Debug)]
+pub struct Reader {
+    pub swipe: Swipe,
+    pub place: ReadingPlace,
+    pub jump_href: String,
+    pub jump_offset: Option<u32>,
+    pub awaiting: Option<u32>,
+    pub pending: u32,
+    pub back: Option<ReadingPlace>,
+    pub hold: Option<u32>,
+    /// One reveal `poll_web` may run. A later poll does not invent another.
+    pub reveal: Option<u32>,
+}
+
+impl Default for Reader {
+    fn default() -> Self {
+        Self {
+            swipe: Swipe::default(),
+            place: ReadingPlace {
+                href: String::new(),
+                page: 1,
+                offset: 0,
+            },
+            jump_href: String::new(),
+            jump_offset: None,
+            awaiting: None,
+            pending: 0,
+            back: None,
+            hold: None,
+            reveal: None,
+        }
+    }
+}
+
+/// The script message, parsed once. Absent fields stay absent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageReport {
+    pub dropped: bool,
+    pub token: Option<u64>,
+    pub kind: String,
+    pub frames: bool,
+    pub page: Option<u32>,
+    pub pages: Option<u32>,
+    pub sentence: Option<u32>,
+    pub pinned: Option<u32>,
+    pub missed: Option<bool>,
+    pub hold: Option<u32>,
+}
+
+pub fn page_report(value: &serde_json::Value) -> PageReport {
+    PageReport {
+        dropped: value["dropped"].as_bool() == Some(true),
+        token: value["swipe"].as_u64().filter(|token| *token > 0),
+        kind: value["kind"].as_str().unwrap_or("").to_string(),
+        frames: value.get("frames").is_some(),
+        page: value["page"].as_u64().map(|page| page as u32),
+        pages: value["pages"].as_u64().map(|pages| pages as u32),
+        sentence: value["sentence"].as_u64().map(|offset| offset as u32),
+        pinned: value["pinned"].as_u64().map(|offset| offset as u32),
+        missed: value["missed"].as_bool(),
+        hold: value["hold"].as_u64().map(|offset| offset as u32),
+    }
+}
+
+/// What the host does after the place is committed. `paint` is the footer.
+/// A rejected or dropped message does not paint.
+#[derive(Clone, Debug)]
+pub struct Apply {
+    pub accepted: bool,
+    pub paint: bool,
+    pub wrote: bool,
+    pub reveal: Option<u32>,
+    pub go: Option<ChapterMove>,
+}
+
+fn apply_idle(accepted: bool) -> Apply {
+    Apply {
+        accepted,
+        paint: false,
+        wrote: false,
+        reveal: None,
+        go: None,
+    }
+}
+
+/// The settings file. An empty book or page 0 is not a successful write:
+/// `record_progress` returns `Ok` and stores nothing in that case.
+pub trait PlaceFile {
+    fn write_place(&mut self, place: &ReadingPlace) -> bool;
+    fn resume(&self) -> ReadingPlace;
+}
+
+fn user_turn(report: &PageReport) -> bool {
+    report.token.is_some() || report.frames || report.kind == "turn"
+}
+
+fn clear_resume(reader: &mut Reader) {
+    reader.jump_href.clear();
+    reader.jump_offset = None;
+    reader.awaiting = None;
+    reader.pending = 0;
+    reader.hold = None;
+    reader.reveal = None;
+}
+
+/// Accept a script message. The place changes only after `write_place`
+/// returns true. A refused token, including one past the floor, changes nothing.
+pub fn handle_page(
+    reader: &mut Reader,
+    value: &serde_json::Value,
+    href: &str,
+    store: &mut dyn PlaceFile,
+) -> Apply {
+    let report = page_report(value);
+    if report.dropped {
+        if let Some(token) = report.token {
+            reader.swipe.retire(token);
+        }
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    if let Some(token) = report.token {
+        if !reader.swipe.holds(token) {
+            return apply_idle(false);
+        }
+    }
+    // `{hold}` is the character offset the script posts for `finish_hold`.
+    // `Reader.hold` is the page a missed pin kept. This message sets neither
+    // the saved place nor that page.
+    if report.hold.is_some()
+        && report.token.is_none()
+        && !report.frames
+        && report.kind != "turn"
+        && report.pinned.is_none()
+    {
+        return Apply {
+            accepted: true,
+            paint: true,
+            wrote: false,
+            reveal: None,
+            go: None,
+        };
+    }
+    if user_turn(&report) {
+        let mut next = reader.clone();
+        if let Some(token) = report.token {
+            if !next.swipe.take_commit_post(token) {
+                return apply_idle(false);
+            }
+        }
+        let shown = report.page.unwrap_or(reader.place.page.max(1));
+        let sentence = report.sentence.unwrap_or(0);
+        let (page, offset) = next_sentence(
+            reader.place.page.max(1),
+            reader.place.offset,
+            shown,
+            sentence,
+        );
+        let place = ReadingPlace {
+            href: reader.place.href.clone(),
+            page,
+            offset,
+        };
+        let changed = place != reader.place;
+        if changed && !store.write_place(&place) {
+            return apply_idle(false);
+        }
+        next.place = place;
+        clear_resume(&mut next);
+        *reader = next;
+        return Apply {
+            accepted: true,
+            paint: true,
+            wrote: changed,
+            reveal: None,
+            go: None,
+        };
+    }
+    let shown = report.page.unwrap_or(reader.place.page.max(1));
+    let polled = poll_chapter(ChapterPoll {
+        saved_href: &reader.place.href,
+        saved_page: reader.place.page,
+        saved_offset: reader.place.offset,
+        jump_href: &reader.jump_href,
+        jump_offset: reader.jump_offset,
+        awaiting: reader.awaiting,
+        pending: reader.pending,
+        hold: reader.hold,
+        shown,
+        href,
+        ready: true,
+        reported: report.page.is_some(),
+        pinned: report.pinned,
+        missed: report.missed == Some(true),
+        sentence: report.sentence.unwrap_or(0),
+        still_turning: false,
+    });
+    let pin_match = reader.awaiting.is_some()
+        && report.pinned == reader.awaiting
+        && report.missed != Some(true);
+    let pin_message = report.pinned.is_some() || report.missed.is_some();
+    let write = polled.record
+        && if pin_message {
+            polled.pin_write && pin_match
+        } else {
+            changed_chapter(&reader.place.href, href)
+        };
+    let place = ReadingPlace {
+        href: polled.saved_href,
+        page: polled.saved_page,
+        offset: polled.saved_offset,
+    };
+    if write && !store.write_place(&place) {
+        return apply_idle(false);
+    }
+    let reveal = polled.reveal_jump.or(polled.reveal_pending);
+    reader.jump_offset = polled.jump_offset;
+    reader.awaiting = polled.awaiting;
+    reader.pending = polled.pending;
+    reader.hold = polled.hold;
+    reader.reveal = reveal;
+    if write {
+        reader.place = place;
+    }
+    Apply {
+        accepted: true,
+        paint: true,
+        wrote: write,
+        reveal,
+        go: None,
+    }
+}
+
+/// Chapter and return. The saved place is already the last accepted turn.
+/// This does not read the inbox.
+pub fn handle_chapter(
+    reader: &mut Reader,
+    pick: isize,
+    marks: &[ChapterMark],
+    spine: &[String],
+    href: &str,
+    store: &mut dyn PlaceFile,
+) -> Apply {
+    let nav = navigate(NavIn {
+        shown_href: href,
+        shown_page: reader.place.page.max(1),
+        saved_href: &reader.place.href,
+        saved_page: reader.place.page.max(1),
+        saved_offset: reader.place.offset,
+        jump_href: &reader.jump_href,
+        jump_offset: reader.jump_offset,
+        awaiting: reader.awaiting,
+        pending: reader.pending,
+        back: reader.back.clone(),
+        marks,
+        spine,
+        pick,
+    });
+    let place = ReadingPlace {
+        href: nav.saved_href.clone(),
+        page: nav.saved_page,
+        offset: nav.saved_offset,
+    };
+    if nav.record && !store.write_place(&place) {
+        return apply_idle(false);
+    }
+    reader.place = place;
+    reader.back = nav.back;
+    reader.pending = nav.pending;
+    reader.jump_href = nav.jump_href;
+    reader.jump_offset = nav.jump_offset;
+    reader.awaiting = nav.awaiting;
+    reader.reveal = None;
+    let reveal = match nav.go {
+        ChapterMove::Reveal { offset } => Some(offset),
+        _ => None,
+    };
+    Apply {
+        accepted: true,
+        paint: false,
+        wrote: nav.record,
+        reveal,
+        go: Some(nav.go),
+    }
+}
+
+/// Cancel a gesture that has not posted. The accepted place stays on disk.
+pub fn leave(reader: &mut Reader) {
+    let _ = reader.swipe.cancel_release();
+}
+
+/// The resume row becomes the place. An offset above 0 waits as `pending`.
+/// Nothing is written.
+pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str) {
+    let page = page.max(1);
+    reader.place = ReadingPlace {
+        href: href.to_string(),
+        page,
+        offset,
+    };
+    reader.pending = if offset > 0 { offset } else { 0 };
+    reader.jump_href.clear();
+    reader.jump_offset = None;
+    reader.awaiting = None;
+    reader.hold = None;
+    reader.back = None;
+    reader.reveal = None;
+}
+
+pub fn open_resume(reader: &mut Reader, store: &dyn PlaceFile) {
+    let resumed = store.resume();
+    open_place(reader, resumed.page, resumed.offset, &resumed.href);
+}
+
+pub fn take_reveal(reader: &mut Reader) -> Option<u32> {
+    reader.reveal.take()
+}
+
 /// A page report from the commit glide. `token` is the value the glide posted.
 /// None means an ordinary report, including a reveal pin. A stale token does
 /// not change the stored page.

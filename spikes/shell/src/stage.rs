@@ -46,21 +46,18 @@ define_class!(
 
         #[unsafe(method(showContents:))]
         fn show_contents(&self, _sender: Option<&AnyObject>) {
-            let (titles, back) = {
+            let titles = {
                 let state = self.ivars().state.borrow();
                 let Some(web) = state.web.as_ref() else {
                     return;
                 };
                 let marks = crate::visit::contents_marks(&web.book_title, &web.spine());
-                if marks.is_empty() && state.back_place.is_none() {
+                if marks.is_empty() && !crate::web::reader_has_back() {
                     return;
                 }
-                (
-                    marks.into_iter().map(|mark| mark.title).collect::<Vec<_>>(),
-                    state.back_place.is_some(),
-                )
+                marks.into_iter().map(|mark| mark.title).collect::<Vec<_>>()
             };
-            pop_chapters(self, &titles, back);
+            pop_chapters(self, &titles, crate::web::reader_has_back());
         }
 
         #[unsafe(method(pickChapter:))]
@@ -301,15 +298,8 @@ struct State {
     book_kind: &'static str,
     book_path: String,
     product: bool,
-    saved_page: u32,
-    saved_sentence: u32,
-    saved_href: String,
-    pending_sentence: u32,
-    awaiting_pin: Option<u32>,
-    hold_shown: Option<u32>,
-    back_place: Option<crate::visit::ReadingPlace>,
-    jump_href: String,
-    jump_offset: Option<u32>,
+    pdf_saved_page: u32,
+    pdf_saved_offset: u32,
     page_total: Option<u32>,
     epub_page: usize,
     anchor: Option<Anchor>,
@@ -651,55 +641,37 @@ impl State {
     }
 
     fn apply_chapter(&mut self, tag: isize) {
-        self.absorb_completed_swipe();
-        crate::web::cancel_swipe();
-        let next = {
-            let Some(web) = self.web.as_ref() else {
-                return;
-            };
-            let spine = web.spine();
-            let marks = crate::visit::contents_marks(&web.book_title, &spine);
-            crate::visit::navigate(crate::visit::NavIn {
-                shown_href: &web.href(),
-                shown_page: self.epub_page as u32 + 1,
-                saved_href: &self.saved_href,
-                saved_page: self.saved_page,
-                saved_offset: self.saved_sentence,
-                jump_href: &self.jump_href,
-                jump_offset: self.jump_offset,
-                awaiting: self.awaiting_pin,
-                pending: self.pending_sentence,
-                back: self.back_place.clone(),
-                marks: &marks,
-                spine: &spine,
-                pick: tag,
-            })
+        let Some(web) = self.web.as_ref() else {
+            return;
         };
-        let go = next.go.clone();
-        let applied = match go {
+        let spine = web.spine();
+        let marks = crate::visit::contents_marks(&web.book_title, &spine);
+        let href = web.href();
+        let decided = crate::web::turn_chapter(tag, &marks, &spine, &href);
+        if !decided.accepted {
+            return;
+        }
+        crate::web::cancel_swipe();
+        let go = decided
+            .go
+            .clone()
+            .unwrap_or(crate::visit::ChapterMove::Stay);
+        let moved = match &go {
             crate::visit::ChapterMove::Stay => true,
             crate::visit::ChapterMove::Reveal { offset } => {
-                if let Some(web) = self.web.as_ref() {
-                    let mut inbox = web.inbox.borrow_mut();
-                    inbox.pinned = None;
-                    inbox.pin_missed = false;
-                    drop(inbox);
-                    web.reveal(offset);
-                    true
-                } else {
-                    false
-                }
+                let mut inbox = web.inbox.borrow_mut();
+                inbox.pinned = None;
+                inbox.pin_missed = false;
+                drop(inbox);
+                web.reveal(*offset);
+                true
             }
-            crate::visit::ChapterMove::Chapter { index, .. } => self
-                .web
-                .as_ref()
-                .and_then(|web| web.show_chapter(index))
-                .is_some(),
+            crate::visit::ChapterMove::Chapter { index, .. } => web.show_chapter(*index).is_some(),
             crate::visit::ChapterMove::Page { page } => {
                 if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
                     if let Some(pdf) = self.pdf.as_ref() {
                         let sizes = pdf.sizes.clone();
-                        self.offset = page_offset(&sizes, page, self.scale);
+                        self.offset = page_offset(&sizes, *page, self.scale);
                         self.note_page();
                         true
                     } else {
@@ -710,28 +682,7 @@ impl State {
                 }
             }
         };
-        if applied {
-            self.back_place = next.back;
-            self.pending_sentence = next.pending;
-            self.jump_href = next.jump_href;
-            self.jump_offset = next.jump_offset;
-            self.awaiting_pin = next.awaiting;
-            if next.record {
-                self.saved_page = next.saved_page;
-                self.saved_sentence = next.saved_offset;
-                self.saved_href = next.saved_href;
-                if !self.book_path.is_empty() {
-                    let path = self.book_path.clone();
-                    let _ = crate::settings::record_progress(
-                        &crate::settings::path(),
-                        &path,
-                        self.saved_page,
-                        self.page_total,
-                        self.saved_sentence,
-                        &self.saved_href,
-                    );
-                }
-            }
+        if moved {
             self.goto = crate::visit::opening_page(&go, self.goto);
         }
     }
@@ -929,20 +880,14 @@ impl State {
         };
         let mut page = page.max(1);
         self.page_total = None;
-        self.saved_sentence = 0;
-        self.saved_href.clear();
-        self.pending_sentence = 0;
-        self.awaiting_pin = None;
-        self.hold_shown = None;
-        self.back_place = None;
-        self.jump_href.clear();
-        self.jump_offset = None;
+        crate::web::set_book(&book.path);
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
         self.dismiss_web();
         self.pdf = None;
         self.anchor = None;
         self.book_path = book.path.clone();
         let mut replaced_href = String::new();
+        let mut offset = 0u32;
         let opened = if plan.pdf {
             let engine = match std::env::var("SPIKE_ENGINE").as_deref() {
                 Ok("hayro") => PdfEngine::Hayro,
@@ -958,9 +903,8 @@ impl State {
                 None
             };
             let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
-            self.saved_href = crate::settings::resume_href(&crate::settings::path(), &book.path);
-            self.saved_sentence = sentence;
-            self.pending_sentence = sentence;
+            let mut href = crate::settings::resume_href(&crate::settings::path(), &book.path);
+            offset = sentence;
             if sentence > 0 {
                 self.goto = None;
             }
@@ -968,33 +912,38 @@ impl State {
             self.web_pages = 1;
             self.shown_at = None;
             self.placed = None;
-            self.open_web(view);
+            self.open_web(view, &href);
             if let Some(web) = &self.web {
-                let open =
-                    crate::visit::opened_place(&web.spine(), &self.saved_href, page, sentence);
+                let open = crate::visit::opened_place(&web.spine(), &href, page, sentence);
                 if open.page != page || open.offset != sentence {
                     page = open.page;
-                    self.saved_sentence = open.offset;
-                    self.pending_sentence = open.offset;
+                    offset = open.offset;
                     self.goto = None;
-                    let href = web.href();
-                    if !href.is_empty() {
-                        self.saved_href = href.clone();
-                        replaced_href = href;
+                    let shown = web.href();
+                    if !shown.is_empty() {
+                        href = shown.clone();
+                        replaced_href = shown;
                     }
                 }
+            }
+            if self.web.is_some() {
+                crate::web::open_reader(page, offset, &href);
             }
             self.web.is_some()
         } else {
             false
         };
         if !opened {
+            crate::web::set_book("");
             self.mode = Mode::Empty;
             self.book_path.clear();
             self.publish();
             return false;
         }
-        self.saved_page = page;
+        if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            self.pdf_saved_page = page;
+            self.pdf_saved_offset = 0;
+        }
         let _ = crate::settings::record_open(
             &crate::settings::path(),
             &book.path,
@@ -1008,7 +957,7 @@ impl State {
                 &book.path,
                 page,
                 self.page_total,
-                self.saved_sentence,
+                offset,
                 &replaced_href,
             );
         }
@@ -1041,14 +990,14 @@ impl State {
         let Some(page) = self.settled_page() else {
             return;
         };
-        if self.book_path.is_empty() || page == self.saved_page {
+        if self.book_path.is_empty() || page == self.pdf_saved_page {
             return;
         }
         let path = self.book_path.clone();
         let (page, offset) =
-            crate::visit::next_sentence(self.saved_page, self.saved_sentence, page, 0);
-        self.saved_page = page;
-        self.saved_sentence = offset;
+            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, 0);
+        self.pdf_saved_page = page;
+        self.pdf_saved_offset = offset;
         let _ = crate::settings::record_progress(
             &crate::settings::path(),
             &path,
@@ -1087,72 +1036,6 @@ impl State {
         }
     }
 
-    /// A commit post is already in the inbox. Copy it into the saved place
-    /// before a chapter or a resize cancels the gesture. A reveal that is
-    /// still waiting keeps its own pin. This does not draw and does not reveal.
-    fn absorb_completed_swipe(&mut self) {
-        let Some(web) = &self.web else {
-            return;
-        };
-        web.apply_pending_swipe();
-        let (pages, sentence, pinned, missed, ready) = {
-            let inbox = web.inbox.borrow();
-            (
-                inbox.pages,
-                inbox.sentence.unwrap_or(0),
-                inbox.pinned,
-                inbox.pin_missed,
-                inbox.nav_done && inbox.pages.is_some(),
-            )
-        };
-        let Some((page, count)) = pages else {
-            return;
-        };
-        self.epub_page = page.saturating_sub(1);
-        self.web_pages = count.max(1);
-        if self.book_path.is_empty() || self.mode != Mode::WebKit {
-            return;
-        }
-        if self.jump_offset.is_some() || self.awaiting_pin.is_some() || self.pending_sentence > 0 {
-            return;
-        }
-        let shown = self.epub_page as u32 + 1;
-        let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-        let href = web.href();
-        let polled = crate::visit::poll_chapter(crate::visit::ChapterPoll {
-            saved_href: &self.saved_href,
-            saved_page: self.saved_page,
-            saved_offset: self.saved_sentence,
-            jump_href: &self.jump_href,
-            jump_offset: self.jump_offset,
-            awaiting: self.awaiting_pin,
-            pending: self.pending_sentence,
-            hold: self.hold_shown,
-            shown,
-            href: &href,
-            ready,
-            reported: true,
-            pinned,
-            missed,
-            sentence,
-            still_turning,
-        });
-        if polled.record {
-            let path = self.book_path.clone();
-            self.saved_page = polled.saved_page;
-            self.saved_sentence = polled.saved_offset;
-            self.saved_href = polled.saved_href;
-            let _ = crate::settings::record_progress(
-                &crate::settings::path(),
-                &path,
-                self.saved_page,
-                self.page_total,
-                self.saved_sentence,
-                &self.saved_href,
-            );
-        }
-    }
-
     fn poll_web(&mut self) {
         self.finish_hold();
         let Some(web) = &self.web else {
@@ -1181,61 +1064,8 @@ impl State {
             (inbox.reload && !inbox.did_reload, changed)
         };
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
-            let shown = self.epub_page as u32 + 1;
-            let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-            let (ready, reported, sentence, pinned, missed) = {
-                let inbox = web.inbox.borrow();
-                (
-                    inbox.nav_done && inbox.pages.is_some(),
-                    inbox.pages.is_some(),
-                    inbox.sentence.unwrap_or(0),
-                    inbox.pinned,
-                    inbox.pin_missed,
-                )
-            };
-            let href = web.href();
-            let polled = crate::visit::poll_chapter(crate::visit::ChapterPoll {
-                saved_href: &self.saved_href,
-                saved_page: self.saved_page,
-                saved_offset: self.saved_sentence,
-                jump_href: &self.jump_href,
-                jump_offset: self.jump_offset,
-                awaiting: self.awaiting_pin,
-                pending: self.pending_sentence,
-                hold: self.hold_shown,
-                shown,
-                href: &href,
-                ready,
-                reported,
-                pinned,
-                missed,
-                sentence,
-                still_turning,
-            });
-            self.jump_offset = polled.jump_offset;
-            self.awaiting_pin = polled.awaiting;
-            self.pending_sentence = polled.pending;
-            self.hold_shown = polled.hold;
-            if let Some(offset) = polled.reveal_jump {
+            if let Some(offset) = crate::web::take_reader_reveal() {
                 web.reveal(offset);
-            }
-            if let Some(offset) = polled.reveal_pending {
-                web.reveal(offset);
-            }
-            web.apply_pending_swipe();
-            if polled.record {
-                let path = self.book_path.clone();
-                self.saved_page = polled.saved_page;
-                self.saved_sentence = polled.saved_offset;
-                self.saved_href = polled.saved_href;
-                let _ = crate::settings::record_progress(
-                    &crate::settings::path(),
-                    &path,
-                    self.saved_page,
-                    self.page_total,
-                    self.saved_sentence,
-                    &self.saved_href,
-                );
             }
         }
         if changed || self.chrome_moving() {
@@ -1342,10 +1172,10 @@ impl State {
         }
     }
 
-    fn open_web(&mut self, parent: &StageView) {
+    fn open_web(&mut self, parent: &StageView, href: &str) {
         let path = self.epub_path();
         let parent: &AnyObject = unsafe { &*(parent as *const StageView).cast() };
-        match crate::web::WebChapter::open(parent, &path, &self.saved_href) {
+        match crate::web::WebChapter::open(parent, &path, href) {
             Ok(chapter) => {
                 self.declared = chapter.declared;
                 self.placed = None;
@@ -1456,7 +1286,6 @@ impl State {
         match crate::visit::place_step(fitted_same, zoom_same, stage_same) {
             crate::visit::PlaceStep::Hold => return,
             crate::visit::PlaceStep::Cancel { reflow } => {
-                self.absorb_completed_swipe();
                 crate::web::cancel_swipe();
                 self.placed_stage_w = self.stage_w;
                 self.placed_stage_h = self.stage_h;
@@ -1775,15 +1604,8 @@ impl Stage {
             book_kind: "pride",
             book_path: String::new(),
             product: false,
-            saved_page: 0,
-            saved_sentence: 0,
-            saved_href: String::new(),
-            pending_sentence: 0,
-            awaiting_pin: None,
-            hold_shown: None,
-            back_place: None,
-            jump_href: String::new(),
-            jump_offset: None,
+            pdf_saved_page: 0,
+            pdf_saved_offset: 0,
             page_total: None,
             epub_page: 0,
             anchor: None,
@@ -1883,10 +1705,18 @@ impl Stage {
                 state.borrow_mut().drag_two_lines();
             }
             if std::env::var("SPIKE_MODE").as_deref() == Ok("webkit") {
-                state.borrow_mut().mode = Mode::WebKit;
-                state.borrow_mut().book_kind = book_kind_from_env();
-                state.borrow_mut().open_web(&view);
-                state.borrow_mut().publish();
+                let mut state = state.borrow_mut();
+                state.mode = Mode::WebKit;
+                state.book_kind = book_kind_from_env();
+                let path = state.epub_path();
+                crate::web::set_book(&path);
+                crate::web::cancel_swipe();
+                state.open_web(&view, "");
+                if let Some(web) = state.web.as_ref() {
+                    let href = web.href();
+                    crate::web::open_reader(1, 0, &href);
+                }
+                state.publish();
             }
             if std::env::var("SPIKE_MODE").as_deref() == Ok("text") {
                 state.borrow_mut().mode = Mode::Text;
