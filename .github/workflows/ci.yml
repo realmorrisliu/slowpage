@@ -110,6 +110,7 @@ jobs:
             a_second_commit_and_a_long_chapter_post_every_token \
             a_finished_page_is_saved_before_chapter_or_resize \
             a_finished_swipe_is_the_place_a_later_open_reads \
+            a_page_resume_does_not_store_the_columns_it_crosses \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -143,7 +144,8 @@ jobs:
             a_long_chapter_commit_is_never_dropped \
             a_second_commit_and_a_long_chapter_post_every_token \
             a_finished_page_is_saved_before_chapter_or_resize \
-            a_finished_swipe_is_the_place_a_later_open_reads
+            a_finished_swipe_is_the_place_a_later_open_reads \
+            a_page_resume_does_not_store_the_columns_it_crosses
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

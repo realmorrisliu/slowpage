@@ -279,7 +279,7 @@ define_class!(
                     if !applied.paint {
                         return;
                     }
-                    let turn = report.token.is_some() || report.frames || report.kind == "turn";
+                    let turn = report.token.is_some() || (report.kind == "turn" && !report.chase);
                     if let (Some(page), Some(pages)) =
                         (value["page"].as_u64(), value["pages"].as_u64())
                     {
@@ -869,7 +869,7 @@ impl WebChapter {
         let (web, _, href) = self.shown();
         eval(
             &web,
-            &format!("window.spikeTurn({delta})"),
+            &format!("window.spikeTurn({delta}, true)"),
             self.inbox.clone(),
             href,
             true,

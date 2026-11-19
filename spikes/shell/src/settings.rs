@@ -1355,9 +1355,21 @@ mod tests {
         reader.pending = 800;
         reader.awaiting = None;
         reader.jump_offset = None;
-        let turned = crate::visit::handle_page(
+        let sampled = crate::visit::handle_page(
             &mut reader,
             &serde_json::json!({"page": 3, "pages": 10, "sentence": 40, "frames": [8.0], "kind": "box"}),
+            "ch.xhtml",
+            &mut store,
+        );
+        assert!(!sampled.wrote);
+        assert_eq!(reader.place.page, 1);
+        assert_eq!(sampled.reveal, Some(800));
+        reader.pending = 800;
+        reader.awaiting = None;
+        reader.reveal = None;
+        let turned = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({"page": 3, "pages": 10, "sentence": 40, "kind": "turn", "frames": []}),
             "ch.xhtml",
             &mut store,
         );
@@ -1482,4 +1494,232 @@ mod tests {
         assert!(reader.swipe.commit_token().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn a_page_resume_does_not_store_the_columns_it_crosses() {
+        let script = crate::reading::page_script("en");
+        let dir =
+            std::env::temp_dir().join(format!("superreader-page-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page_js = dir.join("page.js");
+        let drive = dir.join("drive.js");
+        std::fs::write(&page_js, script).unwrap();
+        std::fs::write(&drive, PAGE_WALK_DRIVE).unwrap();
+        let mut child = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page_js)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("node");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        let opened = read_posts(&mut stdout);
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        for href in ["", "ch.xhtml"] {
+            record_progress(&file, book, 10, None, 0, href).unwrap();
+            let mut reader = crate::visit::Reader::default();
+            let mut store = SettingsBook { file: &file, book };
+            crate::visit::open_resume(&mut reader, &store);
+            let target = crate::visit::resume_walk(reader.place.page, reader.place.offset);
+            assert_eq!(target, Some(10));
+            assert_eq!(reader.pending, 0);
+            let (shown, pages, _turning) =
+                apply_posts(&mut reader, &opened, href, &mut store, 1, 1, false);
+            assert_eq!(resume_page(&file, book), 10);
+            assert_eq!(resume_offset(&file, book), 0);
+            assert!(crate::visit::resume_turn(target, shown, pages, false));
+            let crossed = read_step(&mut stdin, &mut stdout, "chase");
+            assert!(crossed.iter().any(|post| post.get("frames").is_some()));
+            assert!(crossed.iter().all(|post| post["kind"] != "turn"));
+            apply_posts(&mut reader, &crossed, href, &mut store, shown, pages, true);
+            assert_eq!(resume_page(&file, book), 10, "{href}");
+            assert_eq!(resume_offset(&file, book), 0, "{href}");
+            crate::visit::leave(&mut reader);
+            crate::visit::open_resume(&mut reader, &store);
+            assert_eq!(reader.place.page, 10);
+            assert_eq!(reader.place.offset, 0);
+            assert_eq!(
+                crate::visit::resume_walk(reader.place.page, reader.place.offset),
+                Some(10)
+            );
+
+            record_progress(&file, book, 10, None, 0, href).unwrap();
+            let mut reader = crate::visit::Reader::default();
+            crate::visit::open_resume(&mut reader, &store);
+            let mut shown = 1u32;
+            let mut pages = 1u32;
+            let mut turning = false;
+            let (next_shown, next_pages, next_turning) = apply_posts(
+                &mut reader,
+                &opened,
+                href,
+                &mut store,
+                shown,
+                pages,
+                turning,
+            );
+            shown = next_shown;
+            pages = next_pages;
+            turning = next_turning;
+            let mut steps = 0u32;
+            while crate::visit::resume_turn(crate::visit::resume_walk(10, 0), shown, pages, turning)
+                && steps < 12
+            {
+                turning = true;
+                let posts = read_step(&mut stdin, &mut stdout, "chase");
+                let applied =
+                    apply_posts(&mut reader, &posts, href, &mut store, shown, pages, turning);
+                shown = applied.0;
+                pages = applied.1;
+                turning = applied.2;
+                steps += 1;
+                assert_eq!(resume_page(&file, book), 10, "{href}");
+                assert_eq!(resume_offset(&file, book), 0, "{href}");
+            }
+            assert!(shown >= 10, "{href} stopped on {shown}");
+            assert!(!crate::visit::resume_turn(Some(10), shown, pages, false));
+            crate::visit::leave(&mut reader);
+            crate::visit::open_resume(&mut reader, &store);
+            assert_eq!((reader.place.page, reader.place.offset), (10, 0));
+
+            record_progress(&file, book, 10, None, 0, href).unwrap();
+            let mut reader = crate::visit::Reader::default();
+            crate::visit::open_resume(&mut reader, &store);
+            let (shown, pages, turning) =
+                apply_posts(&mut reader, &opened, href, &mut store, 1, 1, false);
+            assert!(crate::visit::resume_turn(Some(10), shown, pages, turning));
+            let chased = read_step(&mut stdin, &mut stdout, "chase");
+            let (shown, pages, turning) =
+                apply_posts(&mut reader, &chased, href, &mut store, shown, pages, true);
+            assert_eq!(resume_page(&file, book), 10);
+            let taken = read_step(&mut stdin, &mut stdout, "user");
+            assert!(taken.iter().any(|post| post["kind"] == "turn"));
+            apply_posts(&mut reader, &taken, href, &mut store, shown, pages, turning);
+            let saved = resume_page(&file, book);
+            assert_ne!(saved, 10, "{href}");
+            assert_eq!(saved, reader.place.page);
+            crate::visit::leave(&mut reader);
+            crate::visit::open_resume(&mut reader, &store);
+            assert_eq!(reader.place.page, saved);
+            assert_eq!(resume_href(&file, book), href);
+        }
+        let _ = writeln_cmd(&mut stdin, "quit");
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn apply_posts(
+        reader: &mut crate::visit::Reader,
+        posts: &[serde_json::Value],
+        href: &str,
+        store: &mut SettingsBook<'_>,
+        mut shown: u32,
+        mut pages: u32,
+        mut turning: bool,
+    ) -> (u32, u32, bool) {
+        for post in posts {
+            crate::visit::handle_page(reader, post, href, store);
+            if post.get("frames").is_some() {
+                turning = false;
+            }
+            if let Some(page) = post["page"].as_u64() {
+                shown = page as u32;
+            }
+            if let Some(count) = post["pages"].as_u64() {
+                pages = count as u32;
+            }
+        }
+        (shown, pages, turning)
+    }
+
+    fn read_posts(stdout: &mut impl std::io::BufRead) -> Vec<serde_json::Value> {
+        let mut line = String::new();
+        stdout.read_line(&mut line).expect("node");
+        let value: serde_json::Value = serde_json::from_str(&line).expect(&line);
+        value["posts"].as_array().cloned().unwrap_or_default()
+    }
+
+    fn read_step(
+        stdin: &mut impl std::io::Write,
+        stdout: &mut impl std::io::BufRead,
+        command: &str,
+    ) -> Vec<serde_json::Value> {
+        writeln_cmd(stdin, command);
+        read_posts(stdout)
+    }
+
+    fn writeln_cmd(stdin: &mut impl std::io::Write, command: &str) {
+        stdin.write_all(command.as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
+        stdin.flush().unwrap();
+    }
 }
+
+const PAGE_WALK_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: 'word', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 80000,
+    appendChild(child){ if (child) child.parentNode = this; }, prepend(){}, remove(){},
+    querySelector(){ return null; }, querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; }, parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+rootEl.scrollWidth = 80000;
+body.scrollWidth = 80000;
+global.document = {
+  createElement: () => el(), documentElement: rootEl, head: el(), body,
+  querySelectorAll: () => [], querySelector: () => null, getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){}, caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+global.addEventListener = () => {};
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function emit(value) {
+  fs.writeSync(1, JSON.stringify(value) + "\n");
+}
+eval(script);
+flush();
+flush();
+emit({ posts: posts.slice() });
+const readline = require('readline');
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  if (line === 'quit') process.exit(0);
+  posts.length = 0;
+  window.spikeTurn(1, line === 'chase');
+  flush();
+  flush();
+  flush();
+  emit({ posts: posts.slice() });
+});
+"#;

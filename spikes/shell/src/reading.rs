@@ -456,6 +456,7 @@ const SCRIPT: &str = r#"
   let busy = false;
   let queued = 0;
   let queuedToken = 0;
+  let queuedChase = false;
   let shift = 0;
   let followX = 0;
   let followGen = 0;
@@ -830,20 +831,25 @@ const SCRIPT: &str = r#"
     if (window.spikeJustify) window.spikeJustify.whenVisibleCommitted().then(seekOffset);
     else seekOffset();
   };
-  function settle(frames, token) {
+  function settle(frames, token, chase) {
     document.documentElement.style.transform = "none";
     const leaf = document.getElementById("spike-leaf");
     if (leaf) leaf.remove();
-    post(token ? { frames: frames, swipe: token } : { frames: frames });
+    const extra = token ? { frames: frames, swipe: token } : { frames: frames };
+    if (chase) extra.chase = true;
+    else if (!token) extra.kind = "turn";
+    post(extra);
     busy = false;
     window.spikeBusy = false;
     const next = queued;
     const nextToken = queuedToken;
+    const nextChase = queuedChase;
     queued = 0;
     queuedToken = 0;
-    if (next) begin(next, nextToken);
+    queuedChase = false;
+    if (next) begin(next, nextToken, nextChase);
   }
-  window.spikeTurn = function (delta) {
+  window.spikeTurn = function (delta, chase) {
     // A commit glide is the turn that was already decided. Bumping the
     // generation here kills the only callback that clears `busy` and runs
     // the queued key, so the page stops accepting turns. A return glide has
@@ -862,16 +868,18 @@ const SCRIPT: &str = r#"
     delta = delta < 0 ? -1 : 1;
     if (busy) {
       queued = delta;
+      queuedChase = !!chase;
       return "queued";
     }
-    begin(delta, 0);
+    begin(delta, 0, chase);
     return "ok";
   };
-  function begin(delta, token) {
+  function begin(delta, token, chase) {
     const box = column();
     const target = box.page + delta;
     if (target < 1 || target > box.pages) {
-      post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
+      if (chase) post({ frames: [], chase: true });
+      else post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
       return;
     }
     window.spikeBusy = true;
@@ -879,9 +887,9 @@ const SCRIPT: &str = r#"
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
     window.spikeCover = null;
     busy = true;
-    slide(box, delta, token || 0);
+    slide(box, delta, token || 0, !!chase);
   }
-  function slide(box, delta, token) {
+  function slide(box, delta, token, chase) {
     seek(box.w * (box.page + delta - 1));
     const live = motion;
     const leaf = document.createElement("div");
@@ -903,7 +911,7 @@ const SCRIPT: &str = r#"
         return;
       }
       if (live !== motion) return;
-      settle(frames, token || 0);
+      settle(frames, token || 0, chase);
     }
     requestAnimationFrame(frame);
   }
@@ -1046,7 +1054,7 @@ const SCRIPT: &str = r#"
       const nextToken = queuedToken;
       queued = 0;
       queuedToken = 0;
-      if (next) begin(next, nextToken);
+      if (next) begin(next, nextToken, false);
     });
     return "glide";
   };

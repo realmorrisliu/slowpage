@@ -1035,6 +1035,8 @@ pub struct PageReport {
     pub pinned: Option<u32>,
     pub missed: Option<bool>,
     pub hold: Option<u32>,
+    /// The poll's column walk. The same slide as a key, without a reader.
+    pub chase: bool,
 }
 
 pub fn page_report(value: &serde_json::Value) -> PageReport {
@@ -1049,6 +1051,7 @@ pub fn page_report(value: &serde_json::Value) -> PageReport {
         pinned: value["pinned"].as_u64().map(|offset| offset as u32),
         missed: value["missed"].as_bool(),
         hold: value["hold"].as_u64().map(|offset| offset as u32),
+        chase: value["chase"].as_bool() == Some(true),
     }
 }
 
@@ -1080,8 +1083,13 @@ pub trait PlaceFile {
     fn resume(&self) -> ReadingPlace;
 }
 
+/// A swipe token or a key or edge (`kind: "turn"`). A column walk posts
+/// `frames` too, and those frames are the slide timing, not a reader.
 fn user_turn(report: &PageReport) -> bool {
-    report.token.is_some() || report.frames || report.kind == "turn"
+    if report.token.is_some() {
+        return true;
+    }
+    !report.chase && report.kind == "turn"
 }
 
 fn clear_resume(reader: &mut Reader) {
@@ -1305,6 +1313,23 @@ pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str) {
 pub fn open_resume(reader: &mut Reader, store: &dyn PlaceFile) {
     let resumed = store.resume();
     open_place(reader, resumed.page, resumed.offset, &resumed.href);
+}
+
+/// A stored page with no sentence is walked column by column. A sentence
+/// waits for its reveal and does not walk. Page 1 is already showing.
+pub fn resume_walk(page: u32, offset: u32) -> Option<u32> {
+    let page = page.max(1);
+    if offset > 0 || page <= 1 {
+        None
+    } else {
+        Some(page)
+    }
+}
+
+/// The poll calls the programmatic page turn while the shown column is
+/// still short of `resume_walk`. A turn already in flight is not repeated.
+pub fn resume_turn(target: Option<u32>, shown: u32, pages: u32, turning: bool) -> bool {
+    target.is_some_and(|target| pages > 1 && shown < target && !turning)
 }
 
 pub fn take_reveal(reader: &mut Reader) -> Option<u32> {

@@ -897,17 +897,9 @@ impl State {
             self.load_pdf_at(engine, &book.path, plan.page)
         } else if plan.web {
             self.mode = Mode::WebKit;
-            self.goto = if plan.page > 1 {
-                Some(plan.page as usize)
-            } else {
-                None
-            };
             let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
             let mut href = crate::settings::resume_href(&crate::settings::path(), &book.path);
             offset = sentence;
-            if sentence > 0 {
-                self.goto = None;
-            }
             self.epub_page = 0;
             self.web_pages = 1;
             self.shown_at = None;
@@ -918,7 +910,6 @@ impl State {
                 if open.page != page || open.offset != sentence {
                     page = open.page;
                     offset = open.offset;
-                    self.goto = None;
                     let shown = web.href();
                     if !shown.is_empty() {
                         href = shown.clone();
@@ -928,6 +919,7 @@ impl State {
             }
             if self.web.is_some() {
                 crate::web::open_reader(page, offset, &href);
+                self.goto = crate::visit::resume_walk(page, offset).map(|page| page as usize);
             }
             self.web.is_some()
         } else {
@@ -1096,7 +1088,12 @@ impl State {
         }
         if let Some(target) = self.goto {
             let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
-            if count > 1 && page < target && !self.turn_pending {
+            if crate::visit::resume_turn(
+                Some(target as u32),
+                page as u32,
+                count as u32,
+                self.turn_pending,
+            ) {
                 self.turn_pending = true;
                 self.play_at = Some(Instant::now());
                 web.turn(1);
