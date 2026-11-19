@@ -120,6 +120,7 @@ pub struct ReadingRecord {
     pub total: Option<u32>,
     pub opened_at: i64,
     pub offset: u32,
+    pub href: String,
     pub mark: Option<String>,
     pub opened_label: Option<String>,
 }
@@ -153,6 +154,14 @@ pub fn resume_offset(path: &Path, book: &str) -> u32 {
         .find(|row| row.path == book)
         .map(|row| row.offset)
         .unwrap_or(0)
+}
+
+pub fn resume_href(path: &Path, book: &str) -> String {
+    load_history(path)
+        .into_iter()
+        .find(|row| row.path == book)
+        .map(|row| row.href)
+        .unwrap_or_default()
 }
 
 pub fn load_history(path: &Path) -> Vec<ReadingRecord> {
@@ -198,6 +207,11 @@ fn record_from_value(value: &serde_json::Value) -> Option<ReadingRecord> {
             .and_then(|item| item.as_u64())
             .map(|offset| offset as u32)
             .unwrap_or(0),
+        href: value
+            .get("href")
+            .and_then(|item| item.as_str())
+            .unwrap_or("")
+            .to_string(),
         mark,
         opened_label,
     })
@@ -211,7 +225,7 @@ pub fn record_open(
     total: Option<u32>,
     opened_at: i64,
 ) -> Result<(), String> {
-    write_history(path, book, page, total, Some(opened_at), None)
+    write_history(path, book, page, total, Some(opened_at), None, None)
 }
 
 /// Updates the stored page. Keeps the previous open time and a known total.
@@ -221,8 +235,9 @@ pub fn record_progress(
     page: u32,
     total: Option<u32>,
     offset: u32,
+    href: &str,
 ) -> Result<(), String> {
-    write_history(path, book, page, total, None, Some(offset))
+    write_history(path, book, page, total, None, Some(offset), Some(href))
 }
 
 fn write_history(
@@ -232,6 +247,7 @@ fn write_history(
     total: Option<u32>,
     opened_at: Option<i64>,
     offset: Option<u32>,
+    href: Option<&str>,
 ) -> Result<(), String> {
     if book.is_empty() || page == 0 {
         return Ok(());
@@ -249,6 +265,9 @@ fn write_history(
         if let Some(offset) = offset {
             existing.offset = offset;
         }
+        if let Some(href) = href {
+            existing.href = href.to_string();
+        }
     } else {
         rows.push(ReadingRecord {
             path: book.to_string(),
@@ -256,6 +275,7 @@ fn write_history(
             total,
             opened_at: opened_at.unwrap_or(0),
             offset: offset.unwrap_or(0),
+            href: href.unwrap_or("").to_string(),
             mark: None,
             opened_label: None,
         });
@@ -273,6 +293,9 @@ fn history_value(row: &ReadingRecord) -> serde_json::Value {
         "openedAt": row.opened_at,
         "offset": row.offset,
     });
+    if !row.href.is_empty() {
+        value["href"] = serde_json::json!(row.href);
+    }
     if let Some(mark) = &row.mark {
         value["mark"] = serde_json::json!(mark);
     }
@@ -309,6 +332,7 @@ pub fn record_marked(
             total,
             opened_at,
             offset: 0,
+            href: String::new(),
             mark: Some(mark.to_string()),
             opened_label: Some(opened_label.to_string()),
         });
@@ -459,7 +483,7 @@ mod tests {
         assert_eq!(history[0].page, 4);
         assert_eq!(history[0].total, Some(20));
         assert_eq!(history[0].opened_at, 30);
-        record_progress(&file, book.to_str().unwrap(), 5, None, 0).unwrap();
+        record_progress(&file, book.to_str().unwrap(), 5, None, 0, "").unwrap();
         let history = load_history(&file);
         assert_eq!(history[0].page, 5);
         assert_eq!(history[0].total, Some(20));
@@ -547,14 +571,17 @@ mod tests {
         let path = book.to_str().unwrap();
         record_open(&file, path, 4, Some(10), 1).unwrap();
         assert_eq!(resume_offset(&file, path), 0);
-        record_progress(&file, path, 4, Some(10), 800).unwrap();
+        record_progress(&file, path, 4, Some(10), 800, "/OEBPS/next.xhtml").unwrap();
         assert_eq!(resume_page(&file, path), 4);
         assert_eq!(resume_offset(&file, path), 800);
+        assert_eq!(resume_href(&file, path), "/OEBPS/next.xhtml");
         record_open(&file, path, 4, Some(10), 2).unwrap();
         assert_eq!(resume_offset(&file, path), 800);
-        record_progress(&file, path, 5, Some(10), 20).unwrap();
+        assert_eq!(resume_href(&file, path), "/OEBPS/next.xhtml");
+        record_progress(&file, path, 5, Some(10), 20, "/OEBPS/chapter.xhtml").unwrap();
         assert_eq!(resume_page(&file, path), 5);
         assert_eq!(resume_offset(&file, path), 20);
+        assert_eq!(resume_href(&file, path), "/OEBPS/chapter.xhtml");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

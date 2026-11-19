@@ -671,11 +671,15 @@ pub struct WebChapter {
 }
 
 impl WebChapter {
-    pub fn open(parent: &AnyObject, path: &str) -> Result<Self, String> {
+    pub fn open(parent: &AnyObject, path: &str, resume: &str) -> Result<Self, String> {
         ensure_webkit();
         let packed = pack(path)?;
-        let href = packed.href.clone();
         let spine = packed.spine.clone();
+        let index = crate::visit::spine_index(&spine, resume);
+        let href = spine
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| packed.href.clone());
         let language = packed.language.clone();
         let declared = packed.declared_page;
         let book_title = packed.title.clone();
@@ -740,7 +744,7 @@ impl WebChapter {
             shown_web: web,
             shown_edge: edge,
             shown_href: href,
-            shown_index: 0,
+            shown_index: index,
             shown_handler: handler.clone(),
             inbox: inbox.clone(),
             scripted: false,

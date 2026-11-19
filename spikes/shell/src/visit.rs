@@ -370,6 +370,31 @@ pub fn chapter_return(
     ChapterStep { go, back }
 }
 
+pub fn spine_index(spine: &[String], href: &str) -> usize {
+    if href.is_empty() {
+        return 0;
+    }
+    spine.iter().position(|item| item == href).unwrap_or(0)
+}
+
+pub fn place_changed(
+    stored_page: u32,
+    stored_offset: u32,
+    stored_href: &str,
+    page: u32,
+    offset: u32,
+    href: &str,
+) -> bool {
+    page != stored_page || offset != stored_offset || (!href.is_empty() && href != stored_href)
+}
+
+pub fn opening_page(go: &ChapterMove, page: Option<usize>) -> Option<usize> {
+    match go {
+        ChapterMove::Stay => page,
+        _ => None,
+    }
+}
+
 pub fn place_after_pin(
     stored_page: u32,
     stored_offset: u32,
@@ -781,6 +806,23 @@ mod tests {
         let stored = place_after_pin(4, 800, 4, 0, Some(0), Some(0));
         assert_eq!(stored, (4, 0));
         assert_eq!(place_after_pin(4, 800, 4, 0, None, Some(0)), (4, 800));
+        assert_eq!(spine_index(&spine, next), 1);
+        assert_eq!(spine_index(&spine, ""), 0);
+        assert_eq!(spine_index(&spine, "/missing.xhtml"), 0);
+        assert!(place_changed(1, 0, chapter, 1, 0, next));
+        assert!(!place_changed(1, 0, next, 1, 0, next));
+        assert!(!place_changed(4, 800, chapter, 4, 800, ""));
+        assert_eq!(
+            opening_page(
+                &ChapterMove::Chapter {
+                    index: 1,
+                    offset: 0
+                },
+                Some(4)
+            ),
+            None
+        );
+        assert_eq!(opening_page(&ChapterMove::Stay, Some(4)), Some(4));
 
         let other = chapter_jump(&here, &marks, 1, &spine, None);
         assert_eq!(

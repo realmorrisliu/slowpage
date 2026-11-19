@@ -303,6 +303,7 @@ struct State {
     product: bool,
     saved_page: u32,
     saved_sentence: u32,
+    saved_href: String,
     pending_sentence: u32,
     awaiting_pin: Option<u32>,
     hold_shown: Option<u32>,
@@ -715,6 +716,7 @@ impl State {
         };
         if applied {
             self.back_place = step.back;
+            self.goto = crate::visit::opening_page(&go, self.goto);
         }
     }
 
@@ -912,6 +914,7 @@ impl State {
         let page = page.max(1);
         self.page_total = None;
         self.saved_sentence = 0;
+        self.saved_href.clear();
         self.pending_sentence = 0;
         self.awaiting_pin = None;
         self.hold_shown = None;
@@ -938,6 +941,7 @@ impl State {
                 None
             };
             let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
+            self.saved_href = crate::settings::resume_href(&crate::settings::path(), &book.path);
             self.saved_sentence = sentence;
             self.pending_sentence = sentence;
             if sentence > 0 {
@@ -999,6 +1003,7 @@ impl State {
             page,
             self.page_total,
             offset,
+            "",
         );
     }
 
@@ -1093,6 +1098,7 @@ impl State {
             self.awaiting_pin = step.want;
             self.hold_shown = step.hold;
             if step.write && !still_turning {
+                let href = web.href();
                 let (page, offset) = crate::visit::place_after_pin(
                     self.saved_page,
                     self.saved_sentence,
@@ -1101,16 +1107,25 @@ impl State {
                     wanted,
                     pinned,
                 );
-                if page != self.saved_page || offset != self.saved_sentence {
+                if crate::visit::place_changed(
+                    self.saved_page,
+                    self.saved_sentence,
+                    &self.saved_href,
+                    page,
+                    offset,
+                    &href,
+                ) {
                     let path = self.book_path.clone();
                     self.saved_page = page;
                     self.saved_sentence = offset;
+                    self.saved_href = href.clone();
                     let _ = crate::settings::record_progress(
                         &crate::settings::path(),
                         &path,
                         page,
                         self.page_total,
                         offset,
+                        &href,
                     );
                 }
             }
@@ -1222,7 +1237,7 @@ impl State {
     fn open_web(&mut self, parent: &StageView) {
         let path = self.epub_path();
         let parent: &AnyObject = unsafe { &*(parent as *const StageView).cast() };
-        match crate::web::WebChapter::open(parent, &path) {
+        match crate::web::WebChapter::open(parent, &path, &self.saved_href) {
             Ok(chapter) => {
                 self.declared = chapter.declared;
                 self.placed = None;
@@ -1641,6 +1656,7 @@ impl Stage {
             product: false,
             saved_page: 0,
             saved_sentence: 0,
+            saved_href: String::new(),
             pending_sentence: 0,
             awaiting_pin: None,
             hold_shown: None,
@@ -1913,12 +1929,7 @@ fn schedule_shell_pump(view: &StageView, delay: f64) {
 
 /// One shared key, so a layout callback and the pump do not publish the same
 /// size twice. The layout callback is what AppKit delivers during a drag.
-fn publish_shell_if_resized(
-    state: &Rc<RefCell<State>>,
-    width: f64,
-    height: f64,
-    source: &str,
-) {
+fn publish_shell_if_resized(state: &Rc<RefCell<State>>, width: f64, height: f64, source: &str) {
     let key = {
         let mut state = state.borrow_mut();
         state.shell_w = width;
@@ -1959,7 +1970,11 @@ pub(crate) fn trace_resize(source: &str, width: f64, height: f64, published: boo
         elapsed.as_secs_f64()
     );
     let path = std::path::Path::new("/tmp/superreader-spike/resize-trace.jsonl");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         use std::io::Write;
         let _ = file.write_all(line.as_bytes());
     }
@@ -2019,10 +2034,7 @@ mod tests {
             pump.contains("NSRunLoopCommonModes") || pump.contains("schedule_shell_pump"),
             "the lights pump has to be scheduled in the tracking run-loop mode"
         );
-        let schedule = source
-            .split("fn schedule_shell_pump")
-            .nth(1)
-            .unwrap_or("");
+        let schedule = source.split("fn schedule_shell_pump").nth(1).unwrap_or("");
         assert!(
             schedule.contains("NSRunLoopCommonModes"),
             "schedule_shell_pump must use common modes, not afterDelay alone"
