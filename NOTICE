@@ -49,8 +49,11 @@ does not follow that skill's instruction to avoid system fonts or to invent
 a display face.
 
 `.cursor/skills/apple-design/` vendors Emil Kowalski's apple-design skill.
-The license in that directory is MIT, Copyright (c) 2026 Emil Kowalski.
-Upstream is
+The MIT text in that directory's `LICENSE` is copied from the upstream
+repository root, Copyright (c) 2026 Emil Kowalski:
+https://github.com/emilkowalski/skills/blob/main/LICENSE.
+The skill directory itself has no license file. The grant is Emil's. It is
+not a license from Apple, and it is not an Apple endorsement. Upstream skill:
 https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md.
 The vendored copy removes the opening section that tells an agent to reply
 "I'm ready" and then stop. A note at the top says to use the principles and

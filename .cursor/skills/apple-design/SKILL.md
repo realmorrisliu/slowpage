@@ -7,7 +7,7 @@ description: Apple's approach to interface design and fluid, physical motion, tr
 
 Slowpage note. Use the principles in this file. Do not copy the web or CSS implementation details. Slowpage is native AppKit through NSH, in Rust. The sibling animation-performance skill is not in this repo. Ignore that path.
 
-Vendored from Emil Kowalski, MIT. Upstream is https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md. The license text is `LICENSE` in this directory. The opening section that told an agent to reply "I'm ready" and then stop is removed.
+Vendored from Emil Kowalski, MIT. Upstream is https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md. The `LICENSE` in this directory is copied from the upstream repository root, https://github.com/emilkowalski/skills/blob/main/LICENSE. The skill directory upstream has no license file of its own. That grant is Emil's. It is not a license from Apple, and it is not an Apple endorsement. The opening section that told an agent to reply "I'm ready" and then stop is removed.
 
 How Apple builds interfaces that stop feeling like a computer and start feeling like an extension of you. This knowledge comes from Apple's WWDC design talks — chiefly *Designing Fluid Interfaces* (WWDC 2018) — distilled and translated into the web platform (CSS, Pointer Events, `requestAnimationFrame`, spring libraries like Motion/Framer Motion).
 

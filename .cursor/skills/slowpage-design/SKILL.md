@@ -23,8 +23,6 @@ Read these files before you change UI.
 
 There is no `DESIGN.md` in this repo. Do not add one to satisfy this skill.
 
-`docs/design/shell-tokens.md` is landing in [pull request 53](https://github.com/realmorrisliu/slowpage/pull/53). `docs/design/reading-interactions.md` is landing in [pull request 55](https://github.com/realmorrisliu/slowpage/pull/55). Neither file is on main yet. When a file is absent, use the docs that are on your branch. Do not invent the missing tokens or checklist items.
-
 ## Fonts
 
 Chrome uses the system font. On macOS that stack is SF Pro and PingFang SC, as `docs/design/shell-tokens.md` records. Do not add a distinctive display face. The window title is `title_face` in `spikes/shell/src/chrome.rs`. A title with a CJK character uses Songti SC. Any other title uses Iowan Old Style.
@@ -51,7 +49,7 @@ Keep a shadow or a gradient that a design doc or `docs/design/shell/approved-ful
 
 No control, label, or page may clip or overflow its container.
 
-Do not size the window for one resolution only. Check the minimum that the design doc names for that form, a 1440 by 900 window, and full screen. `docs/design/shell-tokens.md` names the library minimum as 578 by 520. That number is not the reading window's minimum.
+Do not size the window for one resolution only. Check the minimum that the design doc names for that form, a 1440 by 900 window, and full screen. `docs/design/shell-tokens.md` names the library minimum as 578 by 528. That number is not the reading window's minimum.
 
 A measure that a design doc fixes stays fixed. The sidebar width, the chat panel width, and the card inset are examples. Content that the docs say adapts must adapt.
 
@@ -69,7 +67,9 @@ Fix a miss in the tokens or the layout. Do not nudge one element into place.
 
 Follow `docs/design/reading-interactions.md`. That checklist is the rule. Do not replace it.
 
-Each item needs both proofs in that file. Headless `nsh test` drives the input and checks the result. A Mac run records the screen, or it captures consecutive frames. One screenshot does not prove the item. The capture has no blank frame, no flicker, no position jump, and no clipping.
+An item on that list merges on the necessary cloud checks and an independent review. A GUI run, `nsh test`, a Mac recording, or the real Apple Books round that did not happen stays not run. Not run does not block the merge, and it is not a pass.
+
+A small interaction on the list does not wait for a separate confirmation. A new checklist item, a new visual design, or an architecture tradeoff waits for Morris. This skill does not invent a new look.
 
 A trackpad swipe follows the finger, and the reader can cancel that swipe. Arrow keys, Space, Shift-Space, and an edge click play the 160 ms slide in `docs/design/north-star.md`. After a reopen, the book returns to the same sentence. The page stays Books-white.
 
@@ -77,7 +77,7 @@ A trackpad swipe follows the finger, and the reader can cancel that swipe. Arrow
 
 1. Write the plan before you write UI code. Name each layout choice and each token. Name the design doc it comes from.
 2. Implement that plan.
-3. Compare real screenshots of the result with the approved mockup before you claim the change is done. The library mockup is `docs/design/shell/approved-full-form.png`. A reading interaction still needs both proofs above.
+3. Compare real screenshots of the result with the approved mockup before you claim the change is done. The library mockup is `docs/design/shell/approved-full-form.png`. A reading interaction follows the completion standard in `docs/design/reading-interactions.md`. A run that did not happen stays not run, and it is not a pass.
 
 ## Borrowed rules, and the override
 
