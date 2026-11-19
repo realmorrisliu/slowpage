@@ -1,0 +1,18 @@
+{
+  "method": "centers of the solid plates in full-form.png at 1440x855, scale 2. The accessibility walk sampled above the caption and hit the white card.",
+  "books": [
+    {"title": "Pride and Prejudice", "author": "Jane Austen", "plate": "#7D8C6A", "sample": "#808C6D", "max_channel_delta": 3},
+    {"title": "三体", "author": "刘慈欣", "plate": "#16212B", "sample": "#18212A", "max_channel_delta": 2},
+    {"title": "The Art of Computer Programming", "author": "Donald E. Knuth", "plate": "#EEE6D3", "sample": "#EDE6D5", "max_channel_delta": 1, "pdf": true},
+    {"title": "Moby-Dick", "author": "Herman Melville", "plate": "#1F3A57", "sample": "#253955", "max_channel_delta": 6},
+    {"title": "朝花夕拾", "author": "鲁迅", "plate": "#B4553C", "sample": "#A85A43", "max_channel_delta": 12},
+    {"title": "呐喊", "author": "鲁迅", "plate": "#1C1C1C", "sample": "#1C1C1C", "max_channel_delta": 0},
+    {"title": "Walden", "author": "Henry David Thoreau", "plate": "#2F4A3C", "sample": "#35493D", "max_channel_delta": 6},
+    {"title": "红楼梦", "author": "曹雪芹", "plate": "#8A2B2B", "sample": "#7F322F", "max_channel_delta": 11},
+    {"title": "Middlemarch", "author": "George Eliot", "plate": "#C8A24C", "sample": "#C2A35A", "max_channel_delta": 14},
+    {"title": "围城", "author": "钱锺书", "plate": "#DDE3E7", "sample": "#DEE3E7", "max_channel_delta": 1},
+    {"title": "Meditations", "author": "Marcus Aurelius", "plate": "#4A3C5A", "sample": "#483D58", "max_channel_delta": 2},
+    {"title": "人间词话", "author": "王国维", "plate": "#F2EEE4", "sample": "#F1EEE5", "max_channel_delta": 1}
+  ],
+  "type": "shelf title 15/700, shelf author 9/400, from fonts.json"
+}

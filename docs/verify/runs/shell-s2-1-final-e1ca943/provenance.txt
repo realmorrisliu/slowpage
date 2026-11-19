@@ -1,0 +1,15 @@
+Head e1ca943785b71964c36b18dd918ecf1c6f485441. No source files were edited for this run. The e1ca943 window clips were not rewritten.
+
+Blocked step. Pid 75399 is /Users/morris/.cache/cargo-target/SuperReader/release/spike-shell, started 11:02, still running. It has no SUPERREADER_SUPPORT_DIR. scripts/verify-lock.sh and scripts/verify's own lock both loop, printing "waiting for spike-shell to exit", until that process ends. just verify was not started, because that loop does not return. scripts/verify was not started either: before doctor it writes /tmp/superreader-spike/support-dir, and this process would follow that file into the run's temp support. Doctor was called once from the same module. It does not kill 75399, does not write that marker, and does not relaunch.
+
+The one-minute load was 12.78, above the wrapper's ceiling of 8. The wrapper would have waited for load as well. This run did not wait on either gate.
+
+summary.json is that doctor result. spike-shell-free fails. The other six doctor rows pass, including the console session. Every later window, nsh, and measure id that the suite lists for a doctor failure is fail with the detail "not run because doctor failed". Those rows are not new observations and they are not waivers. Nine pending rows are the checks the spike does not implement. Headless nsh and spike-measure were not run, because the suite builds the release binaries first and that would relink the file pid 75399 was launched from. The on-disk binary inode stayed 924307713, mtime Nov 18 12:20:26.
+
+Prior failures. docs/verify/alpha/summary.json on 885718ff4d42148d7e3cd26b1e9fa99c73167c58 has 43 fail rows. They were not rerun and their baselines were not moved. This branch does not change the zhaohua or plain-zh text path, the highlight ink, the alpha open path, the bold-word probes, or the aqua icon frame, so those 885718f failures are not addressed. reading-cold-open and reading-warm-open on that run already say the miss is shared with the native timing, not a regression; that note is left as written. flash-zhaohua's detail on that run was that another spike-shell was running, the same kind of block as pid 75399, not a product result. shell-clip, the shelf form, and the live-resize work are in this tree and were not scored again. The 15 fps clips are not a 50 ms frame claim. Fullscreen stays the system snapshot from e1ca943, for Morris, not waived.
+
+Profile. ~/Library/Application Support/app.slowpage.reader was 51 files, sha256 5634b968ed65787895a2156ad764348c2d5e66d419a468346e07f04585a2dde5, before and after. The support-dir marker was absent before and after.
+
+CI, separate from this suite. GitHub Actions on e1ca943: CI run 44238118601 success, Release run 44238118446 success. Those workflows are not scripts/verify.
+
+Minimal action. Quit pid 75399 yourself. Then just verify can take the lock. While the one-minute load stays at or above 8, that wrapper still waits before it starts.

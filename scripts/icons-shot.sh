@@ -4,7 +4,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-bin="$root/spikes/target/release/spike-shell"
+target_dir="$("$root/scripts/cargo-target-dir.sh")"
+bin="$target_dir/release/spike-shell"
 out="$root/docs/prototypes/icons"
 finder="$root/spikes/target/window-id"
 mkdir -p "$out" "$root/spikes/target"

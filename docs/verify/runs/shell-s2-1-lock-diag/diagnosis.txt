@@ -1,0 +1,47 @@
+S2.1 live diagnosis, 2026-11-18 02:59 CST. Not a preflight and not a fix.
+Head ce1fe56. Product under test a1481ae. No product code changed.
+
+Binary actually executed
+- cargo metadata --no-deps target_directory: ~/.cache/cargo-target/SuperReader
+- profile: release
+- path: ~/.cache/cargo-target/SuperReader/release/spike-shell
+- sha256: e1ade42162ff921b2dd0701b174848d8e8a69cc61425e2aa12160092ab6fda03
+- mtime: 2026-11-18 02:32:59 CST, after chrome.rs at a1481ae
+- cargo fingerprint dep-lib-spike_shell rewritten 02:32 and lists src/chrome.rs
+- live pid 52094, started Wed Nov 18 02:59:40 2026
+- proc_pidpath and the running image sha256 are that same file
+The identical fixture PNG (sha256 prefix 8ed99605abf476a9) is this window's
+unmoved shelf, not a stale executable. The static shelf paint did not change.
+
+Session blocker
+- CGSSessionScreenIsLocked=1
+- locked since 2026-11-17 19:00:39 +0800 (CGSSessionScreenLockedTime=1794913239)
+- kCGSSessionOnConsoleKey=1, user id 501
+- kCGSSessionSecureInputPID=777
+- pid 777 is /System/Library/CoreServices/loginwindow.app console, frontmost
+- NSRunningApplication.activate for spike-shell returned true
+- isActive stayed false, and the frontmost app stayed loginwindow
+Runs 8 and 9 were after this lock. A locked session holds secure input, so a
+posted CGEvent scroll cannot reach the app's local monitor, and
+request_fullscreen refuses until the window is key. Both stayed at the
+windowed 1440x855 frame. The wheel before/after/fullscreen captures are
+byte-identical to the fixture. This is not something the worker can clear.
+
+AX, same live pid, not a trust failure
+- AXIsProcessTrusted=true
+- kAXWindowsAttribute error 0, window_count 1, title Slowpage, focused window error 0
+- kAXSizeAttribute error -25205 (attribute unsupported)
+- kAXChildrenAttribute error 0, child_count 2, only titled child "Slowpage"
+The blank run-9 walk is not an empty permission dialog. The direct walker can
+see the window and cannot see shelf titles. That semantics gap is still open,
+and it cannot be scored against a real wheel or fullscreen while the screen
+is locked.
+
+Real support
+- 51 files, directory inode 900769011, unchanged before and after both launches
+- temp SUPERREADER_SUPPORT_DIR only, no /Applications install
+
+Next
+Unlock the morris console session, then repeat one live wheel and one
+fullscreen enter/exit on this same binary. Do not start preflight run 10
+until that window is actually key and the captures differ.

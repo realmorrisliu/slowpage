@@ -1,0 +1,12 @@
+Morris's reader shot is 1388x1786 with a 112px black margin. The window inside is 1164x1562, which is 582x781 points, the paperback reader. The page is the same Pride opening as the existing paperback baseline, including the footer. The baseline captures hide the lights because the spike fades them until the pointer is at the top. This shot shows them.
+
+The discs are the same 28px size. Red and yellow start 34px from the window top. Green starts 18px down, 16px (8pt) higher. Close and minimize already share the 48pt-bar center. The zoom button was the one left on AppKit's system row.
+
+The reader has a toolbar, so NSH does not center the lights (it skips that when a toolbar is present). The old shell-only correction also skipped a button more than 8pt from the target, which is this gap, and it never ran for the reader.
+
+The shared center is the median of the three window-space centers. One outlier moves to the other two. There is no green-only constant. Fullscreen is left to AppKit; after exit the same pass runs again.
+
+Measured after the change, native frames and painted centers:
+reader 582x781, all three from_top 24.0, painted green-red -0.01pt
+after fullscreen exit, the window is 582x781 again and the centers match
+shelf 980x640, all three from_top 24.0, painted green-red 0.00pt

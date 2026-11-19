@@ -1,0 +1,35 @@
+{
+  "launch_capture": "ok",
+  "page_down": {
+    "rows": 1499,
+    "cover_y_before": 304.0,
+    "cover_y_after": 304.0,
+    "cover_label_after": "Pride and Prejudice"
+  },
+  "wheel": {
+    "note": "posted",
+    "rows": 0,
+    "cover_y_before": 304.0,
+    "cover_y_after": 304.0,
+    "cover_label_before": "Pride and Prejudice",
+    "cover_label_after": "Pride and Prejudice",
+    "point": [
+      750.4,
+      678.0
+    ]
+  },
+  "chat": [
+    {
+      "before": 320.0,
+      "after": 0.0,
+      "press": "pressed",
+      "code": 0
+    },
+    {
+      "before": 0.0,
+      "after": 320.0,
+      "press": "pressed",
+      "code": 0
+    }
+  ]
+}

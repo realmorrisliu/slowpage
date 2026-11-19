@@ -1,6 +1,6 @@
-# NSH 0.5.0
+# NSH 0.5.1
 
-The shell is pinned at NSH 0.5.0, published on 2026-11-11 as tag `v0.5.0`, commit `f4d68f7`. crates.io reports `0.5.0` as the max stable version of `nsh-core`. A nightly after that tag is not the pin. The license is Apache-2.0.
+The shell is pinned at NSH 0.5.1, published on 2026-11-14 as tag `v0.5.1`, commit `224d9a7`. 0.5.1 is a bug-fix release of 0.5.0 with no API change, so the 0.5.0 notes below still describe this shell. crates.io reports `0.5.1` as the max stable version of `nsh-core`. A nightly after that tag is not the pin. The license is Apache-2.0.
 
 The app stays a Rust root. `spikes/shell/nsh.json` names `SpikeApp`. Headless checks stay in `spikes/shell/shell.test.tsx`, run by `nsh test`.
 
@@ -64,7 +64,7 @@ The fitted window frame is AppKit `setFrame`. The fit math uses `visibleFrame`, 
 
 File > Open and a drop on the window are NSH. `pick_paths` is the open panel. `on_file_drop` is the drop. Both reach the stage command `open`. A drop on the Dock icon and `open -a` are `application:openURLs:`.
 
-`NshAppDelegate` forwards each URL to the core. The core turns a `file:` URL into a path only when the root claims the `file` scheme, and it keeps that path until `next_open_files` is waiting. The shell's task queues the path. The reader stage opens it. `opens.log` records `queued` plus the path.
+`NshAppDelegate` forwards each URL to the core. The core turns a `file:` URL into a path only when the root claims the `file` scheme, and it keeps that path until `next_open_files` is waiting. The shell checks the file. A book opens with the stage command `open`. A book that arrives before the stage exists is queued, and the stage opens that queue. A refused file is not queued. `opens.log` records `queued` plus the path.
 
 `Info.plist` still lists EPUB, including the package form, and PDF. The package script writes those types, and `zh-Hans.lproj/InfoPlist.strings`, before the first `codesign`. The disk image is `Slowpage.app`. This release does not call `nsh package`. That switch is a later cleanup. `nsh package` would write `CFBundleDocumentTypes` from `fileTypes`, and it would not write the imported EPUB type that conforms to `com.apple.package`.
 

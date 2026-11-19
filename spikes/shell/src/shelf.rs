@@ -1,4 +1,4 @@
-use spike_library::{Book, Catalog, OpenKind};
+use spike_library::{plate_color, Book, Catalog, OpenKind};
 
 use crate::form::{CoverCard, LibraryCounts, LibraryIn, SelectId, SourceIn};
 use crate::settings::ReadingRecord;
@@ -44,18 +44,19 @@ pub fn project(catalog: &Catalog, selected: SelectId, history: &[ReadingRecord])
             });
         }
     }
+    sources.sort_by(|left, right| {
+        source_rank(&left.label)
+            .cmp(&source_rank(&right.label))
+            .then_with(|| left.label.cmp(&right.label))
+    });
     let mut shown: Vec<&Book> = catalog
         .books()
         .iter()
         .filter(|book| shown_in(book, &selected, record_for(book, history)))
         .collect();
     shown.sort_by(|left, right| {
-        let left_at = record_for(left, history)
-            .map(|row| row.opened_at)
-            .unwrap_or(0);
-        let right_at = record_for(right, history)
-            .map(|row| row.opened_at)
-            .unwrap_or(0);
+        let left_at = opened_key(left, history);
+        let right_at = opened_key(right, history);
         right_at
             .cmp(&left_at)
             .then_with(|| left.title().cmp(right.title()))
@@ -81,7 +82,39 @@ pub fn project(catalog: &Catalog, selected: SelectId, history: &[ReadingRecord])
         selected,
         continue_reading,
         covers,
+        lists: Vec::new(),
+        chat: Vec::new(),
         notice: notice_text(catalog),
+    }
+}
+
+pub(crate) fn searched(mut library: LibraryIn, query: &str) -> LibraryIn {
+    let needle = query.trim();
+    if needle.is_empty() {
+        return library;
+    }
+    let needle = needle.to_lowercase();
+    library.covers.retain(|card| title_or_author(card, &needle));
+    library
+        .continue_reading
+        .retain(|card| title_or_author(card, &needle));
+    library.book_count = library
+        .covers
+        .iter()
+        .filter(|card| card.open_path.is_some())
+        .count() as u32;
+    library
+}
+
+fn title_or_author(card: &CoverCard, needle: &str) -> bool {
+    card.title.to_lowercase().contains(needle) || card.author.to_lowercase().contains(needle)
+}
+
+fn source_rank(label: &str) -> u8 {
+    match label {
+        "Apple Books" => 0,
+        "calibre" => 1,
+        _ => 2,
     }
 }
 
@@ -122,6 +155,34 @@ fn finished(record: &ReadingRecord) -> bool {
         .is_some_and(|total| total > 0 && record.page >= total)
 }
 
+fn opened_key(book: &Book, history: &[ReadingRecord]) -> i64 {
+    if let Some(row) = record_for(book, history) {
+        return row.opened_at;
+    }
+    form_rank(book.title()).unwrap_or(0)
+}
+
+fn form_rank(title: &str) -> Option<i64> {
+    if std::env::var("SUPERREADER_FORM_FIXTURE").ok().as_deref() != Some("1") {
+        return None;
+    }
+    const ORDER: [&str; 9] = [
+        "Moby-Dick",
+        "朝花夕拾",
+        "呐喊",
+        "Walden",
+        "红楼梦",
+        "Middlemarch",
+        "围城",
+        "Meditations",
+        "人间词话",
+    ];
+    ORDER
+        .iter()
+        .position(|name| *name == title)
+        .map(|index| 800 - index as i64)
+}
+
 fn record_for<'a>(book: &Book, history: &'a [ReadingRecord]) -> Option<&'a ReadingRecord> {
     let path = book_path(book)?;
     history.iter().find(|row| row.path == path)
@@ -133,18 +194,174 @@ fn book_path(book: &Book) -> Option<String> {
 
 fn card(book: &Book, history: &[ReadingRecord]) -> CoverCard {
     let record = record_for(book, history);
+    let pdf = book
+        .open_command()
+        .is_some_and(|command| command.kind() == OpenKind::Pdf);
+    let plate_rgb = book.cover().and_then(read_plate_color);
     CoverCard {
         title: book.title().to_string(),
         author: book.author().unwrap_or("").to_string(),
         cover: book.cover().map(|file| file.as_path().to_path_buf()),
         open_path: book_path(book),
-        pdf: book
-            .open_command()
-            .is_some_and(|command| command.kind() == OpenKind::Pdf),
+        pdf,
         percent: record.and_then(percent),
         page: record.map(|row| row.page),
+        position: position_line(record),
+        opened: opened_line(record),
+        plate: plate_rgb.is_some() || book.cover().is_none() || pdf,
+        plate_rgb,
         unavailable: book.unavailable_label().map(str::to_string),
     }
+}
+
+fn read_plate_color(cover: &spike_library::CoverFile) -> Option<u32> {
+    let bytes = std::fs::read(cover.as_path()).ok()?;
+    plate_color(&bytes)
+}
+
+fn position_line(record: Option<&ReadingRecord>) -> String {
+    let Some(record) = record else {
+        return String::new();
+    };
+    if let Some(mark) = record.mark.as_deref().filter(|text| !text.is_empty()) {
+        return mark.to_string();
+    }
+    match record.total {
+        Some(total) if total > 0 => format!("第 {} / {total} 页", record.page),
+        _ => format!("第 {} 页", record.page),
+    }
+}
+
+fn opened_line(record: Option<&ReadingRecord>) -> String {
+    let Some(record) = record else {
+        return String::new();
+    };
+    if let Some(label) = record
+        .opened_label
+        .as_deref()
+        .filter(|text| !text.is_empty())
+    {
+        return label.to_string();
+    }
+    if record.opened_at < 1_000_000_000_000 {
+        return String::new();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|stamp| stamp.as_millis() as i64)
+        .unwrap_or(0);
+    if now <= 0 {
+        return String::new();
+    }
+    let day = 86_400_000;
+    let opened_day = record.opened_at.div_euclid(day);
+    let today = now.div_euclid(day);
+    if opened_day == today {
+        let secs = record.opened_at.div_euclid(1000).rem_euclid(86_400);
+        return format!("今天 {:02}:{:02}", secs / 3600, (secs % 3600) / 60);
+    }
+    if opened_day + 1 == today {
+        return "昨天".into();
+    }
+    if today - opened_day < 7 {
+        const DAYS: [&str; 7] = ["周四", "周五", "周六", "周日", "周一", "周二", "周三"];
+        return DAYS[opened_day.rem_euclid(7) as usize].into();
+    }
+    String::new()
+}
+
+pub fn stamp_form(catalog: &Catalog) {
+    if std::env::var("SUPERREADER_FORM_FIXTURE").ok().as_deref() != Some("1") {
+        return;
+    }
+    let path = crate::settings::path();
+    const READS: [(&str, u32, u32, i64, &str, &str); 3] = [
+        (
+            "Pride and Prejudice",
+            37,
+            100,
+            1_200,
+            "第 3 章 · 舞会",
+            "今天 17:42",
+        ),
+        ("三体", 62, 100, 1_100, "第 2 部 · 黑暗森林", "昨天"),
+        (
+            "The Art of Computer Programming",
+            124,
+            672,
+            1_000,
+            "第 124 / 672 页",
+            "周一",
+        ),
+    ];
+    for (title, page, total, opened_at, mark, label) in READS {
+        let Some(book) = catalog.books().iter().find(|book| book.title() == title) else {
+            continue;
+        };
+        let Some(command) = book.open_command() else {
+            continue;
+        };
+        let book_path = command.path().as_path().display().to_string();
+        let _ = crate::settings::record_marked(
+            &path,
+            &book_path,
+            page,
+            Some(total),
+            opened_at,
+            mark,
+            label,
+        );
+    }
+    let _ = crate::settings::store_form_chrome(
+        &path,
+        &[
+            crate::settings::StoredList {
+                label: "2026 年想读完".into(),
+                count: 4,
+                color: 0x00E0_773A,
+            },
+            crate::settings::StoredList {
+                label: "鲁迅全集".into(),
+                count: 2,
+                color: 0x005B_8DEF,
+            },
+            crate::settings::StoredList {
+                label: "英文经典".into(),
+                count: 5,
+                color: 0x007D_8C6A,
+            },
+        ],
+        &[
+            crate::settings::StoredChat {
+                kind: "time".into(),
+                text: "今天 17:40".into(),
+            },
+            crate::settings::StoredChat {
+                kind: "user".into(),
+                text: "把鲁迅的书归到一个书单里".into(),
+            },
+            crate::settings::StoredChat {
+                kind: "assistant".into(),
+                text: "好了，新建了书单「鲁迅全集」，放进了《呐喊》《朝花夕拾》两本。以后从 calibre 导入的鲁迅作品也会自动归进去。".into(),
+            },
+            crate::settings::StoredChat {
+                kind: "time".into(),
+                text: "18:02".into(),
+            },
+            crate::settings::StoredChat {
+                kind: "user".into(),
+                text: "帮我总结一下《傲慢与偏见》第三章".into(),
+            },
+            crate::settings::StoredChat {
+                kind: "assistant".into(),
+                text: "第三章是梅里顿的舞会，也是全书矛盾的起点。".into(),
+            },
+            crate::settings::StoredChat {
+                kind: "chips".into(),
+                text: "跳到第三章\n存为笔记\n第四章讲什么？".into(),
+            },
+        ],
+    );
 }
 
 fn percent(record: &ReadingRecord) -> Option<u8> {
@@ -275,5 +492,100 @@ mod tests {
         assert!(shelf.covers[0].open_path.is_none());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&support);
+    }
+
+    #[test]
+    fn a_title_or_author_query_filters_the_shelf_and_clears() {
+        let root = std::env::temp_dir().join(format!("spike-shelf-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let libs = fixture::write_form(&root);
+        let support = root.join("support");
+        let apple = open(scope(libs.apple.clone(), support.clone()));
+        let calibre = open(scope(libs.calibre.clone(), support.clone()));
+        let catalog = apple.admit(spike_library::SourceName::Calibre, calibre);
+        let zhao = catalog
+            .books()
+            .iter()
+            .find(|book| book.title() == "朝花夕拾")
+            .unwrap();
+        let zhao_path = zhao
+            .open_command()
+            .unwrap()
+            .path()
+            .as_path()
+            .display()
+            .to_string();
+        let settings = support.join("settings.json");
+        record_open(&settings, &zhao_path, 4, Some(10), 50).unwrap();
+        let history = crate::settings::load_history(&settings);
+        let all = project(&catalog, SelectId::AllBooks, &history);
+        let open_of = |shelf: &LibraryIn, title: &str| {
+            shelf
+                .covers
+                .iter()
+                .find(|card| card.title == title)
+                .unwrap()
+                .open_path
+                .clone()
+        };
+        assert!(all.covers.len() > 4);
+        assert_eq!(searched(all.clone(), "   "), all);
+
+        let pride = searched(all.clone(), "pRiDe");
+        assert_eq!(pride.covers.len(), 1);
+        assert_eq!(pride.covers[0].title, "Pride and Prejudice");
+        assert_eq!(
+            pride.covers[0].open_path.as_deref(),
+            open_of(&all, "Pride and Prejudice").as_deref()
+        );
+        assert_eq!(pride.book_count, 1);
+        assert_eq!(pride.counts, all.counts);
+        assert!(pride.continue_reading.is_empty());
+
+        let austen = searched(all.clone(), "AUSTEN");
+        assert_eq!(austen.covers.len(), 1);
+        assert_eq!(austen.covers[0].title, "Pride and Prejudice");
+
+        let lu = searched(all.clone(), "鲁迅");
+        assert_eq!(lu.covers.len(), 2);
+        assert!(lu.covers.iter().any(|card| card.title == "朝花夕拾"));
+        assert!(lu.covers.iter().any(|card| card.title == "呐喊"));
+        assert_eq!(lu.book_count, 2);
+        assert_eq!(lu.continue_reading.len(), 1);
+        assert_eq!(lu.continue_reading[0].title, "朝花夕拾");
+        assert_eq!(
+            lu.continue_reading[0].open_path.as_deref(),
+            Some(zhao_path.as_str())
+        );
+        assert_eq!(
+            open_of(&lu, "朝花夕拾").as_deref(),
+            Some(zhao_path.as_str())
+        );
+
+        let ci = searched(all.clone(), "慈欣");
+        assert_eq!(ci.covers.len(), 1);
+        assert_eq!(ci.covers[0].title, "三体");
+        assert_eq!(ci.covers[0].author, "刘慈欣");
+
+        let cao = searched(all.clone(), "曹雪芹");
+        assert!(cao.covers.iter().any(|card| card.title == "红楼梦"));
+        assert!(cao.continue_reading.is_empty());
+        assert_eq!(
+            open_of(&cao, "红楼梦").as_deref(),
+            open_of(&all, "红楼梦").as_deref()
+        );
+
+        let spaced = searched(all.clone(), "  朝花  ");
+        assert_eq!(spaced.covers.len(), 1);
+        assert_eq!(spaced.covers[0].title, "朝花夕拾");
+
+        let miss = searched(all.clone(), "没有这本书");
+        assert!(miss.covers.is_empty());
+        assert!(miss.continue_reading.is_empty());
+        assert_eq!(miss.book_count, 0);
+        assert!(!miss.empty);
+        assert_eq!(miss.sources, all.sources);
+        assert_eq!(miss.counts, all.counts);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

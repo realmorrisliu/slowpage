@@ -15,6 +15,7 @@ path = "src/bin/library-fixture.rs"
 required-features = ["fixture"]
 
 [dependencies]
+png = "0.18"
 rusqlite = { version = "0.41", features = ["bundled"] }
 spike-epub = { path = "../epub" }
 

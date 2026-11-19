@@ -22,9 +22,12 @@ if ! command -v iconutil >/dev/null 2>&1; then
   exit 1
 fi
 
-renderer="$root/spikes/target/release/spike-icon"
+target_dir="$("$root/scripts/cargo-target-dir.sh")"
+renderer="$target_dir/release/spike-icon"
 if [ ! -x "$renderer" ]; then
   cargo build --manifest-path "$root/spikes/Cargo.toml" -p spike-icon --release
+  target_dir="$("$root/scripts/cargo-target-dir.sh")"
+  renderer="$target_dir/release/spike-icon"
 fi
 
 work="$(mktemp -d)"

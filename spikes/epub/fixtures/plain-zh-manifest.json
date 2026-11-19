@@ -1,0 +1,15 @@
+{
+  "kind": "unstyled-derived-test-fixture",
+  "not": "the original EPUB",
+  "purpose": "unstyled Chinese default rendering",
+  "source_url": "https://gutenberg.pglaf.org/cache/epub/25271/pg25271.epub",
+  "source_sha256": "91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293",
+  "source_chapter": "范愛農",
+  "source_href": "OEBPS/3309323728932395831_25271-0-1.txt.html",
+  "source_anchor": "id00021",
+  "extraction": "From the admitted chapter only: p#id00021 范愛農, then the literary paragraphs of the following essay body. U+E4C2 is the edition's paragraph break and is dropped. A line that starts with U+3000 starts a paragraph. Other line wraps are joined without an added space. The closing dateline 十一月十八日 shares a p with the next essay title; only that dateline line is kept. No traditional/simplified replacement and no added prose. This file is an unstyled derived test fixture, not the original EPUB.",
+  "rights": "Public domain in the USA.",
+  "derived_sha256": "a3387d363eece6a63ba4a0e74397722d4ca0aedec6171dbc37744cba76fc71f4",
+  "derived_path": "/tmp/superreader-fixtures/plain-zh.epub",
+  "stripped_chars": 4088
+}
