@@ -99,7 +99,7 @@ PENDING = [
     (
         "alan-spawn",
         "highlight-comment-alan",
-        "Blocked until alan issue 1078 closes. The spike does not spawn alan.",
+        "Pending until SuperReader embeds alan_os_host::embed, after S3 and S4. The spike does not embed alan.",
     ),
     (
         "superreader-json",

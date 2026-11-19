@@ -76,11 +76,11 @@ Other agents, alan included, reach the library and the notes through a `superrea
 
 alan's bash runs under a macOS Seatbelt sandbox that denies writes outside mounted directories. A `superreader` write is applied by the running SuperReader app. The command does not open the database itself.
 
-Picked on 2026-11-03. SuperReader owns the library, the SQLite annotations, tantivy, the comment threads, and the comment UI. alan is not linked into the reader process, and SuperReader does not speak alan's socket protocol. On `@alan` in a comment, SuperReader spawns a fresh one-shot `alan` process and pipes stdin. The body is the passage, the user's note, the earlier comments in the thread, and the new question. SuperReader reads stdout and writes that text into its own SQLite as alan's reply comment. The spawn does not pass `--resume`. The annotation id and the thread id live in SuperReader. The reply arrives whole, not streamed, so the comment shows a thinking state until the reply lands.
+Picked on 2026-11-17. This decision supersedes the 2026-11-03 decision of no linking, a one-shot alan process, and a full reply. SuperReader owns the library, the SQLite annotations, tantivy, the comment threads, and the comment UI. SuperReader embeds alan in-process through the facade in [alan pull request 1109](https://github.com/realmorrisliu/alan/pull/1109). That facade is `alan_os_host::embed` in crate `alan-os-host`. The types are `EmbeddedAlan` and `EmbeddedConfig::isolated`. `LlmSource::Factory` takes a host-supplied `LlmClientFactory`. SuperReader registers its app tools through `EmbeddedConfig::with_tools`, which takes a `ToolRegistry`. A reply is `EmbedEvent::TextDelta` from `EmbedEventStream::next_event`. `RootAgentClient::event_stream` opens that stream. SuperReader's SQLite owns the conversation history. Each ask sends that thread as context. The annotation id and the thread id live in SuperReader.
 
 The reading form shows highlights, notes, and agent responses in an annotation margin. The library form's chat panel is a separate region. The margin's contents are the hard requirement in the next section. The exact gap, the horizontal position, the margin width, and the toggle placement wait for a mockup Morris approves. The layout reference is `docs/design/shell/spec.md`. The spike still keeps a stable anchor that a comment thread can hang on. Shell slices do not embed alan.
 
-alan needs a launch flag so a reader-spawned run does not rewrite alan's global root-rollout pointer. That flag is an external dependency. See the roadmap. This repository does not patch alan.
+`EmbedEventStream::next_event` is on public alan. SuperReader integrates after shell slices S3 and S4. This repository does not start that work now.
 
 ## Annotation margin (hard requirement, 2026-11-10)
 
@@ -131,7 +131,8 @@ Until S3, the spike centers the page in the area from the bar's right edge to th
 
 - 2026-11-03. No night mode, and no theme switching.
 - 2026-11-03. Single-page reading only. The spread in the disliked reference is out.
-- 2026-11-03. alan is a one-shot process with piped stdin and a whole stdout reply, as written above. The comment path does not link alan into the reader, and it does not speak alan's socket protocol.
+- 2026-11-03. alan is a one-shot process with piped stdin and a whole stdout reply. The comment path does not link alan into the reader, and it does not speak alan's socket protocol. Superseded on 2026-11-17.
+- 2026-11-17. SuperReader embeds alan in-process, as written in Agents and alan. This supersedes the 2026-11-03 decision above. Integration waits for shell slices S3 and S4.
 - 2026-11-03. PDF rendering is pdfium, because the later-page median stays under 16.7 ms and the glyph boxes are complete.
 - 2026-11-03. EPUB pages use the system WKWebView, because it keeps the publisher CSS and a selection that survives reload. UNDER RE-EVALUATION (2026-11-10). Morris wants to consider a fully native, pure-Rust EPUB implementation on NSH, for cross-platform reach and full control of layout. Research is in progress. PDF via pdfium-render is unchanged.
 - 2026-11-10. PDF still ships `libpdfium.dylib` through pdfium-render. The WebKit EPUB page is the part under re-evaluation, so a pure-Rust reader is open again for EPUB only.
