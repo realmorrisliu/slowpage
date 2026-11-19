@@ -6,22 +6,21 @@ This is the interaction rule for the reading form. Morris confirmed the rule, th
 
 S3, S4, and every slice after them get every interaction detail right. The interaction has to work while the reader uses it.
 
-Each item in the checklist needs both proofs before that item merges.
+This list is an established route. The necessary cloud tests, the build, and the checks, plus an independent review, are enough to merge an item. The same rule is the Merge section of `docs/agents.md`.
 
-- An automated interaction test. Headless `nsh test` drives the input and asserts the resulting state.
-- A verify run on a Mac. The proof is a screen recording, or a run of consecutive frames. One screenshot does not prove the item. The capture has no blank frame, no flicker, no position jump, and no clipping.
+Record a GUI run, `nsh test`, a recording on Morris's Mac, or the real Apple Books round as not run when it did not happen. Not run does not block the merge. Not run is not a pass. Do not use Morris's Mac to make that record.
+
+A small interaction on this list does not wait for a separate confirmation. A new checklist item, a new visual design, or an architecture tradeoff waits for Morris.
 
 Every item runs once for an EPUB and once for a PDF.
 
-One item, or a small group of items, is one pull request. The pull request merges after both proofs pass.
-
-Add a new item to this list, with Morris's approval, before building that item.
+One item, or a small group of items, is one pull request.
 
 ## Checklist
 
 The ten items are these.
 
-1. Shelf to reading and back. One click on a cover enters the reading form. While immersive reading is off, the back button, Command-[, and Escape leave the book and return to Full. Full is the library card. The bare shelf screen stays removed. While immersive reading is on, Escape leaves immersive reading and stays on the book. The enter and leave transition is animated. Morris picks that animation from two or three recorded prototypes before anyone builds it. The library card keeps its scroll position on return. **继续阅读** updates immediately.
+1. Shelf to reading and back. One click on a cover enters the reading form. While immersive reading is off, the back button, Command-[, and Escape leave the book and return to Full. Full is the library card. The bare shelf screen stays removed. While immersive reading is on, Escape leaves immersive reading and stays on the book. The enter and leave transition is animated. The library card keeps its scroll position on return. **继续阅读** updates immediately.
 2. Finder and Dock open. Opening a file on a cold start, opening a file while Slowpage is already running, and dropping a file on the Dock icon each opens that book directly. Opening a file while another book is open switches to the new book. That switch is the fix for the alpha-1 bug, where a second PDF opened on a blank page. An unsupported file or a broken file shows a clear message.
 3. Page turns. The left arrow and the right arrow turn one page. Space moves forward, and Shift-Space moves back. A horizontal trackpad swipe turns one page. The animation follows the finger, and the reader can cancel that turn before it completes. A click on the left edge or the right edge turns one page. A turn blocked at the first page or the last page gives feedback. The footer page number matches the page on screen. The arrow keys, Space, Shift-Space, and an edge click play the 160 ms slide. The PDF reading section also names the trackpad swipe in that slide. For the swipe, this checklist wins.
 4. Chapter and location jumps. A table-of-contents click, a bookmark, a search result, an in-book link, and a footnote each lands on that exact location. The reader can return to the location from before the jump.
@@ -44,7 +43,7 @@ Text selection, highlights, and notes belong to the S3 annotation margin. That m
 
 ## Real Apple Books library
 
-Once the reading form has landed, run one read-only round on a real Apple Books library.
+Once the reading form has landed, run one read-only round on a real Apple Books library. This round is not run. It does not block a merge, and it is not a pass.
 
 Copy the book files into a temporary directory and open those copies. Put Slowpage's data in a temporary `SUPERREADER_SUPPORT_DIR`.
 

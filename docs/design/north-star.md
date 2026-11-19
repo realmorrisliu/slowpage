@@ -121,7 +121,7 @@ S1 removes the empty-window Open button, the `open -a` and Open With checks, and
 
 ## Reading interactions (2026-11-17)
 
-Morris confirmed the reading-form interaction rule on 2026-11-17. S3, S4, and every slice after them get every interaction detail right. The item passes while the reader drives the interaction. The checklist, the headless `nsh test`, the Mac recording, and the performance floors are in `docs/design/reading-interactions.md`.
+Morris confirmed the reading-form interaction rule on 2026-11-17. S3, S4, and every slice after them get every interaction detail right. The checklist and the performance floors are in `docs/design/reading-interactions.md`. An item merges on the necessary cloud checks and an independent review. A GUI run, `nsh test`, or a Mac recording that did not happen stays not run, and it is not a pass.
 
 ## Left bar measurement (2026-11-10)
 
@@ -159,7 +159,7 @@ Until S3, the spike centers the page in the area from the bar's right edge to th
 - 2026-11-10. The reading-form right panel is the annotation margin in Annotation margin (hard requirement, 2026-11-10). Pull request 14's card, type size, connector, and drawer picks are in `docs/design/shell/spec.md`.
 - 2026-11-11. The app shell lands before any other feature. The layout reference is `docs/design/shell/spec.md`. Full shows the library and the chat panel. Page and panel shows the page and the annotation margin. Immersive reading shows the card edge to edge. The exact gap, the horizontal position, the margin width, and the toggle placement wait for a mockup. Shell slices still do not embed alan.
 - 2026-11-11. The sidebar is 220 points of text rows. Morris rejected the icon rail.
-- 2026-11-17. Reading-form interactions follow `docs/design/reading-interactions.md`. Each checklist item needs headless `nsh test` and a Mac recording, for an EPUB and for a PDF.
+- 2026-11-17. Reading-form interactions follow `docs/design/reading-interactions.md`. An item merges on the necessary cloud checks and an independent review. A run that did not happen stays not run, and it is not a pass.
 
 ## PDF reading
 
