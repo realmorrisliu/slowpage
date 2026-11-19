@@ -99,7 +99,7 @@ PENDING = [
     (
         "alan-spawn",
         "highlight-comment-alan",
-        "Pending until the in-process embed lands (alan-os-host::embed after alan's next_event() + embed-slim, and after the S3/S4 reading form). The spike does not embed alan.",
+        "Pending until SuperReader embeds alan_os_host::embed, after S3 and S4. The spike does not embed alan.",
     ),
     (
         "superreader-json",

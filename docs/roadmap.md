@@ -121,9 +121,9 @@ The reading form shows a highlight, a note, and an agent response in the annotat
 
 ## @alan
 
-Picked on 2026-11-17. This decision supersedes the 2026-11-03 one-shot process. The full decision is in `docs/design/north-star.md`. SuperReader embeds alan in-process through `alan-os-host::embed` in [alan pull request 1109](https://github.com/realmorrisliu/alan/pull/1109). Replies stream. SuperReader's SQLite owns the thread. Each ask sends that thread as context.
+Picked on 2026-11-17. This decision supersedes the 2026-11-03 one-shot process. The full decision is in `docs/design/north-star.md`. SuperReader embeds alan in-process through `alan_os_host::embed` in [alan pull request 1109](https://github.com/realmorrisliu/alan/pull/1109). A reply is `EmbedEvent::TextDelta` from `EmbedEventStream::next_event`. SuperReader's SQLite owns the thread. Each ask sends that thread as context.
 
-The alan project owns the prerequisites. They are a typed `next_event()` and an embed-slim crate or feature set. Integration starts after those land and after S3 and S4. This repository does not start it now.
+Integration starts after S3 and S4. This repository does not start it now.
 
 ## Distribution
 

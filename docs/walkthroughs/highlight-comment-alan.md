@@ -4,7 +4,7 @@ Morris is on a single page. He drags across a passage and highlights it. He writ
 
 He wants alan to look at the same passage. He writes `@alan` and the question in the comment. The reply streams into that thread.
 
-SuperReader owns the library, the SQLite annotations, tantivy, the comment thread, and the comment UI. On 2026-11-17, SuperReader embeds alan in-process. That decision supersedes the 2026-11-03 one-shot process. The facade, the types, and the prerequisites are in `docs/design/north-star.md`. SQLite owns the conversation history. Each ask sends that thread as context. The annotation id and the thread id stay in SuperReader.
+SuperReader owns the library, the SQLite annotations, tantivy, the comment thread, and the comment UI. On 2026-11-17, SuperReader embeds alan in-process. That decision supersedes the 2026-11-03 one-shot process. The facade and the types are in `docs/design/north-star.md`. SQLite owns the conversation history. Each ask sends that thread as context. The annotation id and the thread id stay in SuperReader.
 
 The reply streams into SQLite as alan's reply comment.
 
@@ -12,4 +12,4 @@ Another agent, alan included, reads the library and the notes through the `super
 
 The exact comment chrome is still open. Two or three prototypes decide it. This walkthrough fixes the handoff, not the chrome.
 
-Integration starts after alan's prerequisites land and after shell slices S3 and S4. This walkthrough is the target. The milestone does not start now.
+Integration starts after shell slices S3 and S4. This walkthrough is the target. The milestone does not start now.
