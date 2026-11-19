@@ -446,13 +446,29 @@ pub fn SpikeApp() -> impl IntoElement {
         let stage = stage.clone();
         move |_| stage.command("zoom", json!("zoom-2x"))
     });
-    on_key("left", {
+    let page_keys = KeyOptions {
+        when: nsh_core::keymap::When::NotEditing,
+        ..KeyOptions::default()
+    };
+    on_key_with("left", page_keys, {
         let stage = stage.clone();
-        move |_| stage.command("page", json!(-1))
+        let visit = visit.clone();
+        move |_| turn_page(&stage, &visit, shell_on, false)
     });
-    on_key("right", {
+    on_key_with("right", page_keys, {
         let stage = stage.clone();
-        move |_| stage.command("page", json!(1))
+        let visit = visit.clone();
+        move |_| turn_page(&stage, &visit, shell_on, true)
+    });
+    on_key_with("space", page_keys, {
+        let stage = stage.clone();
+        let visit = visit.clone();
+        move |_| turn_page(&stage, &visit, shell_on, true)
+    });
+    on_key_with("shift+space", page_keys, {
+        let stage = stage.clone();
+        let visit = visit.clone();
+        move |_| turn_page(&stage, &visit, shell_on, false)
     });
     let leave_keys = KeyOptions {
         when: nsh_core::keymap::When::NotEditing,
@@ -718,11 +734,23 @@ pub fn SpikeApp() -> impl IntoElement {
                             let shell_window = shell_window.clone();
                             let shell_chrome = shell_chrome.clone();
                             let history = history.clone();
+                            let visit = visit.clone();
                             move |event: &NativeEvent| {
                                 if event.name.as_ref() != "status" {
                                     return;
                                 }
                                 history.set(settings::load_history(&settings::path()));
+                                let page = event.data["page"].as_u64().unwrap_or(0) as u32;
+                                let pages = event.data["pages"].as_u64().unwrap_or(0) as u32;
+                                if pages > 0 {
+                                    let mut current = visit.get();
+                                    if current.surface == visit::Surface::Reading
+                                        && current.page != page
+                                    {
+                                        current.page = page.max(1);
+                                        visit.set(current);
+                                    }
+                                }
                                 title.set(event.data["title"].as_str().unwrap_or("").to_string());
                                 variant
                                     .set(event.data["variant"].as_str().unwrap_or("").to_string());
@@ -961,6 +989,13 @@ fn receive_file(
         visit::StageOpen::None => {}
     }
     history.set(settings::load_history(&settings::path()));
+}
+
+fn turn_page(stage: &ElementRef, visit: &Signal<visit::Visit>, shell: bool, forward: bool) {
+    let delta = visit::page_key_delta(shell, visit.get().surface, forward);
+    if delta != 0 {
+        stage.command("page", json!(delta));
+    }
 }
 
 fn commit_visit(slot: &Signal<visit::Visit>, next: visit::Visit) {

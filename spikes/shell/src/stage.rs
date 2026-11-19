@@ -761,11 +761,7 @@ impl State {
             return;
         }
         let current = self.current_page();
-        let next = if delta < 0 {
-            current.saturating_sub(1)
-        } else {
-            (current + 1).min(count - 1)
-        };
+        let next = crate::visit::step_index(current, count, delta);
         let sizes = pdf.sizes.clone();
         self.offset = page_offset(&sizes, next as u32 + 1, self.scale);
         self.note_page();
@@ -1180,6 +1176,8 @@ impl State {
         let mut title_opacity = 1.0_f32;
         let mut footer_opacity = 1.0_f32;
         let mut bars_row = false;
+        let mut shown_page = 0_u32;
+        let mut shown_pages = 0_u32;
         let (title, variant, left, right, show_text, html) = match self.mode {
             Mode::Empty => {
                 bars_row = true;
@@ -1195,6 +1193,8 @@ impl State {
             Mode::Pdfium | Mode::Hayro => {
                 let pages = self.pdf.as_ref().map(|p| p.sizes.len()).unwrap_or(0);
                 let current = self.current_page().saturating_add(1);
+                shown_page = current as u32;
+                shown_pages = pages as u32;
                 let left_pages = pages.saturating_sub(current);
                 let title = if self.book_path.is_empty() || self.book_path.ends_with("gpt3.pdf") {
                     "Language Models are Few-Shot Learners".to_string()
@@ -1222,21 +1222,21 @@ impl State {
                         self.scale.name()
                     )
                 };
-                let left = if self.product {
-                    String::new()
+                let (left, right) = if self.product {
+                    crate::reading::product_page_footer(current as u32, pages as u32)
                 } else {
-                    format!("{current}/{pages}")
-                };
-                let right = if self.product {
-                    String::new()
-                } else {
-                    format!("{left_pages} pages left")
+                    (
+                        format!("{current}/{pages}"),
+                        format!("{left_pages} pages left"),
+                    )
                 };
                 (title, variant, left, right, false, String::new())
             }
             Mode::WebKit => {
                 let pages = self.web_pages.max(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 let path = self.epub_path();
                 let title = self
                     .web
@@ -1268,6 +1268,8 @@ impl State {
                     .map(|c| (c.plain.chars().count() / 1200).max(1))
                     .unwrap_or(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 (
                     title,
                     label.to_string(),
@@ -1303,6 +1305,8 @@ impl State {
                 "footer_opacity": footer_opacity,
                 "bars_row": bars_row,
                 "trim": self.trim_id,
+                "page": shown_page,
+                "pages": shown_pages,
                 "empty": self.mode == Mode::Empty,
                 "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
                 "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },

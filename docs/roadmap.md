@@ -164,3 +164,17 @@ Done. Plain Essay and Field Guide switch the visit and keep the shelf offset. A 
 Evidence. `spikes/shell/src/visit.rs` reads those two fixtures. macOS CI runs that test. `nsh test` does not deliver `openFiles` on this machine.
 
 Not run. A Mac window of Finder, the Dock, and a second real PDF loading in pdfium. Smoothness, frames, and animation.
+
+## S3 page turn
+
+Goal. While a book is open, the right arrow and Space move one page forward. The left arrow and Shift-Space move one page back. The first page and the last page stay put. The footer shows that page. On the library those keys do nothing.
+
+Scope. The keys use the turn the reader already has. An EPUB keeps the 160 ms slide. A PDF keeps the existing page offset. The product PDF footer uses the same line the EPUB footer already uses. The visit page follows the page the stage reports.
+
+Non-goals. No new slide, no edge target, and no finger-following swipe. The EPUB swipe that is already in the page stays. A page whose header matches and whose bytes still fail to load is outside this slice.
+
+Done. Page 4 of 10 goes to 5, then back to 4. Page 1 does not go back. Page 10 does not go forward. The library form stays. A direct reader launch, whose visit still starts on the library surface, still turns. The product footer for page 2 of 5 is 2/5页 and 本章还剩3页.
+
+Evidence. `spikes/shell/src/visit.rs` tests the key and the stop. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test.
+
+Not run. A Mac window, `nsh test`, the key event itself, pdfium drawing the turned page, smoothness, frames, and animation.
