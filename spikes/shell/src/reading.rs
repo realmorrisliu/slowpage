@@ -568,6 +568,7 @@ const SCRIPT: &str = r#"
   let shift = 0;
   let followX = 0;
   let followGen = 0;
+  let easeCut = 0;
   let motion = 0;
   let committing = false;
   let measured = false;
@@ -1432,8 +1433,22 @@ const SCRIPT: &str = r#"
     }
     endFollow();
   };
+  window.spikeEase = function (on) {
+    window.__spikeEase = on ? 1 : 0;
+    if (on && !easeCut) {
+      easeCut = 1;
+      endFollow();
+    }
+  };
   window.spikeFollow = function (offset) {
-    if (window.__spikeEase) return;
+    if (window.__spikeEase) {
+      if (!easeCut) {
+        easeCut = 1;
+        endFollow();
+      }
+      return;
+    }
+    easeCut = 0;
     if (busy) return;
     followGen++;
     const w = pageWidth();
@@ -1481,12 +1496,19 @@ const SCRIPT: &str = r#"
         requestAnimationFrame(frame);
         return;
       }
-      if (gen === followGen) done();
+      if (gen !== followGen || window.__spikeEase || easeCut) return;
+      done();
     }
     requestAnimationFrame(frame);
   }
   window.spikeFollowEnd = function (delta, token) {
-    if (window.__spikeEase) return "no";
+    if (window.__spikeEase || easeCut) {
+      if (!easeCut) {
+        easeCut = 1;
+        endFollow();
+      }
+      return "no";
+    }
     if (busy && !committing && flying === "restore") releaseFlying();
     if (busy) {
       // A key slide is not a commit. Drop the follow paint and let that slide
@@ -1756,12 +1778,19 @@ mod tests {
         assert_eq!(v["restore"]["transformNow"], "none");
         assert_eq!(v["restore"]["clean"], true);
         assert_eq!(v["restore"]["scroll"], 400);
-        assert_eq!(v["ease"]["transform"], "");
+        assert_eq!(v["ease"]["transform"], "none");
         assert_eq!(v["ease"]["scroll"], 0);
         assert_eq!(v["ease"]["turns"], 0);
         assert_eq!(v["ease"]["end"], "no");
         assert_eq!(v["ease"]["endScroll"], 0);
         assert_eq!(v["ease"]["keyScroll"], 400);
+        assert_eq!(v["ease"]["glide"], "glide");
+        assert_eq!(v["ease"]["cutScroll"], 0);
+        assert_eq!(v["ease"]["cutPosts"], 0);
+        assert_eq!(v["ease"]["late"], "no");
+        assert_eq!(v["ease"]["lateScroll"], 0);
+        assert_eq!(v["ease"]["fresh"], "glide");
+        assert_eq!(v["ease"]["freshScroll"], 400);
     }
 
     #[test]
@@ -3329,8 +3358,34 @@ const easeEnd = window.spikeFollowEnd(1, 123);
 const easeEndScroll = body.scrollLeft;
 press('ArrowRight', false);
 const easeKeyed = sample();
-const ease = { transform: easeHeld.transform, scroll: easeHeld.scroll, turns: easeHeld.turns, end: easeEnd, endScroll: easeEndScroll, keyScroll: easeKeyed.scroll };
-window.__spikeEase = 0;
+boot(); spy();
+const glideAnswer = window.spikeFollowEnd(1, 7);
+step(40);
+window.spikeEase(1);
+step(200);
+const cutScroll = body.scrollLeft;
+const cutPosts = posts.filter((item) => item && item.swipe && !item.dropped).length;
+window.spikeEase(0);
+const lateAnswer = window.spikeFollowEnd(1, 99);
+const lateScroll = body.scrollLeft;
+window.spikeFollow(30);
+const freshAnswer = window.spikeFollowEnd(1, 5);
+step(160);
+const ease = {
+  transform: easeHeld.transform,
+  scroll: easeHeld.scroll,
+  turns: easeHeld.turns,
+  end: easeEnd,
+  endScroll: easeEndScroll,
+  keyScroll: easeKeyed.scroll,
+  glide: glideAnswer,
+  cutScroll: cutScroll,
+  cutPosts: cutPosts,
+  late: lateAnswer,
+  lateScroll: lateScroll,
+  fresh: freshAnswer,
+  freshScroll: body.scrollLeft,
+};
 
 console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease }));
 "#;

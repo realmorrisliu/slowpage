@@ -862,26 +862,30 @@ impl Swipe {
         drop
     }
 
+    fn release_finger(&mut self) {
+        let next_id = self.next_id;
+        let floor = self.floor;
+        let last_applied = self.last_applied;
+        let flying = self.flying;
+        let queued = self.queued;
+        let last_commit = self.last_commit;
+        let release = self.release;
+        *self = Self::default();
+        self.next_id = next_id;
+        self.floor = floor;
+        self.last_applied = last_applied;
+        self.flying = flying;
+        self.queued = queued;
+        self.last_commit = last_commit;
+        self.release = release;
+    }
+
     pub fn offer(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
         if self.ignore {
-            if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
-                let next_id = self.next_id;
-                let floor = self.floor;
-                let last_applied = self.last_applied;
-                let flying = self.flying;
-                let queued = self.queued;
-                let last_commit = self.last_commit;
-                let release = self.release;
-                *self = Self::default();
-                self.next_id = next_id;
-                self.floor = floor;
-                self.last_applied = last_applied;
-                self.flying = flying;
-                self.queued = queued;
-                self.last_commit = last_commit;
-                self.release = release;
+            if lifting(&tick) {
+                self.release_finger();
             }
-            return if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
+            return if lifting(&tick) {
                 WheelMove::Pass
             } else {
                 WheelMove::Swallow
@@ -2025,6 +2029,10 @@ pub fn accept_landed(swipe: &mut Swipe, token: u64) -> bool {
     token == 0 || swipe.take_commit_post(token)
 }
 
+fn lifting(tick: &WheelTick) -> bool {
+    matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum
+}
+
 pub fn offer_while_reading(
     swipe: &mut Swipe,
     tick: WheelTick,
@@ -2033,6 +2041,9 @@ pub fn offer_while_reading(
     trip: crate::ease::Trip,
 ) -> WheelMove {
     if !crate::ease::pointer_turns(trip) {
+        if lifting(&tick) && (swipe.ignore || swipe.live) {
+            swipe.release_finger();
+        }
         WheelMove::Swallow
     } else {
         swipe.offer(tick, page, pages)

@@ -1712,9 +1712,8 @@ impl State {
         let item = crate::reading::trim(&self.trim_id);
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
         let (box_w, box_h, left, top) = self.fit_box();
-        let (ix, iy, w, h) = crate::reading::fit_page(box_w, box_h, rw, rh);
-        let x = crate::chrome::reader_page_x(left, ix);
-        let y = top + iy;
+        let fitted = crate::chrome::fitted_page(left, top, box_w, box_h, rw, rh);
+        let (x, y, w, h) = (fitted.x, fitted.y, fitted.w, fitted.h);
         let design = crate::chrome::reading_page(
             rw,
             rh,
@@ -1726,13 +1725,8 @@ impl State {
         } else {
             1.0
         };
-        let key = (
-            x.round() as i32,
-            y.round() as i32,
-            w.round() as i32,
-            h.round() as i32,
-            self.trim_id.clone(),
-        );
+        let (kx, ky, kw, kh) = fitted.key();
+        let key = (kx, ky, kw, kh, self.trim_id.clone());
         let (hold, hold_probe, missed, shown, pages, pages_known, figure, figure_lost) = {
             let inbox = self.web.as_ref().unwrap().inbox.borrow();
             let figure = inbox.figure.clone();

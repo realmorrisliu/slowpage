@@ -218,6 +218,44 @@ pub fn reader_page_x(left: f64, ix: f64) -> f64 {
     left + ix
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FittedPage {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl FittedPage {
+    pub fn key(self) -> (i32, i32, i32, i32) {
+        (
+            self.x.round() as i32,
+            self.y.round() as i32,
+            self.w.round() as i32,
+            self.h.round() as i32,
+        )
+    }
+}
+
+/// The rectangle `place_page` gives the web view, and the key that decides
+/// whether that draw refits.
+pub fn fitted_page(
+    left: f64,
+    top: f64,
+    box_w: f64,
+    box_h: f64,
+    ratio_w: f64,
+    ratio_h: f64,
+) -> FittedPage {
+    let (ix, iy, w, h) = crate::reading::fit_page(box_w, box_h, ratio_w, ratio_h);
+    FittedPage {
+        x: reader_page_x(left, ix),
+        y: top + iy,
+        w,
+        h,
+    }
+}
+
 /// Where a page would sit if it were kept clear of a left bar. The reader
 /// does not use this. The test keeps it to show the shift that was removed.
 #[cfg(test)]

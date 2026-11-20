@@ -1072,7 +1072,7 @@ impl WebChapter {
         let flag = if moving { 1 } else { 0 };
         eval(
             &web,
-            &format!("window.__spikeEase={flag}"),
+            &format!("window.__spikeEase={flag};if(window.spikeEase)window.spikeEase({flag})"),
             self.inbox.clone(),
             href,
             false,

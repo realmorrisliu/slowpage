@@ -78,6 +78,8 @@ pub struct Trip {
     elapsed_ms: u32,
     /// The page box. `None` is the immersive frame. It changes when a leg lands.
     fit: Option<bool>,
+    /// The page rectangle captured for this trip. Resize does not replace it.
+    page_hold: Option<Rect>,
 }
 
 impl Trip {
@@ -94,6 +96,7 @@ impl Trip {
             span_ms: 0,
             elapsed_ms: 0,
             fit: fit_of(pose),
+            page_hold: None,
         }
     }
 
@@ -142,6 +145,7 @@ impl Trip {
             self.span_ms = 0;
             self.elapsed_ms = 0;
             self.fit = fit_of(desired);
+            self.page_hold = None;
             return self;
         }
         self.leg = self.leg.wrapping_add(1);
@@ -161,6 +165,7 @@ impl Trip {
             self.span_ms = 0;
             self.elapsed_ms = 0;
             self.fit = fit_of(self.goal);
+            self.page_hold = None;
             return self;
         }
         self.elapsed_ms = elapsed_ms;
@@ -183,6 +188,7 @@ static TRIP: Mutex<Trip> = Mutex::new(Trip {
     span_ms: 0,
     elapsed_ms: 0,
     fit: Some(false),
+    page_hold: None,
 });
 
 fn lock() -> std::sync::MutexGuard<'static, Trip> {
@@ -270,11 +276,12 @@ pub fn present(width: f64, height: f64, top: f64, trip: Trip) -> Presented {
         )
     });
     let margin = margin.filter(|rect| rect.w > 0.5);
-    let page = match trip.fit {
+    let fitted = match trip.fit {
         None => end.card,
         Some(true) => shown.card,
         Some(false) => hidden.card,
     };
+    let page = held_page(trip, fitted);
     Presented {
         card,
         radius: CARD_RADIUS * (1.0 - pose.immersive),
@@ -285,6 +292,27 @@ pub fn present(width: f64, height: f64, top: f64, trip: Trip) -> Presented {
         plate: pose.immersive >= LANDED,
         panel_toggle: pose.immersive < LANDED,
     }
+}
+
+fn held_page(trip: Trip, fitted: Rect) -> Rect {
+    if !trip.moving() {
+        let live = current();
+        if live.leg() == trip.leg() && live.page_hold.is_some() {
+            lock().page_hold = None;
+        }
+        return fitted;
+    }
+    if let Some(held) = trip.page_hold {
+        return held;
+    }
+    let live = current();
+    if live.leg() == trip.leg() {
+        if let Some(held) = live.page_hold {
+            return held;
+        }
+        lock().page_hold = Some(fitted);
+    }
+    fitted
 }
 
 fn mix3(hidden: Rect, shown: Rect, immersive: Rect, pose: Mix) -> Rect {
@@ -326,6 +354,7 @@ fn mix_rect(from: Rect, to: Rect, u: f64) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::visit::PlaceFile;
 
     struct Reset;
     impl Drop for Reset {
@@ -458,6 +487,69 @@ mod tests {
         near(shown_again.card, 6.0, 6.0, 1188.0, 888.0);
         near(shown_again.page, 6.0, 6.0, 1188.0, 888.0);
 
+        retarget(true, true);
+        let origin = present(1440.0, 900.0, 0.0, advance(0));
+        near(origin.page, 6.0, 6.0, 1188.0, 888.0);
+        advance(80);
+        let origin_key = crate::chrome::fitted_page(
+            origin.page.x,
+            origin.page.y,
+            origin.page.w,
+            origin.page.h,
+            612.0,
+            792.0,
+        )
+        .key();
+        for (width, height) in [
+            (700.0, 800.0),
+            (817.0, 800.0),
+            (818.0, 800.0),
+            (1512.0, 982.0),
+        ] {
+            let frame = present(width, height, 0.0, current());
+            assert_eq!(frame.page, origin.page);
+            let key = crate::chrome::fitted_page(
+                frame.page.x,
+                frame.page.y,
+                frame.page.w,
+                frame.page.h,
+                612.0,
+                792.0,
+            )
+            .key();
+            assert_eq!(key, origin_key);
+            let mut reader = crate::visit::Reader::default();
+            let plan = crate::visit::layout_frame(
+                &mut reader,
+                crate::visit::FrameTick::new(true, true, false, true, true, false),
+            );
+            assert_eq!(plan.draw, crate::visit::Draw::Rest);
+        }
+        retarget(false, true);
+        assert_eq!(present(700.0, 800.0, 0.0, current()).page, origin.page);
+        retarget(true, true);
+        assert_eq!(present(1512.0, 982.0, 0.0, current()).page, origin.page);
+        advance(160);
+        let refit = present(1512.0, 982.0, 0.0, current());
+        near(refit.page, 0.0, 0.0, 1512.0, 982.0);
+        let refit_key = crate::chrome::fitted_page(
+            refit.page.x,
+            refit.page.y,
+            refit.page.w,
+            refit.page.h,
+            612.0,
+            792.0,
+        )
+        .key();
+        assert_ne!(refit_key, origin_key);
+        let mut reader = crate::visit::Reader::default();
+        let plan = crate::visit::layout_frame(
+            &mut reader,
+            crate::visit::FrameTick::new(false, true, false, true, true, false),
+        );
+        assert!(!matches!(plan.draw, crate::visit::Draw::Rest));
+        settle(false, true);
+
         let seat = button_seat(1440.0, 0.0);
         near(seat, 1362.0, 10.0, 28.0, 28.0);
         let glyph = crate::icons::glyph_source("maximize").expect("maximize");
@@ -557,35 +649,68 @@ mod tests {
         assert!(crate::visit::accept_landed(&mut next, fresh));
         crate::settings::record_progress(&file, book, 5, Some(75), 0, "").unwrap();
         assert_eq!(stored.resume().page, 5);
+        settle(false, true);
         let mut finger = crate::visit::Swipe::default();
-        assert_eq!(
-            finger.offer(
-                crate::visit::WheelTick {
-                    finger: crate::visit::Finger::Down,
-                    momentum: false,
-                    dx: 80.0,
-                    dy: 0.0,
-                },
-                5,
-                75,
-            ),
-            crate::visit::WheelMove::Follow(80.0)
-        );
+        let down = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        assert!(matches!(
+            crate::visit::offer_while_reading(&mut finger, down, 5, 75, current()),
+            crate::visit::WheelMove::Follow(_)
+        ));
         assert!(crate::visit::stop_for_ease(&mut finger));
+        retarget(true, true);
         assert_eq!(
-            finger.offer(
-                crate::visit::WheelTick {
-                    finger: crate::visit::Finger::Up,
-                    momentum: false,
-                    dx: 0.0,
-                    dy: 0.0,
-                },
+            crate::visit::offer_while_reading(&mut finger, up, 5, 75, current()),
+            crate::visit::WheelMove::Swallow
+        );
+        assert!(finger.commit_token().is_none());
+        assert_eq!(
+            crate::visit::offer_while_reading(&mut finger, down, 5, 75, current()),
+            crate::visit::WheelMove::Swallow
+        );
+        assert_eq!(
+            crate::visit::offer_while_reading(&mut finger, up, 5, 75, current()),
+            crate::visit::WheelMove::Swallow
+        );
+        assert!(finger.commit_token().is_none());
+        assert!(matches!(
+            crate::visit::pdf_wheel(
+                crate::visit::WheelMove::Swallow,
+                0,
+                1,
                 5,
                 75,
+                400.0,
+                0.0,
+                false,
+                false,
             ),
-            crate::visit::WheelMove::Pass
-        );
+            crate::visit::PdfWheel::Pass
+        ));
         assert_eq!(stored.resume().page, 5);
+        advance(160);
+        assert!(matches!(
+            crate::visit::offer_while_reading(&mut finger, down, 5, 75, current()),
+            crate::visit::WheelMove::Follow(_)
+        ));
+        assert_eq!(
+            crate::visit::offer_while_reading(&mut finger, up, 5, 75, current()),
+            crate::visit::WheelMove::Commit(1)
+        );
+        let landed = finger.commit_token().unwrap();
+        assert!(crate::visit::accept_landed(&mut finger, landed));
+        crate::settings::record_progress(&file, book, 6, Some(75), 0, "").unwrap();
+        assert_eq!(stored.resume().page, 6);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
