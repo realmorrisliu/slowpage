@@ -160,6 +160,7 @@ Until S3, the spike centers the page in the area from the bar's right edge to th
 - 2026-11-11. The app shell lands before any other feature. The layout reference is `docs/design/shell/spec.md`. Full shows the library and the chat panel. Page and panel shows the page and the annotation margin. Immersive reading shows the card edge to edge. The exact gap, the horizontal position, the margin width, and the toggle placement wait for a mockup. Shell slices still do not embed alan.
 - 2026-11-11. The sidebar is 220 points of text rows. Morris rejected the icon rail.
 - 2026-11-17. Reading-form interactions follow `docs/design/reading-interactions.md`. An item merges on the necessary cloud checks and an independent review. A run that did not happen stays not run, and it is not a pass.
+- 2026-11-20. Morris chose that an EPUB turn blocked at the first or last page of the open chapter eases back to that same column. The ease is at most 24 CSS pixels and at most 6 percent of the column width, over the existing 160 ms turn. The page number and the stored sentence stay. A contents choice, an in-book link, and a return still change chapters. PDF paging is unchanged. Checklist item 3 is not done. The page script has no reduce-motion switch, and this choice does not add one.
 
 ## PDF reading
 
