@@ -99,21 +99,34 @@ fn reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
     )
 }
 
+/// The native stage. `ElementRef::command` is what marks the view dirty.
+/// NSH 0.5.1 does not let a unit test install the executor `element_ref`
+/// needs, so a test supplies this and the window supplies the real ref.
+pub trait StageCommand {
+    fn stage_command(&self, name: &str, args: nsh_core::JsonValue);
+}
+
+impl StageCommand for ElementRef {
+    fn stage_command(&self, name: &str, args: nsh_core::JsonValue) {
+        self.command(name, args);
+    }
+}
+
 /// The shortcut, the View menu, and Escape call this.
 /// An unchanged form does not touch the published flags.
-/// A change calls `notify`. The window uses that to redraw the stage.
+/// A change sends `immersive` to the stage, the same redraw a command gets.
 pub fn apply_immersive(
     form: &Signal<Form>,
     reading: bool,
     leave_only: bool,
-    notify: &impl Fn(bool),
+    stage: &impl StageCommand,
 ) -> Option<bool> {
     let before = form.get();
     let next = commit_reading_immersive(before, reading, leave_only);
     form.set(next);
     let notice = (next != before).then_some(matches!(next, Form::Immersive));
     if let Some(on) = notice {
-        notify(on);
+        stage.stage_command("immersive", serde_json::json!(on));
     }
     notice
 }
