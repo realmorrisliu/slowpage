@@ -498,11 +498,37 @@ pub fn navigate(nav: NavIn<'_>) -> NavOut {
         nav.jump_offset,
         nav.awaiting,
     );
-    let step = if nav.pick < 0 {
-        chapter_return(&here, nav.back, nav.spine)
+    let back = nav.back.clone();
+    let mut step = if nav.pick < 0 {
+        chapter_return(&here, back.clone(), nav.spine)
     } else {
-        chapter_jump(&here, nav.marks, nav.pick as usize, nav.spine, nav.back)
+        chapter_jump(&here, nav.marks, nav.pick as usize, nav.spine, back.clone())
     };
+    // Reveal and Stay compare the stored sentence. They can run only when
+    // that sentence is the document on screen. Otherwise the choice loads
+    // the chapter it named.
+    let chosen = if nav.pick < 0 {
+        back.as_ref()
+            .map(|place| (place.href.clone(), place.offset))
+    } else {
+        nav.marks.get(nav.pick as usize).and_then(|mark| {
+            if mark.href.is_empty() {
+                None
+            } else {
+                Some((mark.href.clone(), mark.offset))
+            }
+        })
+    };
+    if let Some((href, offset)) = chosen {
+        if !nav.shown_href.is_empty()
+            && spine_key(nav.shown_href) != spine_key(&href)
+            && matches!(step.go, ChapterMove::Stay | ChapterMove::Reveal { .. })
+        {
+            if let Some(index) = spine_pos(nav.spine, &href) {
+                step.go = ChapterMove::Chapter { index, offset };
+            }
+        }
+    }
     let pending = if matches!(step.go, ChapterMove::Stay) {
         nav.pending
     } else {
@@ -538,7 +564,7 @@ pub fn navigate(nav: NavIn<'_>) -> NavOut {
                 jump_href = href.clone();
                 jump_offset = Some(offset);
                 awaiting = None;
-                if saved_href != *href || saved_page != 1 || saved_offset != offset {
+                if saved_href != *href || saved_offset != offset {
                     saved_page = 1;
                     saved_offset = offset;
                     record = true;
