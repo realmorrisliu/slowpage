@@ -295,6 +295,12 @@ define_class!(
                 if !self.ivars().reports.get() {
                     return;
                 }
+                if value["kind"] == "link" {
+                    if let Some(hook) = self.ivars().hook.borrow().clone() {
+                        hook(&value);
+                    }
+                    return;
+                }
                 let place_message = value.get("page").is_some()
                     || value.get("swipe").is_some()
                     || value.get("frames").is_some()
@@ -699,9 +705,16 @@ fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool) -> Vec<u8> {
     let justify =
         crate::reading::justify_source(std::env::var("SPIKE_JUSTIFY").as_deref() != Ok("0"));
     let starts = if bold { "true" } else { "false" };
-    let load = SESSION.with(|session| session.borrow().reader.restore_load);
+    let (load, fragment) = SESSION.with(|session| {
+        let reader = &session.borrow().reader;
+        (
+            reader.restore_load,
+            reader.fragment.clone().unwrap_or_default(),
+        )
+    });
+    let fragment = serde_json::to_string(&fragment).unwrap_or_else(|_| "\"\"".to_string());
     let script = format!(
-        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
+        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};window.__spikeFragment={fragment};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
         crate::reading::page_script(language)
     );
     if let Some(at) = html.to_ascii_lowercase().rfind("</body>") {
@@ -837,6 +850,10 @@ impl WebChapter {
         }));
         let hooked = slot.clone();
         let hook: Rc<dyn Fn(&serde_json::Value)> = Rc::new(move |value| {
+            if value["kind"] == "link" {
+                on_link(&hooked, value);
+                return;
+            }
             note_shown(&hooked, value);
         });
         handler.ivars().hook.replace(Some(hook));
@@ -1155,6 +1172,61 @@ fn place_pair(
                 NSSize::new(cover, height)
             )
         ];
+    }
+}
+
+fn apply_link_message(
+    value: &serde_json::Value,
+    href: &str,
+    spine: &[String],
+) -> crate::visit::Apply {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        let book = session.book.clone();
+        let path = crate::settings::path();
+        let mut store = crate::settings::SettingsBook {
+            file: &path,
+            book: &book,
+        };
+        crate::visit::handle_link_message(&mut session.reader, value, href, spine, &mut store)
+    })
+}
+
+fn on_link(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
+    let (href, spine, inbox, title) = {
+        let slot = slot.borrow();
+        (
+            slot.shown_href.clone(),
+            slot.spine.clone(),
+            slot.inbox.clone(),
+            slot.inbox.borrow().title.clone(),
+        )
+    };
+    let applied = apply_link_message(value, &href, &spine);
+    if !applied.accepted {
+        return;
+    }
+    // The chapter command drops the gesture after the move is accepted.
+    cancel_swipe();
+    let chapter = WebChapter {
+        slot: slot.clone(),
+        inbox,
+        declared: None,
+        book_title: title,
+    };
+    match applied.go.unwrap_or(crate::visit::ChapterMove::Stay) {
+        crate::visit::ChapterMove::Chapter { index, offset } => {
+            let target = spine.get(index).map(String::as_str).unwrap_or("");
+            if crate::visit::spine_key(target) != crate::visit::spine_key(&href) {
+                let _ = chapter.show_chapter(index);
+            } else if offset > 0 {
+                chapter.reveal(offset);
+            } else if let Some(offset) = applied.reveal {
+                chapter.reveal(offset);
+            }
+        }
+        crate::visit::ChapterMove::Reveal { offset } => chapter.reveal(offset),
+        crate::visit::ChapterMove::Page { .. } | crate::visit::ChapterMove::Stay => {}
     }
 }
 

@@ -1030,6 +1030,9 @@ pub struct Reader {
     /// The loaded chapter document. A restore or a drop from an older document
     /// does not run. A user key does not carry this.
     pub restore_load: u64,
+    /// The fragment a cross-chapter link still has to measure in the target
+    /// document. It is not a place and it is not written.
+    pub fragment: Option<String>,
 }
 
 impl Default for Reader {
@@ -1058,6 +1061,7 @@ impl Default for Reader {
             hold_layout: false,
             restore_ack: false,
             restore_load: 0,
+            fragment: None,
         }
     }
 }
@@ -1296,6 +1300,7 @@ fn clear_resume(reader: &mut Reader) {
     reader.figure_misses = 0;
     reader.anchoring = false;
     reader.hold_layout = false;
+    reader.fragment = None;
 }
 
 /// Accept a script message. The place changes only after `write_place`
@@ -1318,6 +1323,15 @@ pub fn handle_page(
             reveal: None,
             go: None,
         };
+    }
+    if reader.fragment.is_some() {
+        if user_turn(&report) {
+            reader.fragment = None;
+            reader.jump_href.clear();
+            reader.jump_offset = None;
+        } else {
+            return apply_idle(true);
+        }
     }
     if report.hold.is_some()
         && report.token.is_none()
@@ -1579,6 +1593,260 @@ pub fn handle_chapter(
     }
 }
 
+/// A same-book href. `href` is the spine item. `fragment` has no `#`.
+/// `same` means that item is the document on screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkDest {
+    pub href: String,
+    pub fragment: String,
+    pub same: bool,
+}
+
+fn link_scheme(raw: &str) -> bool {
+    if raw.starts_with("//") {
+        return true;
+    }
+    let Some((scheme, _)) = raw.split_once(':') else {
+        return false;
+    };
+    let scheme = scheme.trim();
+    !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
+}
+
+pub(crate) fn spine_key(href: &str) -> String {
+    href.split(['#', '?'])
+        .next()
+        .unwrap_or(href)
+        .trim_start_matches('/')
+        .to_string()
+}
+
+fn clean_link_path(path: &str) -> Option<String> {
+    let mut out = Vec::new();
+    for part in path.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            if out.pop().is_none() {
+                return None;
+            }
+            continue;
+        }
+        if part.contains(':') {
+            return None;
+        }
+        out.push(part);
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(format!("/{}", out.join("/")))
+}
+
+fn join_link(shown: &str, rel: &str) -> Option<String> {
+    let rel = rel.trim();
+    if rel.is_empty() {
+        return None;
+    }
+    let combined = if rel.starts_with('/') {
+        rel.to_string()
+    } else {
+        let base = shown.split(['#', '?']).next().unwrap_or(shown);
+        let dir = match base.rfind('/') {
+            Some(index) => &base[..=index],
+            None => "/",
+        };
+        format!("{dir}{rel}")
+    };
+    clean_link_path(&combined)
+}
+
+/// Resolve one clicked href against the open spine. A fragment-only href stays
+/// on `shown`. `#` is not a spine item. An external scheme, a path that leaves
+/// the book, or an unknown spine item is `None`.
+pub fn resolve_link(raw: &str, shown: &str, spine: &[String]) -> Option<LinkDest> {
+    let raw = raw.trim();
+    if raw.is_empty() || link_scheme(raw) || raw.contains('\\') || raw.contains('?') {
+        return None;
+    }
+    let (path, fragment) = match raw.split_once('#') {
+        Some((path, fragment)) => (path.trim(), fragment.trim()),
+        None => (raw, ""),
+    };
+    if fragment.contains('#') || fragment.contains('/') {
+        return None;
+    }
+    let href = if path.is_empty() {
+        if fragment.is_empty() {
+            return None;
+        }
+        shown.to_string()
+    } else {
+        let joined = join_link(shown, path)?;
+        let matched = spine
+            .iter()
+            .find(|item| spine_key(item) == spine_key(&joined))?;
+        matched.clone()
+    };
+    if !spine.iter().any(|item| spine_key(item) == spine_key(&href)) {
+        return None;
+    }
+    let same = spine_key(&href) == spine_key(shown);
+    Some(LinkDest {
+        href,
+        fragment: fragment.to_string(),
+        same,
+    })
+}
+
+fn spine_pos(spine: &[String], href: &str) -> Option<usize> {
+    spine
+        .iter()
+        .position(|item| spine_key(item) == spine_key(href))
+}
+
+fn link_mark(href: &str, offset: u32) -> ChapterMark {
+    ChapterMark {
+        title: String::new(),
+        href: href.to_string(),
+        offset,
+        page: 0,
+    }
+}
+
+fn link_message<'a>(value: &'a serde_json::Value) -> (&'a str, u64, bool, Option<u32>) {
+    (
+        value["raw"].as_str().unwrap_or(""),
+        value["load"].as_u64().unwrap_or(u64::MAX),
+        value["measured"].as_bool() == Some(true),
+        value["offset"].as_u64().map(|offset| offset as u32),
+    )
+}
+
+/// One `kind: "link"` message. The page measured `offset` with the same
+/// character walk as a caret. A cross-chapter fragment carries no offset
+/// until the target document measures it. The return place stays on the
+/// reader. The file receives the destination sentence only.
+pub fn handle_link_message(
+    reader: &mut Reader,
+    value: &serde_json::Value,
+    shown: &str,
+    spine: &[String],
+    store: &mut dyn PlaceFile,
+) -> Apply {
+    let (raw, load, measured, offset) = link_message(value);
+    if load != reader.restore_load {
+        return apply_idle(false);
+    }
+    if reader.fragment.is_some() {
+        return finish_link(reader, raw, measured, offset, shown, spine, store);
+    }
+    let Some(dest) = resolve_link(raw, shown, spine) else {
+        return apply_idle(false);
+    };
+    if dest.same && !dest.fragment.is_empty() && (!measured || offset.is_none()) {
+        return apply_idle(false);
+    }
+    let _ = reader.swipe.cancel_release();
+    if !dest.fragment.is_empty() && !dest.same {
+        reader.fragment = Some(dest.fragment);
+        reader.jump_href = dest.href.clone();
+        reader.jump_offset = None;
+        let Some(index) = spine_pos(spine, &dest.href) else {
+            reader.fragment = None;
+            reader.jump_href.clear();
+            return apply_idle(false);
+        };
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: Some(ChapterMove::Chapter { index, offset: 0 }),
+        };
+    }
+    let offset = if dest.fragment.is_empty() {
+        0
+    } else {
+        offset.unwrap_or(0)
+    };
+    let href = if dest.same {
+        shown.to_string()
+    } else {
+        dest.href
+    };
+    let mark = link_mark(&href, offset);
+    let mut applied = handle_chapter(reader, 0, &[mark], spine, shown, store);
+    if matches!(applied.go, Some(ChapterMove::Stay)) {
+        return applied;
+    }
+    reader.fragment = None;
+    applied
+}
+
+fn finish_link(
+    reader: &mut Reader,
+    raw: &str,
+    measured: bool,
+    offset: Option<u32>,
+    shown: &str,
+    spine: &[String],
+    store: &mut dyn PlaceFile,
+) -> Apply {
+    let pending = reader.fragment.clone().unwrap_or_default();
+    let Some(dest) = resolve_link(raw, shown, spine) else {
+        return apply_idle(false);
+    };
+    if dest.fragment != pending || spine_key(&dest.href) != spine_key(&reader.jump_href) {
+        return apply_idle(false);
+    }
+    reader.fragment = None;
+    if !measured {
+        let origin = reader.place.href.clone();
+        let origin_offset = reader.place.offset;
+        reader.jump_href = origin.clone();
+        reader.jump_offset = Some(origin_offset);
+        let Some(index) = spine_pos(spine, &origin) else {
+            reader.jump_href.clear();
+            reader.jump_offset = None;
+            return apply_idle(false);
+        };
+        return Apply {
+            accepted: true,
+            paint: false,
+            wrote: false,
+            reveal: None,
+            go: Some(ChapterMove::Chapter {
+                index,
+                offset: origin_offset,
+            }),
+        };
+    }
+    let Some(offset) = offset else {
+        reader.fragment = Some(pending);
+        return apply_idle(false);
+    };
+    let target = dest.href.clone();
+    let mark = link_mark(&target, offset);
+    let origin = reader.place.href.clone();
+    let mut applied = handle_chapter(reader, 0, &[mark], spine, &origin, store);
+    if !applied.accepted {
+        return applied;
+    }
+    if spine_key(&target) == spine_key(shown) {
+        reader.jump_offset = None;
+        reader.awaiting = Some(offset);
+        applied.reveal = Some(offset);
+        applied.go = Some(ChapterMove::Reveal { offset });
+    }
+    reader.fragment = None;
+    applied
+}
+
 /// Cancel a gesture that has not posted. The accepted place stays on disk.
 pub fn leave(reader: &mut Reader) {
     let _ = reader.swipe.cancel_release();
@@ -1611,6 +1879,7 @@ pub fn open_place(reader: &mut Reader, page: u32, offset: u32, href: &str, caret
     reader.figure_misses = 0;
     reader.anchoring = false;
     reader.hold_layout = false;
+    reader.fragment = None;
     reader.walk = if caret {
         None
     } else {

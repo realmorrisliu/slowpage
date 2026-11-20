@@ -1186,11 +1186,55 @@ const SCRIPT: &str = r#"
     if (event.buttons !== 1) return;
     if (Math.abs(event.clientX - edgeX) >= __SLOP__ || Math.abs(event.clientY - edgeY) >= __SLOP__) edgeDrag = true;
   }, true);
+  function textOffsetIn(el) {
+    if (!el) return null;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    if (!walker.nextNode()) return null;
+    const node = walker.currentNode;
+    if (!node || node.nodeType !== 3) return null;
+    return offsetOf(node, 0);
+  }
+  function linkInDocument(raw) {
+    const hash = raw.indexOf('#');
+    const path = (hash < 0 ? raw : raw.slice(0, hash)).trim();
+    if (!path) return true;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return false;
+    if (path.indexOf("..") >= 0 || path.indexOf("?") >= 0 || path.indexOf("\\") >= 0) return false;
+    const file = path.split("/").pop();
+    const loc = (document.location && document.location.pathname) || "";
+    const here = loc.split("/").pop();
+    return !!file && file === here;
+  }
+  function followLink(event) {
+    const node = event.target;
+    if (!node || !node.closest) return false;
+    const a = node.closest("a[href]");
+    if (!a || !a.getAttribute) return false;
+    const raw = a.getAttribute("href") || "";
+    if (!raw) return false;
+    if (event.preventDefault) event.preventDefault();
+    let measured = false;
+    let offset = 0;
+    const hash = raw.indexOf('#');
+    const fragment = hash < 0 ? "" : raw.slice(hash + 1);
+    if (fragment && linkInDocument(raw)) {
+      const at = textOffsetIn(document.getElementById(fragment));
+      if (at == null) {
+        post({ kind: "link", raw: raw, load: pageLoad, measured: false });
+        return true;
+      }
+      measured = true;
+      offset = at;
+    }
+    post({ kind: "link", raw: raw, load: pageLoad, offset: offset, measured: measured });
+    return true;
+  }
   window.addEventListener("click", function (event) {
     if (event.button !== 0) return;
     const dragged = edgeDrag;
     edgeDrag = false;
     if (dragged) return;
+    if (followLink(event)) return;
     const bar = document.getElementById('spike-footer');
     if (bar) {
       const box = bar.getBoundingClientRect();
@@ -1333,6 +1377,11 @@ const SCRIPT: &str = r#"
       else post();
     });
   }
+  if (window.__spikeFragment) {
+    const id = String(window.__spikeFragment);
+    const at = textOffsetIn(document.getElementById(id));
+    post({ kind: "link", raw: '#' + id, load: pageLoad, offset: at == null ? 0 : at, measured: at != null });
+  }
   requestAnimationFrame(function () { post(); });
 })();
 "#;
@@ -1354,6 +1403,42 @@ mod tests {
         let (left, right) = footer_zh(2, 2);
         assert_eq!(left, "2/2页");
         assert_eq!(right, "本章还剩0页");
+    }
+
+    #[test]
+    fn a_page_link_click_posts_the_character_offset() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join(format!("superreader-link-page-{}.js", std::process::id()));
+        let drive = dir.join(format!("superreader-link-drive-{}.js", std::process::id()));
+        std::fs::write(&page, &script).unwrap();
+        std::fs::write(&drive, LINK_CLICK_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["link"]["kind"], "link");
+        assert_eq!(v["link"]["raw"], "#note");
+        assert_eq!(v["link"]["measured"], true);
+        assert_eq!(v["link"]["offset"], 4);
+        assert_eq!(v["edgeLink"]["raw"], "#note");
+        assert_eq!(v["edgeLink"]["offset"], 4);
+        assert_eq!(v["turns"], serde_json::json!([]));
+        assert_eq!(v["edgeText"], "ok");
+        assert_eq!(v["dragLinks"], 0);
+        assert_eq!(v["otherButton"], 0);
+        assert_eq!(v["cross"]["measured"], serde_json::json!(false));
+        assert_eq!(v["cross"]["raw"], "next.xhtml#fn1");
     }
 
     #[test]
@@ -2265,4 +2350,112 @@ const swipes = posts.map(function (p) { return p.swipe; }).filter(function (s) {
 const long = { answers: answers[0], count: swipes.length, first: swipes[0], last: swipes[swipes.length - 1], swipes: swipes, bodies: posts.filter(function (p) { return p.swipe != null; }) };
 
 console.log(JSON.stringify({ second, key, killed, long }));
+"#;
+
+const LINK_CLICK_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+const parent = { closest() { return null; } };
+const prefix = { nodeType: 3, textContent: 'aaaa', nodeValue: 'aaaa', parentElement: parent };
+const noteText = { nodeType: 3, textContent: 'Target', nodeValue: 'Target', parentElement: parent };
+const note = { id: 'note' };
+function walker(list) {
+  let i = -1;
+  return {
+    currentNode: null,
+    nextNode() {
+      i += 1;
+      this.currentNode = list[i] || null;
+      return i < list.length;
+    },
+  };
+}
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  location: { pathname: '/OEBPS/chapter.xhtml' },
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: (id) => (id === 'note' ? note : null),
+  createTreeWalker: (root) => walker(root === note ? [noteText] : [prefix, noteText]),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+global.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+eval(script);
+flush();
+posts.length = 0;
+const seen = [];
+const orig = window.spikeTurn;
+window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+function click(x, href, button, drag) {
+  const before = posts.length;
+  const target = { closest(sel) { return href && sel === 'a[href]' ? { getAttribute() { return href; } } : null; } };
+  fire('mousedown', { button: button || 0, clientX: x, clientY: 80 });
+  if (drag) fire('mousemove', { buttons: 1, clientX: x + 20, clientY: 80 });
+  fire('click', { button: button || 0, clientX: x, clientY: 80, target, preventDefault(){} });
+  return posts.slice(before).filter((post) => post.kind === 'link');
+}
+const link = click(200, '#note', 0, false);
+const edgeLink = click(20, '#note', 0, false);
+const turnsAfterLinks = seen.slice();
+seen.length = 0;
+click(390, null, 0, false);
+const edgeText = seen[0] || '';
+const dragBefore = posts.length;
+click(20, '#note', 0, true);
+const dragLinks = posts.slice(dragBefore).filter((post) => post.kind === 'link').length;
+const otherBefore = posts.length;
+click(20, '#note', 2, false);
+const otherButton = posts.slice(otherBefore).filter((post) => post.kind === 'link').length;
+const cross = click(200, 'next.xhtml#fn1', 0, false);
+console.log(JSON.stringify({
+  link: link[0] || null,
+  edgeLink: edgeLink[0] || null,
+  turns: turnsAfterLinks,
+  edgeText,
+  dragLinks,
+  otherButton,
+  cross: cross[0] || null,
+}));
 "#;

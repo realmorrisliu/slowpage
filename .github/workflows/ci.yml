@@ -95,6 +95,8 @@ jobs:
             a_reopen_keeps_the_sentence_on_the_same_page \
             a_stored_sentence_round_trips \
             a_chapter_choice_lands_on_that_sentence_and_returns \
+            a_book_link_lands_on_the_sentence_and_returns \
+            a_page_link_click_posts_the_character_offset \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
@@ -134,6 +136,8 @@ jobs:
             a_reopen_keeps_the_sentence_on_the_same_page \
             a_stored_sentence_round_trips \
             a_chapter_choice_lands_on_that_sentence_and_returns \
+            a_book_link_lands_on_the_sentence_and_returns \
+            a_page_link_click_posts_the_character_offset \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
