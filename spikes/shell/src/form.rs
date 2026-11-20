@@ -2311,11 +2311,7 @@ fn margin_card(
     hold: Signal<spike_library::margin::Hold>,
 ) -> AnyElement {
     let id = note.id;
-    let source = if note.body.trim().is_empty() {
-        note.passage.clone()
-    } else {
-        note.body.clone()
-    };
+    let source = spike_library::margin::shown_text(note).to_string();
     let sentence = source.lines().next().unwrap_or("").trim().to_string();
     let mut column = view().w_full().flex().flex_col().child(
         line!(

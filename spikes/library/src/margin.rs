@@ -85,6 +85,14 @@ fn wrap_lines(text: &str) -> usize {
     lines.max(1)
 }
 
+pub fn shown_text(note: &StoredNote) -> &str {
+    if note.body.trim().is_empty() {
+        &note.passage
+    } else {
+        &note.body
+    }
+}
+
 pub fn open_height(body: &str, replies: &[String]) -> f64 {
     let mut height = PAD_Y + LINE_H + (wrap_lines(body) as f64 + 1.0) * LINE_H + PAD_Y;
     for reply in replies {
@@ -605,12 +613,13 @@ pub fn cards_from(notes: &[StoredNote], fit: Fit) -> Vec<CardIn> {
                 .map(|quad| map_quad(quad, fit))
                 .collect();
             let line = first_line(&quads, map_x(note.text_right, fit))?;
+            let text = shown_text(note);
             Some(CardIn {
                 id: note.id,
                 line,
                 collapsed_h: collapsed_height(),
-                hover_h: open_height(&note.body, &[]),
-                selected_h: open_height(&note.body, &note.replies),
+                hover_h: open_height(text, &[]),
+                selected_h: open_height(text, &note.replies),
             })
         })
         .collect()
@@ -1022,6 +1031,40 @@ mod tests {
         assert!((cards[0].line.text_right - 280.0).abs() < 0.01);
         assert!(cards[0].selected_h > cards[0].hover_h);
         assert!(cards_from(&notes, Fit { scale: 0.0, ..fit }).is_empty());
+    }
+
+    #[test]
+    fn an_empty_body_measures_the_passage() {
+        let passage = "word ".repeat(80);
+        let notes = [StoredNote {
+            id: 1,
+            page: 1,
+            spine: String::new(),
+            start: 0,
+            end: 4,
+            passage: passage.clone(),
+            body: String::new(),
+            author: "读者".into(),
+            quads: vec![Quad {
+                x: 10.0,
+                y: 20.0,
+                w: 30.0,
+                h: 8.0,
+            }],
+            text_right: 40.0,
+            replies: Vec::new(),
+        }];
+        let cards = cards_from(
+            &notes,
+            Fit {
+                origin_x: 0.0,
+                origin_y: 0.0,
+                scale: 1.0,
+            },
+        );
+        assert_eq!(cards.len(), 1);
+        assert!((cards[0].hover_h - open_height(&passage, &[])).abs() < 0.01);
+        assert!(cards[0].hover_h > open_height("", &[]));
     }
 
     #[test]
