@@ -1398,6 +1398,12 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                             let mut inbox = handler.ivars().inbox.borrow_mut();
                             inbox.chapter_ms = None;
                             inbox.clear_figure();
+                            spike_library::margin::claim_document(
+                                &mut inbox.doc,
+                                &mut inbox.layout_gen,
+                                &mut inbox.layout_hold,
+                                &mut inbox.measures,
+                            );
                         }
                         launch = Some((web, href));
                     }

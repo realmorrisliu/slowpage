@@ -569,7 +569,7 @@ pub fn target_viewport(page_w: f64, page_h: f64, zoom: f64) -> Option<(f64, f64)
     Some((page_w / zoom, page_h / zoom))
 }
 
-/// The native target changed. A generation measured earlier is not this frame.
+/// The native target changed, including the first valid frame. A generation measured earlier is not this frame.
 pub fn layout_moved(
     prev_w: f64,
     prev_h: f64,
@@ -579,7 +579,7 @@ pub fn layout_moved(
     next_zoom: f64,
 ) -> bool {
     if prev_w < 1.0 || prev_h < 1.0 {
-        return false;
+        return next_w >= 1.0 && next_h >= 1.0;
     }
     let prev_zoom = if prev_zoom.is_finite() && prev_zoom > 0.01 {
         prev_zoom
@@ -627,7 +627,7 @@ pub fn place_belongs(
         return false;
     }
     match target_viewport(page_w, page_h, zoom) {
-        None => true,
+        None => false,
         Some((width, height)) => (view_w - width).abs() < 1.0 && (view_h - height).abs() < 1.0,
     }
 }
