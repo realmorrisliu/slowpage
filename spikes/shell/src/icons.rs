@@ -38,6 +38,7 @@ const GRID: &str = include_str!("../../../assets/icons/grid.svg");
 const EDIT: &str = include_str!("../../../assets/icons/edit.svg");
 const PAPERCLIP: &str = include_str!("../../../assets/icons/paperclip.svg");
 const ARROW_UP: &str = include_str!("../../../assets/icons/arrow-up.svg");
+const MAXIMIZE: &str = include_str!("../../../assets/icons/maximize.svg");
 const POINTS: f64 = 18.0;
 const PIXELS: u32 = 54;
 
@@ -59,6 +60,10 @@ pub fn add_bookmark_image() -> Option<Retained<NSImage>> {
 
 pub fn notes_image() -> Option<Retained<NSImage>> {
     image(NOTE)
+}
+
+pub fn glyph_source(name: &str) -> Option<&'static str> {
+    named_svg(name)
 }
 
 pub fn glyph_file(name: &str) -> Option<String> {
@@ -149,6 +154,7 @@ fn named_svg(name: &str) -> Option<&'static str> {
         "edit" => EDIT,
         "paperclip" => PAPERCLIP,
         "arrow-up" => ARROW_UP,
+        "maximize" => MAXIMIZE,
         _ => return None,
     })
 }

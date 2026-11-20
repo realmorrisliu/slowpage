@@ -236,3 +236,10 @@ set = "generic"
 license = "MIT"
 style = "outline"
 query = "arrow up"
+
+[[icon]]
+name = "maximize"
+set = "editor"
+license = "MIT"
+style = "outline"
+query = "maximize"

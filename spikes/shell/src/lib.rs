@@ -3,6 +3,7 @@ mod bold_word;
 mod books;
 mod breaks;
 mod chrome;
+mod ease;
 mod form;
 mod icons;
 mod launch;
@@ -431,6 +432,7 @@ pub fn SpikeApp() -> impl IntoElement {
         width: 1280.0,
         height: 800.0,
     });
+    let ease_tick = signal(0_u64);
     let shell_chrome = signal(form::chrome_off());
     let bars_row = signal(shell_on);
     let dropped = stage.clone();
@@ -793,7 +795,19 @@ pub fn SpikeApp() -> impl IntoElement {
                             let shell_chrome = shell_chrome.clone();
                             let history = history.clone();
                             let visit = visit.clone();
+                            let ease_tick = ease_tick.clone();
                             move |event: &NativeEvent| {
+                                if event.name.as_ref() == "ease" {
+                                    let leg = event.data["leg"].as_u64().unwrap_or(0);
+                                    let step = (event.data["u"].as_f64().unwrap_or(0.0) * 1000.0)
+                                        .round()
+                                        as u64;
+                                    let stamp = (leg << 20) | (step & ((1 << 20) - 1));
+                                    if ease_tick.get() != stamp {
+                                        ease_tick.set(stamp);
+                                    }
+                                    return;
+                                }
                                 if event.name.as_ref() != "status" {
                                     return;
                                 }
@@ -946,12 +960,14 @@ pub fn SpikeApp() -> impl IntoElement {
                 let window = shell_window.clone();
                 let chrome = shell_chrome.clone();
                 let stage = stage.clone();
+                let ease = ease_tick.clone();
                 move || {
                     form::reading_margin(
                         form.clone(),
                         window.clone(),
                         chrome.clone(),
                         stage.clone(),
+                        ease.clone(),
                     )
                 }
             },
@@ -1093,7 +1109,7 @@ fn apply_leave(
     key: visit::LeaveKey,
     stage: &impl form::StageCommand,
 ) -> Option<bool> {
-    let immersion = if matches!(form.get(), form::Form::Immersive) {
+    let immersion = if form::book_stays_for_escape(form.get()) {
         visit::Immersion::On
     } else {
         visit::Immersion::Off
@@ -1315,6 +1331,7 @@ mod launch_tests {
             fn drop(&mut self) {
                 form::publish_margin(self.margin);
                 form::publish_immersive(self.immersive);
+                crate::ease::settle(self.immersive, self.margin);
                 visit::publish_surface(if self.library {
                     Surface::Library
                 } else {

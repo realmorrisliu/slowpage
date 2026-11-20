@@ -135,6 +135,9 @@ pub const CHEVRON_ICON: f32 = 11.0;
 pub const VIEW_ICON: f32 = 15.0;
 pub const SIDEBAR_ICON: f32 = 18.0;
 pub const PANEL_ICON: f32 = 18.0;
+pub const IMMERSIVE_ICON: f32 = 16.0;
+pub const CARD_SPREAD: f32 = 0.5;
+pub const CARD_SPREAD_ALPHA: f32 = 0.07;
 
 pub const CARD_PAD_X: f32 = 40.0;
 pub const CARD_PAD_TOP: f32 = 4.0;
@@ -427,7 +430,7 @@ fn layer(x: f32, y: f32, blur: f32, spread: f32, alpha: f32) -> BoxShadow {
 
 pub fn card_shadows() -> Vec<BoxShadow> {
     vec![
-        layer(0.0, 0.0, 0.0, 0.5, 0.07),
+        layer(0.0, 0.0, 0.0, CARD_SPREAD, CARD_SPREAD_ALPHA),
         layer(0.0, 1.0, 2.0, 0.0, 0.04),
         layer(0.0, 6.0, 20.0, 0.0, 0.045),
     ]

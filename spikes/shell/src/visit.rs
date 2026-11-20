@@ -862,26 +862,30 @@ impl Swipe {
         drop
     }
 
+    fn release_finger(&mut self) {
+        let next_id = self.next_id;
+        let floor = self.floor;
+        let last_applied = self.last_applied;
+        let flying = self.flying;
+        let queued = self.queued;
+        let last_commit = self.last_commit;
+        let release = self.release;
+        *self = Self::default();
+        self.next_id = next_id;
+        self.floor = floor;
+        self.last_applied = last_applied;
+        self.flying = flying;
+        self.queued = queued;
+        self.last_commit = last_commit;
+        self.release = release;
+    }
+
     pub fn offer(&mut self, tick: WheelTick, page: u32, pages: u32) -> WheelMove {
         if self.ignore {
-            if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
-                let next_id = self.next_id;
-                let floor = self.floor;
-                let last_applied = self.last_applied;
-                let flying = self.flying;
-                let queued = self.queued;
-                let last_commit = self.last_commit;
-                let release = self.release;
-                *self = Self::default();
-                self.next_id = next_id;
-                self.floor = floor;
-                self.last_applied = last_applied;
-                self.flying = flying;
-                self.queued = queued;
-                self.last_commit = last_commit;
-                self.release = release;
+            if lifting(&tick) {
+                self.release_finger();
             }
-            return if matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum {
+            return if lifting(&tick) {
                 WheelMove::Pass
             } else {
                 WheelMove::Swallow
@@ -2014,7 +2018,36 @@ pub fn stop_walk(reader: &mut Reader) {
 /// The page dropped its gesture, or a new chapter document replaced it.
 /// Empty swipe slots still count: a restore slide is not one of those slots.
 pub fn retire_restore(reader: &mut Reader) -> bool {
-    reader.swipe.cancel_release()
+    stop_for_ease(&mut reader.swipe)
+}
+
+pub fn stop_for_ease(swipe: &mut Swipe) -> bool {
+    swipe.cancel_release()
+}
+
+pub fn accept_landed(swipe: &mut Swipe, token: u64) -> bool {
+    token == 0 || swipe.take_commit_post(token)
+}
+
+fn lifting(tick: &WheelTick) -> bool {
+    matches!(tick.finger, Finger::Up | Finger::Cancelled) && !tick.momentum
+}
+
+pub fn offer_while_reading(
+    swipe: &mut Swipe,
+    tick: WheelTick,
+    page: u32,
+    pages: u32,
+    trip: crate::ease::Trip,
+) -> WheelMove {
+    if !crate::ease::pointer_turns(trip) {
+        if lifting(&tick) && (swipe.ignore || swipe.live) {
+            swipe.release_finger();
+        }
+        WheelMove::Swallow
+    } else {
+        swipe.offer(tick, page, pages)
+    }
 }
 
 pub fn reset_restore_epoch(reader: &mut Reader) {

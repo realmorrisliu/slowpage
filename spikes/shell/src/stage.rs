@@ -274,9 +274,12 @@ define_class!(
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
-                let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
-                let edge = if click && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
-                {
+            let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
+            let turns = crate::ease::pointer_turns(crate::ease::current());
+            let edge = if click
+                && turns
+                && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
+            {
                     state.page_edge_at(point.0, point.1, bounds.size.width, bounds.size.height)
                 } else {
                     crate::visit::PageEdge::None
@@ -374,6 +377,10 @@ struct State {
     seen_frames: usize,
     title_settled: bool,
     chrome: Rc<crate::chrome::Runtime>,
+    ease_leg: u64,
+    ease_started: Option<Instant>,
+    ease_flag: bool,
+    ease_sent: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -453,6 +460,7 @@ impl State {
     }
 
     fn draw(&mut self, view: &StageView) {
+        self.sync_ease(view);
         self.poll_web();
         self.bind_swipe();
         self.note_probe(view);
@@ -566,7 +574,8 @@ impl State {
         }
         let page = self.current_page() as u32 + 1;
         let width = self.fitted_width(self.current_page());
-        let effect = self.pdf_swipe.offer(
+        let effect = crate::visit::offer_while_reading(
+            &mut self.pdf_swipe,
             crate::visit::WheelTick {
                 finger: crate::visit::finger_bits(phase),
                 momentum: momentum != 0,
@@ -575,6 +584,7 @@ impl State {
             },
             page,
             pages,
+            crate::ease::current(),
         );
         let token = self.pdf_swipe.commit_token().unwrap_or(0);
         let committing = self
@@ -636,7 +646,7 @@ impl State {
     }
 
     fn note_card(&mut self) {
-        let card = self.card_frame().card;
+        let card = self.presented_at(0.0, 0.0).card;
         let (old_w, old_h) = self.pdf_card;
         let finger = self.pdf_drag != 0.0
             || self.pdf_glide.is_some()
@@ -781,6 +791,7 @@ impl State {
                 }
                 self.publish();
             }
+            "immersive" => self.release_for_ease(),
             _ => {}
         }
     }
@@ -917,33 +928,81 @@ impl State {
 
     fn fit_box(&self) -> (f64, f64, f64, f64) {
         if self.fits_card() {
-            let card = self.card_frame().card;
-            (card.w, card.h, card.x, card.y)
+            let page = self.presented_at(0.0, 0.0).page;
+            (page.w, page.h, page.x, page.y)
         } else {
             crate::chrome::content_box(self.stage_w, self.stage_h)
         }
     }
 
-    fn card_frame(&self) -> crate::form::ReadingFrame {
-        let (width, height) = if self.stage_w > 2.0 {
+    fn presented_at(&self, width: f64, height: f64) -> crate::ease::Presented {
+        let (width, height) = if width > 1.0 {
+            (width, height)
+        } else if self.stage_w > 2.0 {
             (self.stage_w, self.stage_h)
         } else {
             (self.shell_w, self.shell_h)
         };
-        crate::form::stage_card(width, height, crate::chrome::shell_on())
+        crate::ease::present(width, height, 0.0, crate::ease::current())
+    }
+
+    fn sync_ease(&mut self, view: &StageView) {
+        let trip = crate::ease::current();
+        if trip.leg() != self.ease_leg {
+            self.ease_leg = trip.leg();
+            self.ease_started = Some(Instant::now());
+        }
+        let trip = if trip.moving() {
+            let elapsed = self
+                .ease_started
+                .map(|started| started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32)
+                .unwrap_or(0);
+            let next = crate::ease::advance(elapsed);
+            self.context
+                .emit("ease", json!({"u": next.u(), "leg": next.leg()}));
+            if next.moving() {
+                schedule_chrome_pump(view, 0.016);
+            }
+            next
+        } else {
+            trip
+        };
+        self.mark_ease(trip.moving());
+    }
+
+    fn release_for_ease(&mut self) {
+        self.pdf_drag = 0.0;
+        self.pdf_glide = None;
+        self.pdf_motion = None;
+        let _ = crate::visit::stop_for_ease(&mut self.pdf_swipe);
+        crate::web::cancel_swipe();
+        self.mark_ease(crate::ease::current().moving());
+    }
+
+    fn mark_ease(&mut self, moving: bool) {
+        if self.ease_flag == moving && self.ease_sent {
+            return;
+        }
+        self.ease_flag = moving;
+        if let Some(web) = &self.web {
+            web.set_ease(moving);
+            self.ease_sent = true;
+        }
     }
 
     fn draw_card_pdf(&mut self, ctx: &CGContext, bounds: NSRect) {
         let _ = bounds;
-        let frame = self.card_frame();
-        let card = frame.card;
+        let shown = self.presented_at(0.0, 0.0);
+        let card = shown.card;
+        let page = shown.page;
         fill_card(
             ctx,
             card.x,
             card.y,
             card.w,
             card.h,
-            crate::form::card_radius(crate::chrome::shell_on() && crate::form::immersive_on()),
+            shown.radius,
+            shown.shadow,
         );
         let count = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0);
         if count == 0 {
@@ -963,10 +1022,10 @@ impl State {
             return;
         }
         let (x, y, dw, dh) = spike_report::fitted_pdf_page(
-            card.x,
-            card.y,
-            card.w,
-            card.h,
+            page.x,
+            page.y,
+            page.w,
+            page.h,
             f64::from(pw),
             f64::from(ph),
         );
@@ -982,10 +1041,10 @@ impl State {
                 return None;
             }
             let fitted = spike_report::fitted_pdf_page(
-                card.x,
-                card.y,
-                card.w,
-                card.h,
+                page.x,
+                page.y,
+                page.w,
+                page.h,
                 f64::from(nw),
                 f64::from(nh),
             );
@@ -1063,12 +1122,12 @@ impl State {
         let Some((pw, ph)) = pdf.sizes.get(index).copied() else {
             return 0.0;
         };
-        let card = self.card_frame().card;
+        let page = self.presented_at(0.0, 0.0).page;
         let (_, _, dw, _) = spike_report::fitted_pdf_page(
-            card.x,
-            card.y,
-            card.w,
-            card.h,
+            page.x,
+            page.y,
+            page.w,
+            page.h,
             f64::from(pw),
             f64::from(ph),
         );
@@ -1128,7 +1187,7 @@ impl State {
                 true
             }
             crate::visit::PdfTurn::Landed { page, queued } => {
-                let accept = motion.token == 0 || self.pdf_swipe.take_commit_post(motion.token);
+                let accept = crate::visit::accept_landed(&mut self.pdf_swipe, motion.token);
                 if accept {
                     if let Some(pdf) = self.pdf.as_ref() {
                         let sizes = pdf.sizes.clone();
@@ -1168,7 +1227,7 @@ impl State {
                 token,
             } => {
                 let accept =
-                    write.is_some() && (token == 0 || self.pdf_swipe.take_commit_post(token));
+                    write.is_some() && crate::visit::accept_landed(&mut self.pdf_swipe, token);
                 if accept {
                     if let Some(pdf) = self.pdf.as_ref() {
                         let sizes = pdf.sizes.clone();
@@ -1302,7 +1361,7 @@ impl State {
         self.pdf_drag = 0.0;
         self.pdf_glide = None;
         self.pdf_card = (0.0, 0.0);
-        let _ = self.pdf_swipe.cancel_release();
+        let _ = crate::visit::stop_for_ease(&mut self.pdf_swipe);
         self.page_total = None;
         crate::web::set_book(&book.path);
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
@@ -1395,6 +1454,7 @@ impl State {
     }
 
     fn dismiss_web(&mut self) {
+        self.ease_sent = false;
         crate::web::cancel_swipe();
         crate::web::show_swipe_target(None);
         if let Some(web) = self.web.take() {
@@ -1652,9 +1712,8 @@ impl State {
         let item = crate::reading::trim(&self.trim_id);
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
         let (box_w, box_h, left, top) = self.fit_box();
-        let (ix, iy, w, h) = crate::reading::fit_page(box_w, box_h, rw, rh);
-        let x = crate::chrome::reader_page_x(left, ix);
-        let y = top + iy;
+        let fitted = crate::chrome::fitted_page(left, top, box_w, box_h, rw, rh);
+        let (x, y, w, h) = (fitted.x, fitted.y, fitted.w, fitted.h);
         let design = crate::chrome::reading_page(
             rw,
             rh,
@@ -1666,13 +1725,8 @@ impl State {
         } else {
             1.0
         };
-        let key = (
-            x.round() as i32,
-            y.round() as i32,
-            w.round() as i32,
-            h.round() as i32,
-            self.trim_id.clone(),
-        );
+        let (kx, ky, kw, kh) = fitted.key();
+        let key = (kx, ky, kw, kh, self.trim_id.clone());
         let (hold, hold_probe, missed, shown, pages, pages_known, figure, figure_lost) = {
             let inbox = self.web.as_ref().unwrap().inbox.borrow();
             let figure = inbox.figure.clone();
@@ -2017,17 +2071,17 @@ impl State {
         if self.fits_card() {
             let index = self.current_page().min(pdf.sizes.len() - 1);
             let (pw, ph) = pdf.sizes[index];
-            let frame = if stage_w > 1.0 {
-                crate::form::stage_card(stage_w, stage_h, crate::chrome::shell_on())
-            } else {
-                self.card_frame()
+            let shown = self.presented_at(stage_w, stage_h);
+            let frame = crate::form::ReadingFrame {
+                card: shown.page,
+                margin: shown.margin,
+                covers: shown.covers,
             };
-            let card = frame.card;
             let (rx, ry, mut rw, rh) = spike_report::fitted_pdf_page(
-                card.x,
-                card.y,
-                card.w,
-                card.h,
+                shown.page.x,
+                shown.page.y,
+                shown.page.w,
+                shown.page.h,
                 f64::from(pw),
                 f64::from(ph),
             );
@@ -2149,6 +2203,10 @@ impl Stage {
             seen_frames: 0,
             title_settled: false,
             chrome: Rc::new(crate::chrome::Runtime::default()),
+            ease_leg: 0,
+            ease_started: None,
+            ease_flag: false,
+            ease_sent: false,
         }));
         let view = mtm.alloc::<StageView>().set_ivars(Ivars {
             state: state.clone(),
@@ -2336,10 +2394,41 @@ fn pop_chapters(view: &StageView, titles: &[String], back: bool) {
     }
 }
 
-fn fill_card(ctx: &CGContext, x: f64, y: f64, w: f64, h: f64, radius: f64) {
+fn fill_card(ctx: &CGContext, x: f64, y: f64, w: f64, h: f64, radius: f64, shadow: f64) {
+    if shadow > 0.001 {
+        let spread = f64::from(crate::tokens::CARD_SPREAD);
+        let alpha = f64::from(crate::tokens::CARD_SPREAD_ALPHA) * shadow;
+        fill_round(
+            ctx,
+            x - spread,
+            y - spread,
+            w + spread * 2.0,
+            h + spread * 2.0,
+            radius + spread,
+            0.0,
+            0.0,
+            0.0,
+            alpha,
+        );
+    }
+    fill_round(ctx, x, y, w, h, radius, 1.0, 1.0, 1.0, 1.0);
+}
+
+fn fill_round(
+    ctx: &CGContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    radius: f64,
+    red: f64,
+    green: f64,
+    blue: f64,
+    alpha: f64,
+) {
     let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
     unsafe {
-        CGContext::set_rgb_fill_color(Some(ctx), 1.0, 1.0, 1.0, 1.0);
+        CGContext::set_rgb_fill_color(Some(ctx), red, green, blue, alpha);
         CGContext::begin_path(Some(ctx));
         CGContext::move_to_point(Some(ctx), x + r, y);
         CGContext::add_arc_to_point(Some(ctx), x + w, y, x + w, y + h, r);

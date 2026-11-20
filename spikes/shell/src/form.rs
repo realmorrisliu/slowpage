@@ -126,9 +126,18 @@ pub fn apply_immersive(
     form.set(next);
     let notice = (next != before).then_some(matches!(next, Form::Immersive));
     if let Some(on) = notice {
+        let margin = match next {
+            Form::PageAndPanel { margin, .. } => margin.shown(),
+            _ => margin_shown(),
+        };
+        crate::ease::retarget(on, margin);
         stage.stage_command("immersive", serde_json::json!(on));
     }
     notice
+}
+
+pub fn book_stays_for_escape(form: Form) -> bool {
+    crate::ease::escape_stays(matches!(form, Form::Immersive), crate::ease::current())
 }
 
 fn commit_reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
@@ -297,6 +306,7 @@ pub fn margin_shown() -> bool {
 
 pub fn publish_margin(shown: bool) {
     MARGIN_SHOWN.store(shown, Ordering::Relaxed);
+    crate::ease::follow_margin(shown);
 }
 
 static IMMERSIVE: AtomicBool = AtomicBool::new(false);
@@ -435,11 +445,13 @@ pub fn show_reading(form: &Signal<Form>) {
         margin,
     });
     publish_immersive(false);
+    crate::ease::settle(false, margin.shown());
 }
 
 pub fn show_shelf(form: &Signal<Form>) {
     form.set(launch());
     publish_immersive(false);
+    crate::ease::settle(false, false);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2135,28 +2147,14 @@ pub fn reading_margin(
     window: Signal<Window>,
     chrome: Signal<crate::tokens::ChromeIn>,
     stage: ElementRef,
+    ease: Signal<u64>,
 ) -> AnyElement {
-    if !margin_chrome(form.get()) {
-        return view()
-            .absolute()
-            .size_full()
-            .pointer_events(PointerEvents::BoxNone)
-            .into_element();
-    }
-    let shown = match form.get() {
-        Form::PageAndPanel { margin, .. } => margin.shown(),
-        _ => margin_shown(),
-    };
+    let _tick = ease.get();
+    let _form = form.get();
     let size = window.get();
     let row = chrome.get();
-    let frame = reading_frame(
-        size.width,
-        size.height,
-        f64::from(row.top.max(0.0)),
-        0.0,
-        shown,
-    );
-    // The parent does not take the page's clicks. The margin and the control do.
+    let top = f64::from(row.top.max(0.0));
+    let frame = crate::ease::present(size.width, size.height, top, crate::ease::current());
     let mut root = view()
         .absolute()
         .size_full()
@@ -2172,8 +2170,41 @@ pub fn reading_margin(
                 .bg(rgb(FIELD_HEX).to_hsla()),
         );
     }
-    root = root.child(margin_toggle(form, row, stage));
+    if frame.panel_toggle {
+        root = root.child(margin_toggle(form.clone(), row, stage.clone()));
+    }
+    root = root.child(immersive_button(
+        form,
+        crate::ease::button_seat(size.width, top),
+        frame.plate,
+        stage,
+    ));
     root.into_element()
+}
+
+fn immersive_button(form: Signal<Form>, seat: Rect, plate: bool, stage: ElementRef) -> AnyElement {
+    let mut button = view()
+        .absolute()
+        .left(px(seat.x as f32))
+        .top(px(seat.y as f32))
+        .w(px(seat.w as f32))
+        .h(px(seat.h as f32))
+        .rounded(px(crate::tokens::TOGGLE_RADIUS))
+        .flex()
+        .items_center()
+        .justify_center()
+        .accessible(true)
+        .label("Immersive Reading");
+    if plate {
+        button = button.bg(wash(crate::tokens::ROW_ON_ALPHA));
+    }
+    button = button.on_press(move || {
+        apply_immersive(&form, true, false, &stage);
+    });
+    if let Some(path) = crate::icons::glyph_ink("maximize", "6E6E73") {
+        button = button.child(image(path).size(px(crate::tokens::IMMERSIVE_ICON)));
+    }
+    button.into_element()
 }
 
 fn margin_toggle(
