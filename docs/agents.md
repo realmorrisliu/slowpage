@@ -58,7 +58,11 @@ Morris approves what the screen should look like and whether an interaction is a
 
 ## Merge
 
-For an established route, the necessary cloud checks and an independent review are enough to merge. Record a GUI run or a machine run that did not happen as not run. That record does not block the merge, and it is not a pass. Do not wait for a separate approval on each pull request. A new scope, a new visual design, or an architecture tradeoff still waits for Morris. Do not weaken an assertion to make a check green.
+On 2026-11-19 at 11:06 Asia/Shanghai, Morris wrote, in cu:526828663: 去掉本机运行的阻塞。只要在云端完成，那就是完成了. No later message restored a local GUI gate.
+
+For an established route, the necessary cloud build, tests, and artifact checks, plus an independent review of the production sequence, are enough to finish and to merge the current head. A GUI run, `nsh test`, a Mac visual check, or the real library that did not run is non-blocking and unverified. Record it that way. It is not a pass.
+
+An older profile, or a `blocked` row in `scripts/verify`, is not a reason to require that local run before merge. Leave the row `blocked`. Do not mark it `pass`. A check that failed on a state the product did enter stays a failure. Do not rename it so the bar drops. A new visual design or an architecture tradeoff still waits for Morris. Do not wait for a separate approval on each pull request of an established route. Do not weaken an assertion to make a check green.
 
 ## History
 

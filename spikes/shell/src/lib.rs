@@ -12,6 +12,7 @@ mod settings;
 mod shelf;
 mod stage;
 mod tokens;
+mod verify_session;
 mod visit;
 mod web;
 
@@ -407,6 +408,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let title_opacity = signal(1.0_f32);
     let title_rest = signal(1.0_f32);
     let title_hover = signal(false);
+    let chrome_shared = signal(false);
     let footer_opacity = signal(1.0_f32);
     let shell_on = launches_full();
     let shell_form = signal(form::launch());
@@ -678,6 +680,7 @@ pub fn SpikeApp() -> impl IntoElement {
                 let title_opacity = title_opacity.clone();
                 let title_rest = title_rest.clone();
                 let title_hover = title_hover.clone();
+                let chrome_shared = chrome_shared.clone();
                 move || {
                     view()
                         .h(px(44.0))
@@ -690,18 +693,24 @@ pub fn SpikeApp() -> impl IntoElement {
                         .on_mouse_enter({
                             let title_opacity = title_opacity.clone();
                             let title_hover = title_hover.clone();
+                            let chrome_shared = chrome_shared.clone();
                             move |_: &MouseEvent| {
-                                title_hover.set(true);
-                                title_opacity.set(1.0);
+                                if !chrome_shared.get() {
+                                    title_hover.set(true);
+                                    title_opacity.set(1.0);
+                                }
                             }
                         })
                         .on_mouse_leave({
                             let title_opacity = title_opacity.clone();
                             let title_rest = title_rest.clone();
                             let title_hover = title_hover.clone();
+                            let chrome_shared = chrome_shared.clone();
                             move |_: &MouseEvent| {
-                                title_hover.set(false);
-                                title_opacity.set(title_rest.get());
+                                if !chrome_shared.get() {
+                                    title_hover.set(false);
+                                    title_opacity.set(title_rest.get());
+                                }
                             }
                         })
                         .child(
@@ -735,6 +744,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             let title_opacity = title_opacity.clone();
                             let title_rest = title_rest.clone();
                             let title_hover = title_hover.clone();
+                            let chrome_shared = chrome_shared.clone();
                             let footer_opacity = footer_opacity.clone();
                             let bars_row = bars_row.clone();
                             let trim_id = trim_id.clone();
@@ -767,8 +777,10 @@ pub fn SpikeApp() -> impl IntoElement {
                                 show_text.set(event.data["show_text"].as_bool().unwrap_or(false));
                                 let faded =
                                     event.data["title_opacity"].as_f64().unwrap_or(1.0) as f32;
+                                let shared = event.data["chrome_shared"].as_bool().unwrap_or(false);
+                                chrome_shared.set(shared);
                                 title_rest.set(faded);
-                                if !title_hover.get() {
+                                if shared || !title_hover.get() {
                                     title_opacity.set(faded);
                                 }
                                 footer_opacity.set(

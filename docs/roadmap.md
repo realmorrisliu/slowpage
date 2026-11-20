@@ -33,7 +33,7 @@ These wait until S1 through S5 have landed. Do not start them ahead of the shell
 - Repo cleanup, including worktree cleanup in `scripts/cleanup-worktrees.sh`.
 - Calibre compatibility beyond the catalog `spikes/library` already reads. Writes, schema user_version 28, search, and the rest of the Library checklist below.
 - [Pull request 14](https://github.com/realmorrisliu/slowpage/pull/14). The shell spec replaces its split into A1, A2, A3, B1, and B2. The margin mockup replaces B1 and B2 as the annotation next step, and that mockup is an approval, not a code start.
-- Reading chrome leftovers from [pull request 8](https://github.com/realmorrisliu/slowpage/pull/8). The hover fade is still the dev spike. The old full toolbar item set is checklist item 8: traffic lights and the book title. Do not put the AppKit toolbar back. The 朝花夕拾 narrow-window two-column bug and the page scrubber stay here too.
+- Reading chrome leftovers from [pull request 8](https://github.com/realmorrisliu/slowpage/pull/8). The shell reading window now shares one fade for the traffic lights and the book title. The dev spike path is unchanged. Checklist item 8 is not done. Do not put the AppKit toolbar back. The 朝花夕拾 narrow-window two-column bug and the page scrubber stay here too.
 - Owned typesetter follow-ups from [pull request 13](https://github.com/realmorrisliu/slowpage/pull/13). Still missing: passing gate B, CJK, and switching the default off WKWebView.
 - The rest of the Books toolbar icons. S1 uses the list glyph the contents control already ships.
 - Bold Word Starts, [pull request 21](https://github.com/realmorrisliu/slowpage/pull/21). Still missing: the WebKit rendering, the breaker and its cache key, and the owned typesetter.
@@ -243,6 +243,20 @@ Done. On a 400 CSS pixel column, a backward key, Shift-Space, a left-edge click,
 Evidence. `a_blocked_page_eases_back_to_the_same_column` runs the production page script under Node's clock. `a_blocked_ease_leaves_the_stored_sentence` writes a temporary `settings.json` through `SettingsBook` and `handle_page`. The blocked `kind: "turn"` leaves page 4 offset 800, the return place, the pending fragment, and the gesture token. A contents choice of the next spine item still returns `Chapter`. The CI `test` job names both tests. The Release `macos` job compiles, packages, signs, and notarizes. It does not run them.
 
 Not run. A Mac window, WebKit painting the ease, `nsh test`, and the feel of the motion. Linux did not compile `spike-shell`.
+
+## S3 reading chrome
+
+Goal. On the shell reading window, the traffic lights and the book title appear together when the pointer reaches the top, hold, then hide, without a flicker and without a key or a gesture showing them.
+
+Scope. One alpha, written by `step_chrome` from the pointer band `near_top` already uses (56 points) and from whether the window is key. The shell reading path in `sync` paints that alpha. The status `title_opacity` copies it, and the shell title row does not write a second opacity. Opening a book sets the reading identity before the first status and cuts the fade. A publish key whose width, height, or bar changed clears the pending delay on the next pump. A key that changes only because the lights crossed half alpha still publishes and leaves that delay alone. The library, `SPIKE_LIGHTS`, and a product window that is not reading keep the lights on. The dev spike still fades toward the pointer on its own path. Button frames stay `align_traffic_centers` and `measure_traffic_bar`. Fullscreen reparent stays `9 + index * 22` at `chrome_center`. NSH stays 0.5.1. The AppKit toolbar stays off.
+
+Non-goals. Checklist item 8 is not done. No new control, no layout token change, no S3 margin, no S4, no PDF fit-page, and no engine change.
+
+Done. From hidden, four pointer steps reach alpha 1. A 16 ms exit and a return stay at 1, with the delay cleared. A 399 ms exit stays at 1, and the next millisecond steps to 0.75, then to 0. Ten quick exits and returns stay at 1. Twenty steps with the pointer away stay at 0, which is the keyboard, Space, trackpad, and edge case: those inputs are not on this clock. Losing focus goes to 0 and clears the delay. After the 400 ms hold, four pumps go 1, 0.75, 0.5, 0.25, 0. The pump that reaches 0.5 publishes a lights-only key and does not bump the generation, so the next pump continues. A wider window does bump it, and the next pump keeps alpha 1 with the delay restarted at 50 ms. A book cut goes to 0, and a cut with the pointer at the top starts at 0.25. The shelf's first status, with the surface already Reading and the pump not yet run, publishes title opacity 0 and the shared flag. Leaving the reading flag false publishes the open-time title at 1.
+
+Evidence. `reading_chrome_follows_the_pointer_and_drops_a_stale_hide` runs that pump order through `step_chrome`, `light_alpha_shown`, `lights_shown`, `shell_publish_key`, and `publish_key_effect`, then the next step. It also runs `reader_shown` and `enter_reading_chrome` for the shelf's first status. The CI `test` job names that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run the test.
+
+Not run. A Mac window, the pointer, the fade on screen, WebKit, `nsh test`, and the feel of the hold. `reading-chrome-entry-title` and `reading-chrome-visual` stay `blocked` without a renderer read and without a pixel score. `scripts/verify --self-test` scores a sample log and does not launch the app. `just verify --subset reading-chrome` is the one-session console run and was not run. Linux ran `verify_session` with `rustc --test`. `cargo test -p spike-shell` did not compile here: `objc2` only works on Apple platforms, so the named shell test was not executed on Linux.
 
 ## S3 link
 
