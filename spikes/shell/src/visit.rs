@@ -694,6 +694,8 @@ pub enum WheelMove {
     Follow(f64),
     /// Seek exactly one page. This is the only effect that changes progress.
     Commit(i32),
+    /// The lift asked for a page that is not there. Paint the ease. Do not write progress.
+    Ease(i32),
     /// Return to the page the gesture started on. Do not write progress.
     Cancel,
 }
@@ -923,7 +925,7 @@ impl Swipe {
         } else {
             let delta = if travel > 0.0 { 1 } else { -1 };
             if end_blocks(delta, page, pages) {
-                WheelMove::Cancel
+                WheelMove::Ease(delta)
             } else {
                 WheelMove::Commit(delta)
             }
@@ -3220,9 +3222,29 @@ mod tests {
 
         let mut swipe = Swipe::default();
         assert_eq!(swipe.offer(down(-80.0), 1, 10), WheelMove::Follow(0.0));
-        assert_eq!(swipe.offer(up, 1, 10), WheelMove::Cancel);
+        let eased = swipe.offer(up, 1, 10);
+        assert_eq!(eased, WheelMove::Ease(-1));
+        assert!(!writes(eased));
         assert_eq!(swipe.offer(down(80.0), 10, 10), WheelMove::Follow(0.0));
-        assert_eq!(swipe.offer(up, 10, 10), WheelMove::Cancel);
+        assert_eq!(swipe.offer(up, 10, 10), WheelMove::Ease(1));
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(-10.0), 1, 10), WheelMove::Follow(0.0));
+        assert_eq!(swipe.offer(up, 1, 10), WheelMove::Cancel);
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.offer(down(-80.0), 1, 10), WheelMove::Follow(0.0));
+        assert_eq!(
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::Cancelled,
+                    momentum: false,
+                    dx: 0.0,
+                    dy: 0.0,
+                },
+                1,
+                10,
+            ),
+            WheelMove::Cancel
+        );
 
         let mut swipe = Swipe::default();
         assert_eq!(

@@ -1114,9 +1114,11 @@ const SCRIPT: &str = r#"
       else {
         pendingUser = true;
         post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
+        easeOut(delta);
       }
       return;
     }
+    followGen++;
     flying = source;
     flyingDelta = delta;
     window.spikeBusy = true;
@@ -1342,6 +1344,28 @@ const SCRIPT: &str = r#"
     followX = x;
     root.style.transform = x ? "translate3d(" + (-x) + "px,0,0)" : "none";
   };
+  // This document's column. The stored sentence does not choose the ease.
+  function easeOut(delta) {
+    const gen = followGen;
+    const load = pageLoad;
+    const box = column();
+    const amp = Math.min(24, box.w * 0.06);
+    const sign = delta < 0 ? 1 : -1;
+    const t0 = performance.now();
+    function frame(t) {
+      if (gen !== followGen || load !== (window.__spikeLoad | 0)) return;
+      const u = Math.min(1, (t - t0) / DURATION);
+      const travel = Math.round(Math.sin(Math.PI * u) * amp);
+      root.style.transform = travel ? "translate3d(" + (sign * travel) + "px,0,0)" : "none";
+      if (u < 1) {
+        requestAnimationFrame(frame);
+        return;
+      }
+      if (gen !== followGen || load !== (window.__spikeLoad | 0)) return;
+      root.style.transform = "none";
+    }
+    requestAnimationFrame(frame);
+  }
   function glide(from, to, done) {
     const gen = followGen;
     const t0 = performance.now();
@@ -1385,6 +1409,11 @@ const SCRIPT: &str = r#"
     const box = column();
     const blocked = !delta || (delta > 0 && box.page >= box.pages) || (delta < 0 && box.page <= 1);
     if (blocked) {
+      if (delta && from === 0) {
+        followGen++;
+        easeOut(delta < 0 ? -1 : 1);
+        return "no";
+      }
       glide(from, 0, function () {
         followX = 0;
         root.style.transform = "none";
@@ -1530,6 +1559,100 @@ mod tests {
         assert!(script.contains("window.spikeFollowEnd"));
         assert!(script.contains("DURATION"));
         assert!(!script.contains("addEventListener(\"wheel\""));
+    }
+
+    #[test]
+    fn a_blocked_page_eases_back_to_the_same_column() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join(format!("superreader-edge-ease-{}.js", std::process::id()));
+        let drive = dir.join(format!(
+            "superreader-edge-ease-drive-{}.js",
+            std::process::id()
+        ));
+        std::fs::write(&page, &script).unwrap();
+        std::fs::write(&drive, super::EDGE_EASE_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["back"]["start"], "none");
+        assert_eq!(v["back"]["at0"], "none");
+        assert_eq!(v["back"]["at40"], "translate3d(17px,0,0)");
+        assert_eq!(v["back"]["at80"], "translate3d(24px,0,0)");
+        assert_eq!(v["back"]["at160"], "none");
+        assert_eq!(v["back"]["scroll"], 0);
+        assert_eq!(v["back"]["html"], "");
+        assert_eq!(v["back"]["footer"], "");
+        assert_eq!(v["back"]["answers"], serde_json::json!(["ok"]));
+        assert_eq!(v["back"]["turns"], 1);
+        assert_eq!(v["back"]["edge"], "prev");
+        assert_eq!(v["back"]["page"], 1);
+        assert_eq!(v["back"]["sentence"], 0);
+        assert_eq!(v["back"]["frames"], 0);
+        assert_eq!(v["shift"]["at80"], "translate3d(24px,0,0)");
+        assert_eq!(v["shift"]["scroll"], 0);
+        assert_eq!(v["space"]["scrollNow"], 400);
+        assert_eq!(v["space"]["scroll"], 400);
+        assert_eq!(v["space"]["transform"], "none");
+        assert_eq!(v["right"]["scrollNow"], 400);
+        assert_eq!(v["right"]["scroll"], 400);
+        assert_eq!(v["edge"]["at80"], "translate3d(24px,0,0)");
+        assert_eq!(v["edge"]["scroll"], 0);
+        assert_eq!(v["track"]["answer"], "no");
+        assert_eq!(v["track"]["at80"], "translate3d(24px,0,0)");
+        assert_eq!(v["track"]["scroll"], 0);
+        assert_eq!(v["track"]["turns"], 0);
+        assert_eq!(v["cancel"]["answer"], "no");
+        assert_ne!(v["cancel"]["at80"], "translate3d(24px,0,0)");
+        assert_eq!(v["cancel"]["end"], "none");
+        assert_eq!(v["cancel"]["scroll"], 0);
+        assert_eq!(v["forward"]["scrollNow"], 400);
+        assert_eq!(v["forward"]["transformNow"], "none");
+        assert_eq!(v["forward"]["scroll"], 400);
+        assert_eq!(v["forward"]["transform"], "none");
+        assert_eq!(v["forward"]["leaf"], true);
+        assert_eq!(v["last"]["at80"], "translate3d(-24px,0,0)");
+        assert_eq!(v["last"]["scroll"], 1200);
+        assert_eq!(v["last"]["end"], "none");
+        assert_eq!(v["only"]["back"], "translate3d(24px,0,0)");
+        assert_eq!(v["only"]["forward"], "translate3d(-24px,0,0)");
+        assert_eq!(v["only"]["scroll"], 0);
+        assert_eq!(v["rapid"]["answers"], serde_json::json!(["ok", "ok"]));
+        assert_eq!(v["rapid"]["turns"], 2);
+        assert_eq!(v["rapid"]["scroll"], 0);
+        assert_eq!(v["rapid"]["end"], "none");
+        assert_eq!(v["reverse"]["scrollNow"], 400);
+        assert_eq!(v["reverse"]["transformNow"], "none");
+        assert_eq!(v["reverse"]["scroll"], 400);
+        assert_eq!(v["reverse"]["clean"], true);
+        assert_eq!(v["drop"]["mid"], "translate3d(24px,0,0)");
+        assert_eq!(v["drop"]["after"], "none");
+        assert_eq!(v["drop"]["later"], "none");
+        assert_eq!(v["drop"]["scroll"], 0);
+        assert_eq!(v["drop"]["turns"], 1);
+        assert_eq!(v["reveal"]["after"], "none");
+        assert_eq!(v["reveal"]["later"], "none");
+        assert_eq!(v["reveal"]["turns"], 0);
+        assert_eq!(v["link"]["kind"], "link");
+        assert_eq!(v["link"]["after"], "none");
+        assert_eq!(v["link"]["later"], "none");
+        assert_eq!(v["link"]["turns"], 0);
+        assert_eq!(v["reload"]["later"], "none");
+        assert_eq!(v["restore"]["scrollNow"], 400);
+        assert_eq!(v["restore"]["transformNow"], "none");
+        assert_eq!(v["restore"]["clean"], true);
+        assert_eq!(v["restore"]["scroll"], 400);
     }
 
     #[test]
@@ -2586,4 +2709,264 @@ console.log(JSON.stringify({
   far: farClick[0] || null,
   vis: visClick[0] || null,
 }));
+"#;
+
+const EDGE_EASE_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+const made = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal', display: 'block', visibility: 'visible' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: '', cssText: '' },
+    textContent: '', innerHTML: '', innerText: '', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return null; },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+const footer = el();
+footer.id = 'spike-footer';
+global.document = {
+  createElement() { const node = el(); made.push(node); return node; },
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById(id) { return id === 'spike-footer' ? footer : null; },
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.__spikeLoad = 1;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function step(ms) {
+  global.__now += ms;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  posts.length = 0;
+  made.length = 0;
+  global.__now = 0;
+  body.scrollLeft = 0;
+  body.scrollWidth = 1600;
+  body.style.transform = '';
+  rootEl.style.transform = '';
+  footer.style.transform = '';
+  window.__spikeLoad = 1;
+  eval(script);
+  step(0);
+  posts.length = 0;
+}
+const seen = [];
+function spy() {
+  const orig = window.spikeTurn;
+  window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+}
+function take() { const out = seen.slice(); seen.length = 0; return out; }
+function press(key, shift) {
+  fire('keydown', { key, shiftKey: !!shift, repeat: false, preventDefault(){} });
+  return take();
+}
+function sample() {
+  const start = body.style.transform;
+  step(0);
+  const at0 = body.style.transform;
+  step(40);
+  const at40 = body.style.transform;
+  step(40);
+  const at80 = body.style.transform;
+  step(80);
+  const at160 = body.style.transform;
+  return {
+    start, at0, at40, at80, at160,
+    scroll: body.scrollLeft,
+    html: rootEl.style.transform,
+    footer: footer.style.transform,
+  };
+}
+function turns() { return posts.filter((post) => post.kind === 'turn'); }
+
+boot(); spy();
+const backAnswers = press('ArrowLeft', false);
+const backEase = sample();
+const backTurns = turns();
+const back = Object.assign({
+  answers: backAnswers,
+  turns: backTurns.length,
+  edge: backTurns[0] && backTurns[0].edge,
+  page: backTurns[0] && backTurns[0].page,
+  sentence: backTurns[0] && backTurns[0].sentence,
+  frames: backTurns[0] && backTurns[0].frames && backTurns[0].frames.length,
+}, backEase);
+
+boot(); spy();
+press(' ', true);
+const shift = sample();
+
+boot(); spy();
+body.scrollWidth = 400;
+press('ArrowLeft', false);
+const onlyBack = sample();
+press('ArrowRight', false);
+const onlyForward = sample();
+const only = { back: onlyBack.at80, forward: onlyForward.at80, scroll: body.scrollLeft };
+
+boot(); spy();
+press(' ', false);
+const spaceNow = { scrollNow: body.scrollLeft };
+sample();
+const space = { scrollNow: spaceNow.scrollNow, scroll: body.scrollLeft, transform: body.style.transform };
+
+boot(); spy();
+fire('click', { button: 0, clientX: 20, clientY: 100, target: { closest(){ return null; } }, preventDefault(){} });
+const edge = sample();
+
+boot(); spy();
+fire('click', { button: 0, clientX: 390, clientY: 100, target: { closest(){ return null; } }, preventDefault(){} });
+const rightNow = { scrollNow: body.scrollLeft };
+sample();
+const right = { scrollNow: rightNow.scrollNow, scroll: body.scrollLeft };
+
+boot(); spy();
+window.spikeFollow(-40);
+const trackAnswer = window.spikeFollowEnd(-1);
+const trackEase = sample();
+const track = { answer: trackAnswer, at80: trackEase.at80, scroll: trackEase.scroll, turns: turns().length };
+
+boot(); spy();
+window.spikeFollow(30);
+const cancelAnswer = window.spikeFollowEnd(0);
+const cancelEase = sample();
+const cancel = { answer: cancelAnswer, at80: cancelEase.at80, end: cancelEase.at160, scroll: cancelEase.scroll };
+
+boot(); spy();
+press('ArrowRight', false);
+const forwardNow = { scrollNow: body.scrollLeft, transformNow: body.style.transform };
+sample();
+const forward = {
+  scrollNow: forwardNow.scrollNow,
+  transformNow: forwardNow.transformNow,
+  scroll: body.scrollLeft,
+  transform: body.style.transform,
+  leaf: made.some((node) => node.id === 'spike-leaf'),
+};
+
+boot(); spy();
+window.spikeSeekLast();
+posts.length = 0;
+press('ArrowRight', false);
+const lastEase = sample();
+const last = { at80: lastEase.at80, scroll: lastEase.scroll, end: lastEase.at160 };
+
+boot(); spy();
+fire('keydown', { key: 'ArrowLeft', shiftKey: false, repeat: false, preventDefault(){} });
+fire('keydown', { key: 'ArrowLeft', shiftKey: false, repeat: false, preventDefault(){} });
+const rapidAnswers = seen.slice();
+const rapidEase = sample();
+const rapid = { answers: rapidAnswers, turns: turns().length, scroll: rapidEase.scroll, end: rapidEase.at160 };
+
+boot(); spy();
+press('ArrowLeft', false);
+step(0); step(40); step(40);
+press('ArrowRight', false);
+const reverseNow = { scrollNow: body.scrollLeft, transformNow: body.style.transform };
+let reverseClean = body.style.transform !== 'translate3d(24px,0,0)';
+for (let i = 0; i < 6; i++) {
+  step(40);
+  if (body.style.transform === 'translate3d(24px,0,0)') reverseClean = false;
+}
+const reverse = {
+  scrollNow: reverseNow.scrollNow,
+  transformNow: reverseNow.transformNow,
+  scroll: body.scrollLeft,
+  clean: reverseClean && body.style.transform === 'none',
+};
+
+boot(); spy();
+press('ArrowLeft', false);
+step(0); step(40); step(40);
+const dropMid = body.style.transform;
+const dropTurns = turns().length;
+window.spikeFollowDrop(window.__spikeLoad);
+const dropAfter = body.style.transform;
+step(200);
+const drop = { mid: dropMid, after: dropAfter, later: body.style.transform, scroll: body.scrollLeft, turns: turns().length === dropTurns ? dropTurns : turns().length };
+
+boot(); spy();
+press('ArrowLeft', false);
+step(0); step(40); step(40);
+const revealBefore = turns().length;
+window.spikeReveal(800);
+const revealAfter = body.style.transform;
+for (let i = 0; i < 6; i++) step(40);
+const reveal = { after: revealAfter, later: body.style.transform, turns: turns().length - revealBefore };
+
+boot(); spy();
+press('ArrowLeft', false);
+step(0); step(40); step(40);
+const linkBefore = posts.length;
+const anchor = { getAttribute(){ return 'next.xhtml#note'; }, closest(sel){ return sel === 'a[href]' ? anchor : null; } };
+fire('click', { button: 0, clientX: 200, clientY: 100, target: anchor, preventDefault(){} });
+const linkPost = posts.slice(linkBefore).find((post) => post.kind === 'link') || null;
+window.spikeFollowDrop(window.__spikeLoad);
+const linkAfter = body.style.transform;
+step(200);
+const link = { kind: linkPost && linkPost.kind, after: linkAfter, later: body.style.transform, turns: posts.slice(linkBefore).filter((post) => post.kind === 'turn').length };
+
+boot(); spy();
+press('ArrowLeft', false);
+step(0); step(40);
+body.style.transform = 'none';
+window.__spikeLoad = 2;
+eval(script);
+step(40);
+const reload = { later: body.style.transform };
+
+boot(); spy();
+press('ArrowLeft', false);
+step(0); step(40); step(40);
+window.spikeTurn(1, 'restore', 2, 1, window.__spikeLoad);
+const restoreNow = { scrollNow: body.scrollLeft, transformNow: body.style.transform };
+let restoreClean = body.style.transform !== 'translate3d(24px,0,0)';
+for (let i = 0; i < 6; i++) {
+  step(40);
+  if (body.style.transform === 'translate3d(24px,0,0)') restoreClean = false;
+}
+const restore = {
+  scrollNow: restoreNow.scrollNow,
+  transformNow: restoreNow.transformNow,
+  clean: restoreClean && body.style.transform === 'none',
+  scroll: body.scrollLeft,
+};
+
+console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore }));
 "#;

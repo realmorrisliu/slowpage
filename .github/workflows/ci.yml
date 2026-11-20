@@ -98,6 +98,8 @@ jobs:
             a_book_link_lands_on_the_sentence_and_returns \
             a_pending_fragment_keeps_the_origin_sentence \
             a_page_link_click_posts_the_character_offset \
+            a_blocked_page_eases_back_to_the_same_column \
+            a_blocked_ease_leaves_the_stored_sentence \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
@@ -140,6 +142,8 @@ jobs:
             a_book_link_lands_on_the_sentence_and_returns \
             a_pending_fragment_keeps_the_origin_sentence \
             a_page_link_click_posts_the_character_offset \
+            a_blocked_page_eases_back_to_the_same_column \
+            a_blocked_ease_leaves_the_stored_sentence \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
