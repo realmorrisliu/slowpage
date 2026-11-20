@@ -2148,13 +2148,39 @@ pub fn reading_margin(
     chrome: Signal<crate::tokens::ChromeIn>,
     stage: ElementRef,
     ease: Signal<u64>,
+    live: Signal<spike_library::margin::LivePage>,
+    hold: Signal<spike_library::margin::Hold>,
 ) -> AnyElement {
     let _tick = ease.get();
     let _form = form.get();
     let size = window.get();
     let row = chrome.get();
     let top = f64::from(row.top.max(0.0));
-    let frame = crate::ease::present(size.width, size.height, top, crate::ease::current());
+    let trip = crate::ease::current();
+    let frame = crate::ease::present(size.width, size.height, top, trip);
+    let mut live_now = live.get();
+    live_now.moving = live_now.moving || trip.moving();
+    let mut next = spike_library::margin::reconcile(&hold.get(), &live_now);
+    let fit = margin_fit(&frame.page, live_now.page_w, live_now.page_h);
+    let notes = margin_notes(&next.book, next.page);
+    let cards = spike_library::margin::cards_from(&notes, fit);
+    let margin_x = frame.margin.map(|rect| rect.x).unwrap_or(0.0);
+    let scene = spike_library::margin::place(
+        &cards,
+        spike_library::margin::Focus {
+            hover: next.hover,
+            selected: next.selected,
+        },
+        size.height,
+        margin_x,
+        next.scroll,
+    );
+    next.scroll = scene.scroll;
+    next.scroll_min = scene.scroll_min;
+    next.scroll_max = scene.scroll_max;
+    if hold.get() != next {
+        hold.set(next);
+    }
     let mut root = view()
         .absolute()
         .size_full()
@@ -2169,6 +2195,75 @@ pub fn reading_margin(
                 .h(px(rect.h as f32))
                 .bg(rgb(FIELD_HEX).to_hsla()),
         );
+        for placed in &scene.cards {
+            for seg in &placed.segments {
+                if seg.w < 0.5 && seg.h < 0.5 {
+                    continue;
+                }
+                let alpha = if seg.fade {
+                    spike_library::margin::CONNECTOR_FADE as f32
+                } else {
+                    1.0
+                };
+                root = root.child(
+                    view()
+                        .absolute()
+                        .left(px(seg.x as f32))
+                        .top(px(seg.y as f32))
+                        .w(px(seg.w.max(1.0) as f32))
+                        .h(px(seg.h.max(1.0) as f32))
+                        .bg(ink())
+                        .opacity(alpha)
+                        .pointer_events(PointerEvents::BoxNone),
+                );
+            }
+        }
+        let band = spike_library::margin::band_bottom(size.height);
+        let clip_h = (band - spike_library::margin::BAND_TOP).max(0.0);
+        let mut clip = view()
+            .absolute()
+            .left(px(rect.x as f32))
+            .top(px(spike_library::margin::BAND_TOP as f32))
+            .w(px(rect.w as f32))
+            .h(px(clip_h as f32))
+            .overflow_hidden()
+            .pointer_events(PointerEvents::Auto)
+            .on_wheel({
+                let hold = hold.clone();
+                move |event: &WheelEvent| {
+                    let dy = f64::from(event.delta.points(Points(16.0)).y.0);
+                    let mut current = hold.get();
+                    let scrolled =
+                        (current.scroll + dy).clamp(current.scroll_min, current.scroll_max);
+                    if (scrolled - current.scroll).abs() > 0.01 {
+                        current.scroll = scrolled;
+                        hold.set(current);
+                    }
+                }
+            });
+        for placed in &scene.cards {
+            if let Some(note) = notes.iter().find(|note| note.id == placed.id) {
+                clip = clip.child(margin_card(note, placed, hold.clone()));
+            }
+        }
+        root = root.child(clip);
+        let composer_top = band;
+        root = root.child(
+            view()
+                .absolute()
+                .left(px(
+                    (rect.x + f64::from(crate::tokens::COMPOSER_INSET)) as f32
+                ))
+                .top(px(composer_top as f32))
+                .w(px(
+                    (rect.w - f64::from(crate::tokens::COMPOSER_INSET) * 2.0).max(1.0) as f32,
+                ))
+                .h(px(crate::tokens::MARGIN_COMPOSER_H))
+                .rounded(px(crate::tokens::COMPOSER_RADIUS))
+                .bg(rgb(crate::tokens::CARD).to_hsla())
+                .shadow(crate::tokens::margin_ring())
+                .pointer_events(PointerEvents::Auto),
+        );
     }
     if frame.panel_toggle {
         root = root.child(margin_toggle(form.clone(), row, stage.clone()));
@@ -2180,6 +2275,148 @@ pub fn reading_margin(
         stage,
     ));
     root.into_element()
+}
+
+fn margin_fit(page: &Rect, page_w: f64, page_h: f64) -> spike_library::margin::Fit {
+    if page_w < 1.0 || page_h < 1.0 {
+        return spike_library::margin::Fit {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            scale: 0.0,
+        };
+    }
+    let (x, y, w, _) =
+        spike_report::fitted_pdf_page(page.x, page.y, page.w, page.h, page_w, page_h);
+    spike_library::margin::Fit {
+        origin_x: x,
+        origin_y: y,
+        scale: w / page_w,
+    }
+}
+
+fn margin_notes(book: &str, page: u32) -> Vec<spike_library::margin::StoredNote> {
+    if book.is_empty() || page == 0 {
+        return Vec::new();
+    }
+    let path = crate::settings::support_dir().join("annotations.sqlite");
+    let Ok(notes) = spike_library::margin::Notes::open(&path) else {
+        return Vec::new();
+    };
+    notes.list(book, page).unwrap_or_default()
+}
+
+fn margin_card(
+    note: &spike_library::margin::StoredNote,
+    placed: &spike_library::margin::Placed,
+    hold: Signal<spike_library::margin::Hold>,
+) -> AnyElement {
+    let id = note.id;
+    let source = if note.body.trim().is_empty() {
+        note.passage.clone()
+    } else {
+        note.body.clone()
+    };
+    let sentence = source.lines().next().unwrap_or("").trim().to_string();
+    let mut column = view().w_full().flex().flex_col().child(
+        line!(
+            note.author.clone(),
+            crate::tokens::BODY_SIZE,
+            crate::tokens::NAME_WEIGHT,
+            ink(),
+            0.0_f32
+        )
+        .line_height(px(18.0))
+        .truncate(),
+    );
+    if placed.open {
+        column = column.child(
+            line!(
+                source,
+                crate::tokens::BODY_SIZE,
+                crate::tokens::BODY_WEIGHT,
+                ink(),
+                0.0_f32
+            )
+            .line_height(px(18.0)),
+        );
+        if hold.get().selected == Some(id) {
+            for reply in &note.replies {
+                column = column.child(
+                    line!(
+                        reply.clone(),
+                        crate::tokens::BODY_SIZE,
+                        crate::tokens::BODY_WEIGHT,
+                        ink(),
+                        0.0_f32
+                    )
+                    .line_height(px(18.0))
+                    .mt(px(crate::tokens::MARGIN_CARD_GAP + 8.0)),
+                );
+            }
+        }
+    } else {
+        column = column.child(
+            line!(
+                sentence,
+                crate::tokens::BODY_SIZE,
+                crate::tokens::BODY_WEIGHT,
+                ink(),
+                0.0_f32
+            )
+            .line_height(px(18.0))
+            .truncate(),
+        );
+    }
+    let top = (placed.y - spike_library::margin::BAND_TOP) as f32;
+    view()
+        .absolute()
+        .left(px(crate::tokens::MARGIN_CARD_X))
+        .top(px(top))
+        .w(px(crate::tokens::MARGIN_CARD_W))
+        .h(px(placed.h as f32))
+        .rounded(px(crate::tokens::CARD_RADIUS as f32))
+        .bg(rgb(crate::tokens::CARD).to_hsla())
+        .shadow(crate::tokens::margin_ring())
+        .overflow_hidden()
+        .px(px(12.0))
+        .pt(px(8.0))
+        .pb(px(8.0))
+        .pointer_events(PointerEvents::Auto)
+        .on_mouse_enter({
+            let hold = hold.clone();
+            move |_: &MouseEvent| {
+                let mut current = hold.get();
+                if current.hover != Some(id) {
+                    current.hover = Some(id);
+                    hold.set(current);
+                }
+            }
+        })
+        .on_mouse_leave({
+            let hold = hold.clone();
+            move |_: &MouseEvent| {
+                let mut current = hold.get();
+                if current.hover == Some(id) {
+                    current.hover = None;
+                    hold.set(current);
+                }
+            }
+        })
+        .on_press({
+            let hold = hold.clone();
+            move || {
+                let mut current = hold.get();
+                current.selected = if current.selected == Some(id) {
+                    None
+                } else {
+                    Some(id)
+                };
+                current.scroll = 0.0;
+                hold.set(current);
+            }
+        })
+        .child(column)
+        .into_element()
 }
 
 fn immersive_button(form: Signal<Form>, seat: Rect, plate: bool, stage: ElementRef) -> AnyElement {

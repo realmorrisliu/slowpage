@@ -433,6 +433,8 @@ pub fn SpikeApp() -> impl IntoElement {
         height: 800.0,
     });
     let ease_tick = signal(0_u64);
+    let margin_live = signal(spike_library::margin::LivePage::default());
+    let margin_hold = signal(spike_library::margin::Hold::default());
     let shell_chrome = signal(form::chrome_off());
     let bars_row = signal(shell_on);
     let dropped = stage.clone();
@@ -796,6 +798,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             let history = history.clone();
                             let visit = visit.clone();
                             let ease_tick = ease_tick.clone();
+                            let margin_live = margin_live.clone();
                             move |event: &NativeEvent| {
                                 if event.name.as_ref() == "ease" {
                                     let leg = event.data["leg"].as_u64().unwrap_or(0);
@@ -822,6 +825,19 @@ pub fn SpikeApp() -> impl IntoElement {
                                         current.page = page.max(1);
                                         visit.set(current);
                                     }
+                                }
+                                let next_live = spike_library::margin::LivePage {
+                                    book: event.data["margin_book"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    page: event.data["margin_page"].as_u64().unwrap_or(0) as u32,
+                                    page_w: event.data["margin_pw"].as_f64().unwrap_or(0.0),
+                                    page_h: event.data["margin_ph"].as_f64().unwrap_or(0.0),
+                                    moving: event.data["margin_moving"].as_bool().unwrap_or(false),
+                                };
+                                if margin_live.get() != next_live {
+                                    margin_live.set(next_live);
                                 }
                                 title.set(event.data["title"].as_str().unwrap_or("").to_string());
                                 variant
@@ -961,6 +977,8 @@ pub fn SpikeApp() -> impl IntoElement {
                 let chrome = shell_chrome.clone();
                 let stage = stage.clone();
                 let ease = ease_tick.clone();
+                let live = margin_live.clone();
+                let hold = margin_hold.clone();
                 move || {
                     form::reading_margin(
                         form.clone(),
@@ -968,6 +986,8 @@ pub fn SpikeApp() -> impl IntoElement {
                         chrome.clone(),
                         stage.clone(),
                         ease.clone(),
+                        live.clone(),
+                        hold.clone(),
                     )
                 }
             },
