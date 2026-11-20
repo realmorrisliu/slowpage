@@ -97,18 +97,21 @@ Picked on 2026-11-10, in pull request 14.
 Approved on 2026-11-20 at 15:49 Asia/Shanghai. Mochi conveyed Morris's choice after Morris looked at three design drafts. This paragraph records that conveyance.
 
 - A wide window shows the annotation margin at 240 points. The chat panel's 320 points stay unused for this margin.
-- A narrow window uses the drawer in the 2026-11-10 pick above.
-- The control that shows or hides the margin sits at the top right. It is the existing panel toggle. It does not open the chat panel, and it does not enter immersive reading.
+- A narrow window shows the margin as a drawer. The 16:03 approval states what that drawer does.
+- The control that shows or hides the margin is the existing panel toggle. It does not open the chat panel, and it does not enter immersive reading. Its two seats are the 16:03 approval.
 
 That choice approves these three items. S3, S4, and checklist item 10 stay open.
 
 Approved on 2026-11-20 at 16:03 Asia/Shanghai. Mochi conveyed Morris's choice after Morris looked at the open drawer, the threshold, and the state frames. This paragraph records that conveyance.
 
-- Below 818 points the open margin covers the right side. The page keeps the box it has when the margin is hidden. There is no mask. A click on the page does not close the margin. The margin does not take focus. The same top-right control closes it.
+- Below 818 points the open margin covers the right side. The page keeps the box it has when the margin is hidden. There is no mask. A click on the page does not close the margin. The margin does not take focus. The same control closes it.
 - 818 points is the 578 point window minimum plus the 240 point margin. Crossing that width keeps the margin shown or hidden. At and above 818, a shown margin is the 240 point column and the page fits the card beside it. Below 818, showing or hiding the margin does not move or resize the page. A hidden margin has no column and no cover.
+- Hidden, the control is at the top right of the window. Shown, the control is the header of the margin, at that same top right. The window does not show a second control.
 - The control stays at full opacity when the lights and the book title fade. Those two keep their one alpha.
 - During the 160 ms slide the footer stays on the departing page. It changes when the slide ends. A slide that is cancelled, or a book that changes, does not write that turn onto the book now open.
 - Escape stays on the path in Commands. The margin does not take it.
+
+The 2026-11-10 list above stays that date's record. Lining a card up with its line, and scrolling a card to that line, stay in that list.
 
 Still unset:
 
@@ -116,7 +119,7 @@ Still unset:
 
 The shell has no annotation store. The margin shows the column or the cover, and the control, and no note cards. S3, S4, and checklist item 10 stay open.
 
-A shell change does not invent an unset item. The 2026-11-10 picks above are not this approval. Pull request 29's connector is not this approval.
+A shell change does not invent an unset item. Pull request 29's connector is not this approval.
 
 ## Commands
 
@@ -138,7 +141,7 @@ The sidebar toggle is absent in immersive reading. Its menu item does not leave 
 
 The panel toggle in Full hides or shows the chat panel.
 
-The panel toggle in Page and panel hides or shows the annotation margin. It does not show the chat panel, and it does not enter immersive reading. The inset stays 6 points. The top-right seat is the 2026-11-20 approval in the annotation margin section.
+The panel toggle in Page and panel hides or shows the annotation margin. It does not show the chat panel, and it does not enter immersive reading. The inset stays 6 points. Hidden, the control is at the top right of the window. Shown, the control is the header of the margin, at that same top right, and the window does not repeat it. That pair of seats is the 16:03 approval in the annotation margin section.
 
 The panel toggle is absent in immersive reading.
 
