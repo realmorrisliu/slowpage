@@ -1010,7 +1010,7 @@ impl State {
     }
 
     fn finish_pdf_motion(&mut self) -> bool {
-        let Some(motion) = self.pdf_motion else {
+        let Some(motion) = self.pdf_motion.take() else {
             return false;
         };
         let elapsed = motion
@@ -1019,13 +1019,12 @@ impl State {
             .as_millis()
             .min(u128::from(u32::MAX)) as u32;
         match crate::visit::slide_at(&motion.slide, elapsed, self.book_gen, 1.0) {
-            crate::visit::SlideAt::Dropped => {
-                self.pdf_motion = None;
-                false
+            crate::visit::SlideAt::Dropped => false,
+            crate::visit::SlideAt::Moving { .. } => {
+                self.pdf_motion = Some(motion);
+                true
             }
-            crate::visit::SlideAt::Moving { .. } => true,
             crate::visit::SlideAt::Landed { page, queued } => {
-                self.pdf_motion = None;
                 if let Some(pdf) = self.pdf.as_ref() {
                     let sizes = pdf.sizes.clone();
                     self.offset = page_offset(&sizes, page as u32 + 1, self.scale);
