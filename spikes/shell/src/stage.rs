@@ -2865,7 +2865,6 @@ fn hold_replaced_frame(web: &crate::web::WebChapter, width: f64, height: f64, zo
     let previous_w = inbox.page_w;
     let previous_h = inbox.page_h;
     let previous_zoom = inbox.layout_zoom;
-    let gen = inbox.layout_gen;
     if spike_library::margin::layout_moved(
         previous_w,
         previous_h,
@@ -2874,7 +2873,7 @@ fn hold_replaced_frame(web: &crate::web::WebChapter, width: f64, height: f64, zo
         height,
         zoom,
     ) {
-        spike_library::margin::hold_layout(gen, &mut inbox.layout_hold, &mut inbox.measures);
+        inbox.hold_layout();
     }
     inbox.page_w = width;
     inbox.page_h = height;

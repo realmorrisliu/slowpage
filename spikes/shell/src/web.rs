@@ -236,6 +236,37 @@ impl Inbox {
     pub(crate) fn clear_figure(&mut self) {
         crate::visit::drop_figure_mail(&mut self.figure, &mut self.figure_lost);
     }
+
+    pub(crate) fn claim_document(&mut self) {
+        spike_library::margin::claim_document(
+            &mut self.doc,
+            &mut self.layout_gen,
+            &mut self.layout_hold,
+            &mut self.measures,
+        );
+    }
+
+    pub(crate) fn hold_layout(&mut self) {
+        let gen = self.layout_gen;
+        spike_library::margin::hold_layout(gen, &mut self.layout_hold, &mut self.measures);
+    }
+
+    pub(crate) fn take_place(&mut self, post: spike_library::margin::LayoutPost) -> bool {
+        let frame = spike_library::margin::LayoutFrame {
+            doc: self.doc,
+            page_w: self.page_w,
+            page_h: self.page_h,
+            zoom: self.layout_zoom,
+        };
+        let hold = self.layout_hold;
+        spike_library::margin::take_place(
+            &frame,
+            &mut self.layout_gen,
+            hold,
+            &mut self.measures,
+            post,
+        )
+    }
 }
 
 define_class!(
@@ -355,13 +386,6 @@ define_class!(
                         inbox.pages = Some((page as usize, pages as usize));
                         let view_w = value["view_w"].as_f64().unwrap_or(0.0);
                         let view_h = value["view_h"].as_f64().unwrap_or(0.0);
-                        let frame = spike_library::margin::LayoutFrame {
-                            doc: inbox.doc,
-                            page_w: inbox.page_w,
-                            page_h: inbox.page_h,
-                            zoom: inbox.layout_zoom,
-                        };
-                        let hold = inbox.layout_hold;
                         let post = spike_library::margin::LayoutPost {
                             doc: value["doc"].as_u64().unwrap_or(0),
                             gen: value["layout_gen"].as_u64(),
@@ -369,13 +393,7 @@ define_class!(
                             view_h,
                             anchors: value.get("anchors").map(crate::visit::fresh_measures),
                         };
-                        let taken = spike_library::margin::take_place(
-                            &frame,
-                            &mut inbox.layout_gen,
-                            hold,
-                            &mut inbox.measures,
-                            post,
-                        );
+                        let taken = inbox.take_place(post);
                         if taken {
                             if view_w > 0.0 {
                                 inbox.view_w = view_w;
@@ -911,12 +929,7 @@ impl WebChapter {
             let _: () = msg_send![parent, addSubview: &*edge];
             {
                 let mut inbox = inbox.borrow_mut();
-                spike_library::margin::claim_document(
-                    &mut inbox.doc,
-                    &mut inbox.layout_gen,
-                    &mut inbox.layout_hold,
-                    &mut inbox.measures,
-                );
+                inbox.claim_document();
             }
             let url = NSString::from_str(&format!("epub://book{href}"));
             let nsurl = objc2_foundation::NSURL::URLWithString(&url).ok_or("url")?;
@@ -1146,12 +1159,7 @@ impl WebChapter {
             handler.ivars().href.replace(href.clone());
             let mut inbox = slot.inbox.borrow_mut();
             inbox.pages = None;
-            spike_library::margin::claim_document(
-                &mut inbox.doc,
-                &mut inbox.layout_gen,
-                &mut inbox.layout_hold,
-                &mut inbox.measures,
-            );
+            inbox.claim_document();
             inbox.view_h = 0.0;
             inbox.pinned = None;
             inbox.pin_missed = false;
@@ -1224,12 +1232,7 @@ impl WebChapter {
     pub fn reload_source(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
-            spike_library::margin::claim_document(
-                &mut inbox.doc,
-                &mut inbox.layout_gen,
-                &mut inbox.layout_hold,
-                &mut inbox.measures,
-            );
+            inbox.claim_document();
             inbox.view_h = 0.0;
             inbox.clear_figure();
         }
@@ -1248,12 +1251,7 @@ impl WebChapter {
     pub fn reload(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
-            spike_library::margin::claim_document(
-                &mut inbox.doc,
-                &mut inbox.layout_gen,
-                &mut inbox.layout_hold,
-                &mut inbox.measures,
-            );
+            inbox.claim_document();
             inbox.view_h = 0.0;
             inbox.clear_figure();
         }
@@ -1398,12 +1396,7 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                             let mut inbox = handler.ivars().inbox.borrow_mut();
                             inbox.chapter_ms = None;
                             inbox.clear_figure();
-                            spike_library::margin::claim_document(
-                                &mut inbox.doc,
-                                &mut inbox.layout_gen,
-                                &mut inbox.layout_hold,
-                                &mut inbox.measures,
-                            );
+                            inbox.claim_document();
                         }
                         launch = Some((web, href));
                     }
