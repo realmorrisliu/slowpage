@@ -166,6 +166,8 @@ pub struct Inbox {
     pub measures: Vec<spike_library::margin::FreshMeasure>,
     pub layout_gen: u64,
     pub layout_hold: u64,
+    pub layout_zoom: f64,
+    pub doc: u64,
     pub view_h: f64,
     pub ready: bool,
     pub reload: bool,
@@ -268,7 +270,8 @@ define_class!(
                     let href = self.ivars().href.borrow().clone();
                     let breaks = self.ivars().breaks.borrow().slice_json(&href);
                     let on = crate::settings::bold_word_starts(&crate::settings::path());
-                    inject(&bytes, &self.ivars().language, &breaks, on)
+                    let doc = self.ivars().inbox.borrow().doc;
+                    inject(&bytes, &self.ivars().language, &breaks, on, doc)
                 } else {
                     bytes
                 };
@@ -350,23 +353,36 @@ define_class!(
                         let mut inbox = self.ivars().inbox.borrow_mut();
                         let previous = inbox.pages;
                         inbox.pages = Some((page as usize, pages as usize));
-                        if let Some(view_h) = value["view_h"].as_f64() {
-                            inbox.view_h = view_h;
-                        }
-                        if let Some(gen) = value["layout_gen"].as_u64() {
-                            if spike_library::margin::accept_layout(
-                                inbox.layout_gen,
-                                inbox.layout_hold,
-                                gen,
-                            ) {
-                                inbox.layout_gen = gen;
-                                inbox.measures = value
-                                    .get("anchors")
-                                    .map(crate::visit::fresh_measures)
-                                    .unwrap_or_default();
+                        let view_w = value["view_w"].as_f64().unwrap_or(0.0);
+                        let view_h = value["view_h"].as_f64().unwrap_or(0.0);
+                        let frame = spike_library::margin::LayoutFrame {
+                            doc: inbox.doc,
+                            page_w: inbox.page_w,
+                            page_h: inbox.page_h,
+                            zoom: inbox.layout_zoom,
+                        };
+                        let hold = inbox.layout_hold;
+                        let post = spike_library::margin::LayoutPost {
+                            doc: value["doc"].as_u64().unwrap_or(0),
+                            gen: value["layout_gen"].as_u64(),
+                            view_w,
+                            view_h,
+                            anchors: value.get("anchors").map(crate::visit::fresh_measures),
+                        };
+                        let taken = spike_library::margin::take_place(
+                            &frame,
+                            &mut inbox.layout_gen,
+                            hold,
+                            &mut inbox.measures,
+                            post,
+                        );
+                        if taken {
+                            if view_w > 0.0 {
+                                inbox.view_w = view_w;
                             }
-                        } else if let Some(anchors) = value.get("anchors") {
-                            inbox.measures = crate::visit::fresh_measures(anchors);
+                            if view_h > 0.0 {
+                                inbox.view_h = view_h;
+                            }
                         }
                         inbox.sentence = value["sentence"].as_u64().map(|offset| offset as u32);
                         if !turn {
@@ -419,9 +435,6 @@ define_class!(
                             inbox.layout = Some(value["layout"].clone());
                         } else if let Some(ratio) = value["gap_ratio"].as_f64() {
                             inbox.gap_ratio = Some(ratio);
-                        }
-                        if let Some(view_w) = value["view_w"].as_f64() {
-                            inbox.view_w = view_w;
                         }
                         if inbox.page_ready_ms.is_none()
                             && value["layout"]["ready"] == true
@@ -763,7 +776,7 @@ fn paint_web_backing(web: &AnyObject) {
     }
 }
 
-fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool) -> Vec<u8> {
+fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool, doc: u64) -> Vec<u8> {
     let html = spike_epub::normalize_chapter(&String::from_utf8_lossy(bytes));
     let html = crate::reading::prepare_html(&html, language);
     let mut html = crate::bold_word::decorate(&html, bold);
@@ -779,7 +792,7 @@ fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool) -> Vec<u8> {
     });
     let fragment = serde_json::to_string(&fragment).unwrap_or_else(|_| "\"\"".to_string());
     let script = format!(
-        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};window.__spikeFragment={fragment};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
+        "<script>window.spikeDoc={doc};window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};window.__spikeFragment={fragment};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
         crate::reading::page_script(language)
     );
     if let Some(at) = html.to_ascii_lowercase().rfind("</body>") {
@@ -896,6 +909,15 @@ impl WebChapter {
             let _: () = msg_send![&web, setNavigationDelegate: &*handler];
             let _: () = msg_send![parent, addSubview: &*web];
             let _: () = msg_send![parent, addSubview: &*edge];
+            {
+                let mut inbox = inbox.borrow_mut();
+                spike_library::margin::claim_document(
+                    &mut inbox.doc,
+                    &mut inbox.layout_gen,
+                    &mut inbox.layout_hold,
+                    &mut inbox.measures,
+                );
+            }
             let url = NSString::from_str(&format!("epub://book{href}"));
             let nsurl = objc2_foundation::NSURL::URLWithString(&url).ok_or("url")?;
             let request: Retained<AnyObject> =
@@ -1124,9 +1146,12 @@ impl WebChapter {
             handler.ivars().href.replace(href.clone());
             let mut inbox = slot.inbox.borrow_mut();
             inbox.pages = None;
-            inbox.measures.clear();
-            inbox.layout_gen = 0;
-            inbox.layout_hold = 0;
+            spike_library::margin::claim_document(
+                &mut inbox.doc,
+                &mut inbox.layout_gen,
+                &mut inbox.layout_hold,
+                &mut inbox.measures,
+            );
             inbox.view_h = 0.0;
             inbox.pinned = None;
             inbox.pin_missed = false;
@@ -1199,6 +1224,13 @@ impl WebChapter {
     pub fn reload_source(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
+            spike_library::margin::claim_document(
+                &mut inbox.doc,
+                &mut inbox.layout_gen,
+                &mut inbox.layout_hold,
+                &mut inbox.measures,
+            );
+            inbox.view_h = 0.0;
             inbox.clear_figure();
         }
         let (web, _, href) = self.shown();
@@ -1216,6 +1248,13 @@ impl WebChapter {
     pub fn reload(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
+            spike_library::margin::claim_document(
+                &mut inbox.doc,
+                &mut inbox.layout_gen,
+                &mut inbox.layout_hold,
+                &mut inbox.measures,
+            );
+            inbox.view_h = 0.0;
             inbox.clear_figure();
         }
         let (web, _, _) = self.shown();

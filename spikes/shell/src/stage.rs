@@ -1886,6 +1886,7 @@ impl State {
                 self.placed_stage_w = self.stage_w;
                 self.placed_stage_h = self.stage_h;
                 if let Some(web) = &self.web {
+                    hold_replaced_frame(web, w, h, zoom);
                     web.place_at(x, y, w, h, zoom);
                     web.set_page_target(layout_target(w, zoom));
                     if let Some(id) = crate::web::reader_figure() {
@@ -1916,16 +1917,9 @@ impl State {
                 let Some(web) = &self.web else {
                     return plan.pump;
                 };
+                hold_replaced_frame(web, w, h, zoom);
                 {
                     let mut inbox = web.inbox.borrow_mut();
-                    if inbox.layout_gen > 0
-                        && spike_library::margin::frame_changed(inbox.page_w, inbox.page_h, w, h)
-                    {
-                        inbox.layout_hold = inbox.layout_gen;
-                        inbox.measures.clear();
-                    }
-                    inbox.page_w = w;
-                    inbox.page_h = h;
                     inbox.page_x = x;
                     inbox.bar_w = self.chrome.bar_w.get();
                     inbox.stage_w = self.stage_w;
@@ -2864,6 +2858,27 @@ fn anchor_end(anchor: &Anchor) -> Option<u32> {
         Anchor::Epub { end, .. } => Some(*end),
         Anchor::Pdf { .. } => None,
     }
+}
+
+fn hold_replaced_frame(web: &crate::web::WebChapter, width: f64, height: f64, zoom: f64) {
+    let mut inbox = web.inbox.borrow_mut();
+    let previous_w = inbox.page_w;
+    let previous_h = inbox.page_h;
+    let previous_zoom = inbox.layout_zoom;
+    let gen = inbox.layout_gen;
+    if spike_library::margin::layout_moved(
+        previous_w,
+        previous_h,
+        previous_zoom,
+        width,
+        height,
+        zoom,
+    ) {
+        spike_library::margin::hold_layout(gen, &mut inbox.layout_hold, &mut inbox.measures);
+    }
+    inbox.page_w = width;
+    inbox.page_h = height;
+    inbox.layout_zoom = zoom;
 }
 
 fn layout_target(placed_width: f64, zoom: f64) -> f64 {

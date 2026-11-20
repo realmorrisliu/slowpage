@@ -556,6 +556,141 @@ pub fn measures_ready(hold: u64, gen: u64) -> bool {
     !(gen > 0 && hold >= gen)
 }
 
+/// CSS viewport of a webview frame. `setPageZoom` scales both axes.
+pub fn target_viewport(page_w: f64, page_h: f64, zoom: f64) -> Option<(f64, f64)> {
+    if page_w < 1.0 || page_h < 1.0 {
+        return None;
+    }
+    let zoom = if zoom.is_finite() && zoom > 0.01 {
+        zoom
+    } else {
+        1.0
+    };
+    Some((page_w / zoom, page_h / zoom))
+}
+
+/// The native target changed. A generation measured earlier is not this frame.
+pub fn layout_moved(
+    prev_w: f64,
+    prev_h: f64,
+    prev_zoom: f64,
+    next_w: f64,
+    next_h: f64,
+    next_zoom: f64,
+) -> bool {
+    if prev_w < 1.0 || prev_h < 1.0 {
+        return false;
+    }
+    let prev_zoom = if prev_zoom.is_finite() && prev_zoom > 0.01 {
+        prev_zoom
+    } else {
+        1.0
+    };
+    let next_zoom = if next_zoom.is_finite() && next_zoom > 0.01 {
+        next_zoom
+    } else {
+        1.0
+    };
+    frame_changed(prev_w, prev_h, next_w, next_h) || (prev_zoom - next_zoom).abs() >= 0.01
+}
+
+pub fn hold_layout(gen: u64, hold: &mut u64, measures: &mut Vec<FreshMeasure>) {
+    if gen > 0 {
+        *hold = gen;
+        measures.clear();
+    }
+}
+
+pub fn claim_document(
+    doc: &mut u64,
+    gen: &mut u64,
+    hold: &mut u64,
+    measures: &mut Vec<FreshMeasure>,
+) {
+    *doc = doc.saturating_add(1);
+    *gen = 0;
+    *hold = 0;
+    measures.clear();
+}
+
+/// A place message measured for this document and this webview frame.
+pub fn place_belongs(
+    doc: u64,
+    post_doc: u64,
+    page_w: f64,
+    page_h: f64,
+    zoom: f64,
+    view_w: f64,
+    view_h: f64,
+) -> bool {
+    if doc > 0 && post_doc != doc {
+        return false;
+    }
+    match target_viewport(page_w, page_h, zoom) {
+        None => true,
+        Some((width, height)) => (view_w - width).abs() < 1.0 && (view_h - height).abs() < 1.0,
+    }
+}
+
+/// The webview frame a place message has to belong to.
+pub struct LayoutFrame {
+    pub doc: u64,
+    pub page_w: f64,
+    pub page_h: f64,
+    pub zoom: f64,
+}
+
+/// One place message from the page script.
+pub struct LayoutPost {
+    pub doc: u64,
+    pub gen: Option<u64>,
+    pub view_w: f64,
+    pub view_h: f64,
+    pub anchors: Option<Vec<FreshMeasure>>,
+}
+
+/// The message handler's layout update. `anchors` is `Some` when the post has that key.
+pub fn take_place(
+    frame: &LayoutFrame,
+    gen: &mut u64,
+    hold: u64,
+    measures: &mut Vec<FreshMeasure>,
+    post: LayoutPost,
+) -> bool {
+    if !place_belongs(
+        frame.doc,
+        post.doc,
+        frame.page_w,
+        frame.page_h,
+        frame.zoom,
+        post.view_w,
+        post.view_h,
+    ) {
+        return false;
+    }
+    match post.gen {
+        Some(posted) if accept_layout(*gen, hold, posted) => {
+            *gen = posted;
+            *measures = post.anchors.unwrap_or_default();
+        }
+        Some(_) => {}
+        None => {
+            if let Some(next) = post.anchors {
+                *measures = next;
+            }
+        }
+    }
+    true
+}
+
+pub fn published_measures(hold: u64, gen: u64, measures: &[FreshMeasure]) -> &[FreshMeasure] {
+    if measures_ready(hold, gen) {
+        measures
+    } else {
+        &[]
+    }
+}
+
 /// Width, height, or a newer layout generation means the selection's lines moved.
 pub fn selection_reflowed(
     saved_w: f64,
@@ -2324,6 +2459,151 @@ mod tests {
             .unwrap()
             .is_empty());
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn box_at(x: f64) -> FreshMeasure {
+        FreshMeasure {
+            id: 7,
+            page: 1,
+            quads: vec![Quad {
+                x,
+                y: 44.0,
+                w: 20.0,
+                h: 16.0,
+            }],
+            text_right: x + 20.0,
+        }
+    }
+
+    fn post_at(doc: u64, gen: u64, view_w: f64, view_h: f64, x: f64) -> LayoutPost {
+        LayoutPost {
+            doc,
+            gen: Some(gen),
+            view_w,
+            view_h,
+            anchors: Some(vec![box_at(x)]),
+        }
+    }
+
+    #[test]
+    fn a_late_post_from_the_old_frame_is_not_published() {
+        let mut gen = 1_u64;
+        let mut hold = 0_u64;
+        let mut frame = LayoutFrame {
+            doc: 1,
+            page_w: 400.0,
+            page_h: 800.0,
+            zoom: 1.0,
+        };
+        let mut measures = vec![box_at(10.0)];
+        if layout_moved(frame.page_w, frame.page_h, frame.zoom, 818.0, 900.0, 1.0) {
+            hold_layout(gen, &mut hold, &mut measures);
+        }
+        frame.page_w = 818.0;
+        frame.page_h = 900.0;
+        let late = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 2, 400.0, 800.0, 12.0),
+        );
+        assert!(!late);
+        assert_eq!(gen, 1);
+        assert!(published_measures(hold, gen, &measures).is_empty());
+        let fresh = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 818.0, 900.0, 18.0),
+        );
+        assert!(fresh);
+        assert_eq!(gen, 3);
+        let shown = published_measures(hold, gen, &measures);
+        assert_eq!(shown.len(), 1);
+        assert!((shown[0].quads[0].x - 18.0).abs() < 0.01);
+        let turned = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 818.0, 900.0, 30.0),
+        );
+        assert!(turned);
+        assert!((published_measures(hold, gen, &measures)[0].quads[0].x - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_late_post_from_the_old_zoom_is_not_published() {
+        let mut gen = 1_u64;
+        let mut hold = 0_u64;
+        let mut frame = LayoutFrame {
+            doc: 1,
+            page_w: 800.0,
+            page_h: 1000.0,
+            zoom: 1.0,
+        };
+        let mut measures = vec![box_at(10.0)];
+        if layout_moved(
+            frame.page_w,
+            frame.page_h,
+            frame.zoom,
+            frame.page_w,
+            frame.page_h,
+            2.0,
+        ) {
+            hold_layout(gen, &mut hold, &mut measures);
+        }
+        frame.zoom = 2.0;
+        assert!(!take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 2, 800.0, 1000.0, 12.0),
+        ));
+        assert!(published_measures(hold, gen, &measures).is_empty());
+        assert!(take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 400.0, 500.0, 18.0),
+        ));
+        assert!((published_measures(hold, gen, &measures)[0].quads[0].x - 18.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_late_post_from_the_previous_document_is_not_published() {
+        let mut gen = 4_u64;
+        let mut hold = 0_u64;
+        let mut doc = 1_u64;
+        let mut measures = vec![box_at(10.0)];
+        claim_document(&mut doc, &mut gen, &mut hold, &mut measures);
+        assert_eq!(doc, 2);
+        let frame = LayoutFrame {
+            doc,
+            page_w: 400.0,
+            page_h: 800.0,
+            zoom: 1.0,
+        };
+        assert!(!take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 5, 400.0, 800.0, 12.0),
+        ));
+        assert!(published_measures(hold, gen, &measures).is_empty());
+        assert!(take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(2, 1, 400.0, 800.0, 18.0),
+        ));
+        assert!((published_measures(hold, gen, &measures)[0].quads[0].x - 18.0).abs() < 0.01);
     }
 
     #[test]

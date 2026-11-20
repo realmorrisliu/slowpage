@@ -777,7 +777,7 @@ const SCRIPT: &str = r#"
   function post(extra) {
     const box = column();
     const fill = columnFill();
-    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, view_h: window.innerHeight, layout_gen: layoutGen, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
+    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, view_h: window.innerHeight, layout_gen: layoutGen, doc: window.spikeDoc|0, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
     body.fill_gap = fill.fill_gap;
     body.line_h = fill.line_h;
     body.content_bottom = fill.content_bottom;
