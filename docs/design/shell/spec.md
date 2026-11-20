@@ -130,7 +130,7 @@ Opening a book from a cover or from **继续阅读** enters Page and panel. The 
 
 Choosing **全部书籍** closes the book and returns to Full. The sidebar is shown, the chat panel is open, and the card shows the library.
 
-Control-Command-I, written ⌃⌘I, the View menu item, and the toolbar button toggle immersive reading while a book is open. They enter it when it is off, and they leave it when it is on. With no book open, all three do nothing.
+Control-Command-I, written ⌃⌘I, the View menu item, and the toolbar button toggle immersive reading while a book is open. They enter it when it is off, and they leave it when it is on. With no book open, all three do nothing. The toolbar button has no seat. `docs/nsh.md` keeps the toolbar off, and checklist item 8 says this row is not an AppKit toolbar, so the shell does not draw that button. The shortcut and the View menu item are the entries the shell wires. Checklist item 1 names an animated transition, and no motion is approved, so the form changes on the existing layout.
 
 Escape leaves immersive reading and does not enter it. Leaving immersive reading returns to Page and panel. The sidebar stays hidden, the annotation margin is shown, and the inset returns to 6 points. When immersive reading is off and a book is open, Escape, Command-[, and the back button leave the book and return to Full. Full is the library card. That check is in `docs/design/reading-interactions.md`.
 

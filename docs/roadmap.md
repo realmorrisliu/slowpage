@@ -20,7 +20,7 @@ Each slice below is a thin cut of that one form.
 
 The checklist document records the rule. It does not build an item, the margin mockup, or S4, and it does not start the alan embed. The document merges on the necessary cloud checks and an independent review. A green run does not pass the ten items. Not executed, and not a blocker for this document: the ten items, their `nsh test` runs, their Mac recordings, the real Apple Books round, and the shell GUI, performance, image, and animation checks. `deny.toml` still ignores RUSTSEC-2026-0543 (chrono 0.4.45 via nsh-base 0.5.1 and pdfium-render 0.9.5). That ignore is not a clearance. The spikes bump to rbook 0.7.13, sha2 0.11.1, resvg 0.50.0, and rusqlite 0.43.0 leaves chrono 0.4.45 in the lock. Those four crates declare rust-version 1.89 or older, and the toolchain is 1.98.1.
 
-- S4. The immersive form. Control-Command-I, the menu item, and the toolbar button enter it. Escape leaves it.
+- S4. The immersive form. Control-Command-I and the View menu item enter it while a book is open, and leave it when it is on. Escape returns to Page and panel with the margin shown and the 6 point inset. The card meets the window edges. The toolbar button is not drawn: the command names it, no seat is approved, and the toolbar stays off. The enter and leave animation is not drawn: checklist item 1 names one, and no motion is approved. Checklist item 3's finger-following animation stays open. S4 is not done.
 - S5. Motion, and the fit of the three forms. Night mode and a theme switch stay out. Light and dark join this slice only if a later decision revises the 2026-11-03 rule.
 
 ## After the shell

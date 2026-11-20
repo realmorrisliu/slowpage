@@ -131,6 +131,7 @@ jobs:
             a_pdf_turn_writes_the_landed_page_and_drops_a_changed_book \
             a_covered_page_turns_on_the_visible_edge \
             live_resize_publishes_from_layout_in_common_modes \
+            immersive_reading_keeps_the_page_across_escape_resize_and_fullscreen \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -185,7 +186,8 @@ jobs:
             a_pdf_slide_keeps_the_departing_page_until_it_lands \
             a_pdf_turn_writes_the_landed_page_and_drops_a_changed_book \
             a_covered_page_turns_on_the_visible_edge \
-            live_resize_publishes_from_layout_in_common_modes
+            live_resize_publishes_from_layout_in_common_modes \
+            immersive_reading_keeps_the_page_across_escape_resize_and_fullscreen
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done
