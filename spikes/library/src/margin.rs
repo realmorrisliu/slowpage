@@ -2607,6 +2607,51 @@ mod tests {
     }
 
     #[test]
+    fn the_first_valid_frame_does_not_keep_a_zero_frame_box() {
+        let mut gen = 2_u64;
+        let mut hold = 0_u64;
+        let mut frame = LayoutFrame {
+            doc: 1,
+            page_w: 0.0,
+            page_h: 0.0,
+            zoom: 0.0,
+        };
+        let mut measures = vec![box_at(12.0)];
+        let first_frame_moved =
+            layout_moved(frame.page_w, frame.page_h, frame.zoom, 818.0, 900.0, 1.0);
+        let zero_accepted = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 2, 0.0, 0.0, 99.0),
+        );
+        let kept_zero_box =
+            !zero_accepted && measures.len() == 1 && (measures[0].quads[0].x - 12.0).abs() < 0.01;
+        if first_frame_moved {
+            hold_layout(gen, &mut hold, &mut measures);
+        }
+        frame.page_w = 818.0;
+        frame.page_h = 900.0;
+        frame.zoom = 1.0;
+        let published_after = published_measures(hold, gen, &measures).len();
+        assert!(
+            !zero_accepted && first_frame_moved && kept_zero_box && published_after == 0,
+            "first_frame_moved={first_frame_moved} zero_accepted={zero_accepted} published_after_record={published_after}"
+        );
+        assert!(take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 818.0, 900.0, 18.0),
+        ));
+        let shown = published_measures(hold, gen, &measures);
+        assert_eq!(shown.len(), 1);
+        assert!((shown[0].quads[0].x - 18.0).abs() < 0.01);
+    }
+
+    #[test]
     fn a_failed_store_keeps_the_draft() {
         let path =
             std::env::temp_dir().join(format!("margin-return-{}-{}", std::process::id(), "fail"));
