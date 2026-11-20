@@ -1002,7 +1002,9 @@ impl WebChapter {
     }
 
     pub fn release_swipe(&self, delta: i32, token: u64) {
-        if delta != 0 {
+        // A blocked ease carries a direction and token 0. It is not a commit.
+        let commit = token != 0;
+        if commit {
             self.inbox.borrow_mut().turn_started = Some(Instant::now());
         }
         let (web, _, href) = self.shown();
@@ -1011,7 +1013,7 @@ impl WebChapter {
             &crate::visit::release_command(delta, token),
             self.inbox.clone(),
             href,
-            delta != 0,
+            commit,
         );
     }
 
@@ -1491,6 +1493,10 @@ pub fn take_epub_wheel(phase: u64, momentum: u64, dx: f64, dy: f64) -> bool {
             let token =
                 SESSION.with(|session| session.borrow().reader.swipe.commit_token().unwrap_or(0));
             web.release_swipe(delta, token);
+            true
+        }
+        crate::visit::WheelMove::Ease(delta) => {
+            web.release_swipe(delta, 0);
             true
         }
         crate::visit::WheelMove::Cancel => {
