@@ -101,8 +101,21 @@ fn reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
 
 /// The shortcut, the View menu, and Escape call this.
 /// An unchanged form does not touch the published flags.
-pub fn apply_immersive(form: &Signal<Form>, reading: bool, leave_only: bool) {
-    form.set(commit_reading_immersive(form.get(), reading, leave_only));
+/// A change asks the stage to redraw, the same way the margin toggle does.
+pub fn apply_immersive(
+    form: &Signal<Form>,
+    reading: bool,
+    leave_only: bool,
+    stage: &ElementRef,
+) -> Option<bool> {
+    let before = form.get();
+    let next = commit_reading_immersive(before, reading, leave_only);
+    form.set(next);
+    let notice = (next != before).then_some(matches!(next, Form::Immersive));
+    if let Some(on) = notice {
+        stage.command("immersive", serde_json::json!(on));
+    }
+    notice
 }
 
 fn commit_reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
@@ -377,6 +390,17 @@ pub fn page_frame(width: f64, height: f64, margin: bool, immersive: bool) -> Rea
     } else {
         reading_frame(width, height, 0.0, 0.0, margin)
     }
+}
+
+/// The card the stage paints and the card a click tests. `shell` is the
+/// reading window. The old bar ignores the immersive flag.
+pub fn stage_card(width: f64, height: f64, shell: bool) -> ReadingFrame {
+    page_frame(
+        width,
+        height,
+        shell && margin_shown(),
+        shell && immersive_on(),
+    )
 }
 
 pub fn card_radius(immersive: bool) -> f64 {

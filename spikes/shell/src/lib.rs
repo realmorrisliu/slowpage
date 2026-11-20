@@ -389,6 +389,7 @@ pub fn SpikeApp() -> impl IntoElement {
             let epoch_slot = epoch.clone();
             let form_pick = form_menu.clone();
             let visit_pick = visit_menu.clone();
+            let stage_immersive = stage.clone();
             set_application_menu(reading_menu(
                 &current,
                 bold,
@@ -409,7 +410,7 @@ pub fn SpikeApp() -> impl IntoElement {
                 immersive,
                 move || {
                     let reading = visit_pick.get().surface == visit::Surface::Reading;
-                    form::apply_immersive(&form_pick, reading, false);
+                    form::apply_immersive(&form_pick, reading, false, &stage_immersive);
                 },
             ));
         }
@@ -500,19 +501,22 @@ pub fn SpikeApp() -> impl IntoElement {
     on_key_with("escape", leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
-        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Escape)
+        let stage = stage.clone();
+        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Escape, &stage)
     });
     on_key_with("mod+[", leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
-        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Back)
+        let stage = stage.clone();
+        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Back, &stage)
     });
     on_key_with(IMMERSIVE_KEY, leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
+        let stage = stage.clone();
         move |_| {
             let reading = visit.get().surface == visit::Surface::Reading;
-            form::apply_immersive(&shell_form, reading, false);
+            form::apply_immersive(&shell_form, reading, false, &stage);
         }
     });
     let import_apple = {
@@ -1079,7 +1083,12 @@ fn commit_visit(slot: &Signal<visit::Visit>, next: visit::Visit) {
     slot.set(next);
 }
 
-fn apply_leave(visit: &Signal<visit::Visit>, form: &Signal<form::Form>, key: visit::LeaveKey) {
+fn apply_leave(
+    visit: &Signal<visit::Visit>,
+    form: &Signal<form::Form>,
+    key: visit::LeaveKey,
+    stage: &ElementRef,
+) -> Option<bool> {
     let immersion = if matches!(form.get(), form::Form::Immersive) {
         visit::Immersion::On
     } else {
@@ -1091,12 +1100,13 @@ fn apply_leave(visit: &Signal<visit::Visit>, form: &Signal<form::Form>, key: vis
             form::restore_shelf_scroll(next.scroll);
             form::show_shelf(form);
             commit_visit(visit, next);
+            None
         }
         visit::KeyEffect::StayOnBook => {
             let reading = visit.get().surface == visit::Surface::Reading;
-            form::apply_immersive(form, reading, true);
+            form::apply_immersive(form, reading, true, stage)
         }
-        visit::KeyEffect::None => {}
+        visit::KeyEffect::None => None,
     }
 }
 
@@ -1207,6 +1217,7 @@ mod launch_tests {
     use super::visit::{self, Surface, WheelOwner};
     use super::{apply_leave, launch_target, LaunchTarget};
     use nsh_core::element::reactive::signal;
+    use nsh_core::prelude::element_ref;
 
     #[test]
     fn a_stored_page_does_not_open_the_shelf_launch() {
@@ -1320,17 +1331,23 @@ mod launch_tests {
         let runtime = nsh_core::element::reactive::Runtime::default();
         let _entered = runtime.enter();
         let (owner, _) = nsh_core::element::reactive::create_root(|| {
+            let stage = element_ref();
             let toggle =
                 |form: &nsh_core::element::reactive::Signal<form::Form>,
                  visit: &nsh_core::element::reactive::Signal<visit::Visit>| {
-                    form::apply_immersive(form, visit.get().surface == Surface::Reading, false);
+                    form::apply_immersive(
+                        form,
+                        visit.get().surface == Surface::Reading,
+                        false,
+                        &stage,
+                    )
                 };
             let shelf = signal(visit::Visit::shelf());
             let form = signal(form::Form::PageAndPanel {
                 sidebar: form::Presence::Hidden,
                 margin: form::Presence::Hidden,
             });
-            toggle(&form, &shelf);
+            assert_eq!(toggle(&form, &shelf), None);
             assert!(matches!(
                 form.get(),
                 form::Form::PageAndPanel {
@@ -1343,7 +1360,7 @@ mod launch_tests {
             assert_eq!(crate::settings::resume_offset(&file, book), 12);
 
             let visit = signal(visit::open_cover(&visit::Visit::shelf(), book, 4));
-            toggle(&form, &visit);
+            assert_eq!(toggle(&form, &visit), Some(true));
             assert_eq!(form.get(), form::Form::Immersive);
             assert!(form::immersive_on());
             assert!(!form::margin_chrome(form.get()));
@@ -1462,8 +1479,8 @@ mod launch_tests {
             ));
             assert_eq!(store.resume().page, 4);
 
-            toggle(&form, &visit);
-            toggle(&form, &visit);
+            assert_eq!(toggle(&form, &visit), Some(true));
+            assert_eq!(toggle(&form, &visit), Some(false));
             assert!(matches!(
                 form.get(),
                 form::Form::PageAndPanel {
@@ -1472,17 +1489,63 @@ mod launch_tests {
                 }
             ));
             assert!(form::margin_shown());
-            toggle(&form, &visit);
+            assert_eq!(toggle(&form, &visit), Some(true));
             assert_eq!(form.get(), form::Form::Immersive);
             assert_eq!(store.resume().page, 4);
             assert_eq!(store.resume().offset, 12);
 
-            apply_leave(&visit, &form, visit::LeaveKey::Back);
+            let hit = |width: f64, height: f64, x_at: f64| {
+                let frame = form::stage_card(width, height, true);
+                let (x, y, w, h) = spike_report::fitted_pdf_page(
+                    frame.card.x,
+                    frame.card.y,
+                    frame.card.w,
+                    frame.card.h,
+                    612.0,
+                    792.0,
+                );
+                let point = x + w * x_at;
+                let immersive = visit::page_edge(point, y + h / 2.0, x, y, w, h);
+                let old = form::reading_frame(width, height, 0.0, 0.0, true);
+                let (ox, oy, ow, oh) = spike_report::fitted_pdf_page(
+                    old.card.x, old.card.y, old.card.w, old.card.h, 612.0, 792.0,
+                );
+                let (ox, spanned) = form::visible_page_span(ox, ow, &old);
+                let stale = visit::page_edge(point, y + h / 2.0, ox, oy, spanned, oh);
+                (frame, immersive, stale)
+            };
+            let (wide, wide_edge, wide_stale) = hit(900.0, 700.0, 0.9);
+            assert_eq!(
+                wide.card,
+                form::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 900.0,
+                    h: 700.0
+                }
+            );
+            assert_eq!(wide_edge, visit::PageEdge::Forward);
+            assert_eq!(wide_stale, visit::PageEdge::None);
+            let (narrow, narrow_edge, narrow_stale) = hit(700.0, 800.0, 0.9);
+            assert_eq!(narrow.card.w, 700.0);
+            assert_eq!(narrow_edge, visit::PageEdge::Forward);
+            assert_eq!(narrow_stale, visit::PageEdge::None);
+            let bare = form::stage_card(900.0, 700.0, false);
+            assert!((bare.card.x - crate::tokens::INSET).abs() < 0.01);
+            assert!((bare.card.w - (900.0 - crate::tokens::INSET * 2.0)).abs() < 0.01);
+
+            assert_eq!(
+                apply_leave(&visit, &form, visit::LeaveKey::Back, &stage),
+                None
+            );
             assert_eq!(form.get(), form::Form::Immersive);
             assert_eq!(visit.get().surface, Surface::Reading);
             assert_eq!(visit.get().page, 4);
 
-            apply_leave(&visit, &form, visit::LeaveKey::Escape);
+            assert_eq!(
+                apply_leave(&visit, &form, visit::LeaveKey::Escape, &stage),
+                Some(false)
+            );
             assert!(matches!(
                 form.get(),
                 form::Form::PageAndPanel {
@@ -1506,11 +1569,14 @@ mod launch_tests {
             assert_eq!(reopened.resume().page, 4);
             assert_eq!(reopened.resume().offset, 12);
 
-            apply_leave(&visit, &form, visit::LeaveKey::Escape);
+            assert_eq!(
+                apply_leave(&visit, &form, visit::LeaveKey::Escape, &stage),
+                None
+            );
             assert_eq!(visit.get().surface, Surface::Library);
             assert_eq!(form.get(), form::launch());
             assert!(!form::immersive_on());
-            toggle(&form, &visit);
+            assert_eq!(toggle(&form, &visit), None);
             assert_eq!(form.get(), form::launch());
             assert_eq!(reopened.resume().page, 4);
 
@@ -1519,7 +1585,7 @@ mod launch_tests {
                 sidebar: form::Presence::Hidden,
                 margin: form::Presence::Shown,
             });
-            toggle(&form, &visit);
+            assert_eq!(toggle(&form, &visit), Some(true));
             assert_eq!(
                 form::step(form.get(), form::Command::ToggleSidebar),
                 form::Form::Immersive
