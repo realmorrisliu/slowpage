@@ -969,11 +969,12 @@ impl State {
             f64::from(pw),
             f64::from(ph),
         );
-        let forward = self
+        let key_forward = self
             .pdf_motion
             .as_ref()
             .map(|motion| motion.slide.forward)
             .unwrap_or(true);
+        let forward = crate::visit::neighbor_on_the_right(shift, key_forward);
         let next_page = incoming.and_then(|next| {
             let (nw, nh) = self.pdf.as_ref()?.sizes.get(next).copied()?;
             if nw < 1.0 || nh < 1.0 {
@@ -1205,6 +1206,9 @@ impl State {
             started: Instant::now(),
             token,
         });
+        if token != 0 {
+            self.pdf_swipe.note_answer(token, "glide");
+        }
         true
     }
 

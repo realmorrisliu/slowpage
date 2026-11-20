@@ -2759,6 +2759,19 @@ fn one_page(delta: i32) -> i32 {
     }
 }
 
+/// Positive shift reveals the next page from the right. A negative shift
+/// reveals the previous page from the left. A resting key slide keeps its
+/// own direction.
+pub fn neighbor_on_the_right(shift: f64, key_forward: bool) -> bool {
+    if shift < 0.0 {
+        false
+    } else if shift > 0.0 {
+        true
+    } else {
+        key_forward
+    }
+}
+
 /// The neighbor a non-zero shift reveals. A blocked end has no neighbor.
 pub fn finger_neighbor(page: u32, pages: u32, shift: f64) -> Option<usize> {
     if shift == 0.0 || pages == 0 {
@@ -4483,6 +4496,13 @@ mod tests {
             PdfWheel::Begin(glide) => {
                 assert_eq!(glide.to, -width);
                 assert_eq!(glide.write, Some(3));
+                match glide_at(&glide, 0, 1) {
+                    GlideAt::Moving { shift, .. } => {
+                        assert!(shift < 0.0);
+                        assert!(!neighbor_on_the_right(shift, true));
+                    }
+                    other => panic!("the previous page did not enter from the left: {other:?}"),
+                }
             }
             other => panic!("a reversal did not turn back: {other:?}"),
         }
@@ -4634,6 +4654,36 @@ mod tests {
             PdfWheel::Begin(glide) => assert_eq!((glide.from, glide.to), (0.0, width)),
             other => panic!("a notch did not use the existing slide: {other:?}"),
         }
+        assert_eq!(store.resume().page, 4);
+        assert!(neighbor_on_the_right(80.0, false));
+
+        let mut queued = Swipe::default();
+        let wheel = |swipe: &mut Swipe, page: u32| {
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: 48.0,
+                    dy: 0.0,
+                },
+                page,
+                75,
+            )
+        };
+        assert_eq!(wheel(&mut queued, 4), WheelMove::Commit(1));
+        let first = queued.commit_token().unwrap();
+        assert_eq!(wheel(&mut queued, 4), WheelMove::Commit(1));
+        let second = queued.commit_token().unwrap();
+        assert!(queued.take_commit_post(first));
+        queued.note_answer(second, "glide");
+        assert_eq!(wheel(&mut queued, 4), WheelMove::Commit(1));
+        let third = queued.commit_token().unwrap();
+        assert_eq!(wheel(&mut queued, 4), WheelMove::Commit(1));
+        let fourth = queued.commit_token().unwrap();
+        assert_ne!(third, fourth);
+        assert!(queued.take_commit_post(second));
+        assert!(!queued.take_commit_post(third));
+        assert_eq!(queued.commit_token(), Some(fourth));
         assert_eq!(store.resume().page, 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
