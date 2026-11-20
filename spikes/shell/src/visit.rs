@@ -2628,6 +2628,78 @@ pub fn step_index(index: usize, count: usize, delta: i64) -> usize {
     }
 }
 
+/// One PDF page turn. `book` is the open generation. A later open makes the
+/// old turn drop instead of writing the new book.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Slide {
+    pub book: u64,
+    pub from: usize,
+    pub to: usize,
+    pub queued: i32,
+    pub forward: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SlideAt {
+    /// `page` is the departing page. `shift` is how far that page has moved.
+    Moving { page: usize, shift: f64 },
+    /// The slide ended on `page`. `queued` is the one turn waiting behind it.
+    Landed { page: usize, queued: i32 },
+    /// This turn belongs to a book that is no longer open.
+    Dropped,
+}
+
+/// The horizontal ease. At 80 ms of the 160 ms turn the page has moved halfway.
+pub fn slide_shift(elapsed_ms: u32, width: f64) -> f64 {
+    let u = (f64::from(elapsed_ms) / 160.0).clamp(0.0, 1.0);
+    let ease = (1.0 - (std::f64::consts::PI * u).cos()) / 2.0;
+    ease * width.max(0.0)
+}
+
+/// Start a turn. The same page, including either end, does not start one.
+pub fn begin_slide(book: u64, count: usize, index: usize, delta: i32) -> Option<Slide> {
+    if delta == 0 || count == 0 {
+        return None;
+    }
+    let index = index.min(count - 1);
+    let next = step_index(index, count, i64::from(delta));
+    if next == index {
+        return None;
+    }
+    Some(Slide {
+        book,
+        from: index,
+        to: next,
+        queued: 0,
+        forward: delta > 0,
+    })
+}
+
+/// One waiting turn. A newer press replaces it.
+pub fn queue_slide(slide: &mut Slide, delta: i32) {
+    if delta == 0 {
+        return;
+    }
+    slide.queued = if delta < 0 { -1 } else { 1 };
+}
+
+pub fn slide_at(slide: &Slide, elapsed_ms: u32, live_book: u64, width: f64) -> SlideAt {
+    if slide.book != live_book {
+        return SlideAt::Dropped;
+    }
+    if elapsed_ms >= 160 {
+        return SlideAt::Landed {
+            page: slide.to,
+            queued: slide.queued,
+        };
+    }
+    let sign = if slide.forward { 1.0 } else { -1.0 };
+    SlideAt::Moving {
+        page: slide.from,
+        shift: sign * slide_shift(elapsed_ms, width),
+    }
+}
+
 pub fn leave_key(key: LeaveKey, focus: Focus, immersion: Immersion, surface: Surface) -> KeyEffect {
     if focus == Focus::Editing {
         return KeyEffect::None;
@@ -3948,5 +4020,40 @@ mod tests {
             None
         ));
         assert_eq!((revealed.page, revealed.sentence), (Some(1), Some(800)));
+    }
+
+    #[test]
+    fn a_pdf_slide_keeps_the_departing_page_until_it_lands() {
+        assert!(begin_slide(1, 3, 2, 1).is_none());
+        assert!(begin_slide(1, 3, 0, -1).is_none());
+        let mut slide = begin_slide(7, 75, 0, 1).unwrap();
+        match slide_at(&slide, 80, 7, 200.0) {
+            SlideAt::Moving { page, shift } => {
+                assert_eq!(page, 0);
+                assert!((shift - 100.0).abs() < 1e-6);
+            }
+            other => panic!("halfway frame moved the page: {other:?}"),
+        }
+        assert_eq!(
+            slide_at(&slide, 159, 7, 200.0),
+            SlideAt::Moving {
+                page: 0,
+                shift: slide_shift(159, 200.0)
+            }
+        );
+        queue_slide(&mut slide, 1);
+        queue_slide(&mut slide, -1);
+        assert_eq!(
+            slide_at(&slide, 160, 7, 200.0),
+            SlideAt::Landed {
+                page: 1,
+                queued: -1
+            }
+        );
+        assert_eq!(slide_at(&slide, 80, 8, 200.0), SlideAt::Dropped);
+        let again = begin_slide(8, 75, 1, -1).unwrap();
+        assert_eq!(again.from, 1);
+        assert_eq!(again.to, 0);
+        assert!(!again.forward);
     }
 }

@@ -3,6 +3,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nsh_core::prelude::*;
 
@@ -207,11 +208,89 @@ pub enum CardBox {
         radius: f64,
         shadow: bool,
     },
-    AwaitingMargin {
-        left: f64,
-        top: f64,
-        bottom: f64,
-    },
+}
+
+/// The annotation column. The chat panel's 320 points are not this width.
+pub const MARGIN_W: f64 = 240.0;
+
+static MARGIN_SHOWN: AtomicBool = AtomicBool::new(true);
+
+pub fn margin_shown() -> bool {
+    MARGIN_SHOWN.load(Ordering::Relaxed)
+}
+
+pub fn publish_margin(shown: bool) {
+    MARGIN_SHOWN.store(shown, Ordering::Relaxed);
+}
+
+/// A shown margin is a column once the window can hold the minimum plus 240.
+pub fn margin_is_column(window_w: f64) -> bool {
+    window_w >= crate::tokens::MIN_WINDOW_W + MARGIN_W
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReadingFrame {
+    pub card: Rect,
+    pub margin: Option<Rect>,
+    pub covers: bool,
+}
+
+/// The page card and, when the margin is shown, the right region.
+/// Below the column width the right region covers the card. The card does not change.
+pub fn reading_frame(width: f64, height: f64, top: f64, sidebar: f64, shown: bool) -> ReadingFrame {
+    let top = top.max(0.0);
+    let sidebar = sidebar.max(0.0);
+    let card = Rect {
+        x: sidebar + INSET,
+        y: top + INSET,
+        w: (width - sidebar - INSET * 2.0).max(1.0),
+        h: (height - top - INSET * 2.0).max(1.0),
+    };
+    if !shown {
+        return ReadingFrame {
+            card,
+            margin: None,
+            covers: false,
+        };
+    }
+    let margin = Rect {
+        x: (width - MARGIN_W).max(0.0),
+        y: 0.0,
+        w: MARGIN_W.min(width.max(0.0)),
+        h: height.max(1.0),
+    };
+    if margin_is_column(width) {
+        ReadingFrame {
+            card: Rect {
+                w: (card.w - MARGIN_W).max(1.0),
+                ..card
+            },
+            margin: Some(margin),
+            covers: false,
+        }
+    } else {
+        ReadingFrame {
+            card,
+            margin: Some(margin),
+            covers: true,
+        }
+    }
+}
+
+pub fn show_reading(form: &Signal<Form>) {
+    let margin = if margin_shown() {
+        Presence::Shown
+    } else {
+        Presence::Hidden
+    };
+    form.set(Form::PageAndPanel {
+        sidebar: Presence::Hidden,
+        margin,
+    });
+}
+
+pub fn show_shelf(form: &Signal<Form>) {
+    form.set(launch());
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,31 +329,28 @@ pub fn place(input: &PlaceIn, library: &LibraryIn) -> Placement {
             (sidebar_w, chat_w, INSET, RADIUS, true, true)
         }
         Form::PageAndPanel { sidebar, margin } => {
-            if margin.shown() {
-                let left = if sidebar.shown() { SIDEBAR_W } else { 0.0 };
-                return Placement {
-                    gray: true,
-                    sidebar: sidebar_rect(sidebar.shown(), window),
-                    card: CardBox::AwaitingMargin {
-                        left: left + INSET,
-                        top: f64::from(row.card_y),
-                        bottom: INSET,
-                    },
-                    chat: None,
-                    chrome: input.chrome,
-                    face: CardFace::Page,
-                    rows: rows(library),
-                    groups: groups(),
-                };
-            }
-            (
-                if sidebar.shown() { SIDEBAR_W } else { 0.0 },
-                0.0,
-                INSET,
-                RADIUS,
-                true,
-                true,
-            )
+            let sidebar_w = if sidebar.shown() { SIDEBAR_W } else { 0.0 };
+            let frame = reading_frame(
+                window.width,
+                window.height,
+                f64::from(input.chrome.top.max(0.0)),
+                sidebar_w,
+                margin.shown(),
+            );
+            return Placement {
+                gray: true,
+                sidebar: sidebar_rect(sidebar.shown(), window),
+                card: CardBox::Placed {
+                    rect: frame.card,
+                    radius: RADIUS,
+                    shadow: true,
+                },
+                chat: None,
+                chrome: input.chrome,
+                face: CardFace::Page,
+                rows: rows(library),
+                groups: groups(),
+            };
         }
         Form::Immersive => (0.0, 0.0, 0.0, 0.0, false, false),
     };
@@ -704,12 +780,8 @@ fn fit_text(
 }
 
 fn write_layout(placed: &Placement, library: &LibraryIn) {
-    let card = match placed.card {
-        CardBox::Placed { rect, .. } => {
-            serde_json::json!([rect.x, rect.y, rect.w, rect.h])
-        }
-        CardBox::AwaitingMargin { .. } => serde_json::json!(null),
-    };
+    let CardBox::Placed { rect, .. } = placed.card;
+    let card = serde_json::json!([rect.x, rect.y, rect.w, rect.h]);
     let sidebar = placed.sidebar.map(|rect| rect.w).unwrap_or(0.0);
     let chat = placed.chat.map(|rect| rect.w).unwrap_or(0.0);
     let body = serde_json::json!({
@@ -1892,6 +1964,82 @@ fn panel_command(current: Form, floating: bool) -> Form {
         },
         _ => step(current, Command::TogglePanel),
     }
+}
+
+pub fn reading_margin(
+    form: Signal<Form>,
+    window: Signal<Window>,
+    chrome: Signal<crate::tokens::ChromeIn>,
+    stage: ElementRef,
+) -> AnyElement {
+    let shown = match form.get() {
+        Form::PageAndPanel { margin, .. } => margin.shown(),
+        _ => margin_shown(),
+    };
+    let size = window.get();
+    let row = chrome.get();
+    let frame = reading_frame(
+        size.width,
+        size.height,
+        f64::from(row.top.max(0.0)),
+        0.0,
+        shown,
+    );
+    // The parent does not take the page's clicks. The margin and the control do.
+    let mut root = view()
+        .absolute()
+        .size_full()
+        .pointer_events(PointerEvents::BoxNone);
+    if let Some(rect) = frame.margin {
+        root = root.child(
+            view()
+                .absolute()
+                .left(px(rect.x as f32))
+                .top(px(rect.y as f32))
+                .w(px(rect.w as f32))
+                .h(px(rect.h as f32))
+                .bg(rgb(FIELD_HEX).to_hsla()),
+        );
+    }
+    root = root.child(margin_toggle(form, row, stage));
+    root.into_element()
+}
+
+fn margin_toggle(
+    form: Signal<Form>,
+    chrome: crate::tokens::ChromeIn,
+    stage: ElementRef,
+) -> AnyElement {
+    let top = chrome.top.max(0.0) + crate::tokens::TOGGLE_TOP;
+    let mut button = view()
+        .absolute()
+        .right(px(crate::tokens::CHAT_PAD_X))
+        .top(px(top))
+        .w(px(crate::tokens::TOGGLE_SIZE))
+        .h(px(crate::tokens::TOGGLE_SIZE))
+        .rounded(px(crate::tokens::TOGGLE_RADIUS))
+        .flex()
+        .items_center()
+        .justify_center()
+        .accessible(true)
+        .label("批注")
+        .on_press(move || {
+            let next = step(form.get(), Command::TogglePanel);
+            let shown = matches!(
+                next,
+                Form::PageAndPanel {
+                    margin: Presence::Shown,
+                    ..
+                }
+            );
+            form.set(next);
+            publish_margin(shown);
+            stage.command("margin", serde_json::json!(shown));
+        });
+    if let Some(path) = crate::icons::glyph_ink("sidebar-right", "6E6E73") {
+        button = button.child(image(path).size(px(crate::tokens::PANEL_ICON)));
+    }
+    button.into_element()
 }
 
 fn panel_toggle_button(
@@ -3436,7 +3584,29 @@ mod tests {
             &empty_library(),
         );
         assert!(placed.chat.is_none());
-        assert!(matches!(placed.card, CardBox::AwaitingMargin { .. }));
+        let CardBox::Placed { rect, .. } = placed.card;
+        assert!((rect.w - (1440.0 - INSET * 2.0 - MARGIN_W)).abs() < 0.1);
+    }
+
+    #[test]
+    fn the_margin_keeps_its_state_across_818_and_the_narrow_page_stays() {
+        let hidden = reading_frame(600.0, 800.0, 0.0, 0.0, false);
+        let shown = reading_frame(600.0, 800.0, 0.0, 0.0, true);
+        assert_eq!(hidden.card, shown.card);
+        assert!(hidden.margin.is_none());
+        assert!(shown.covers);
+        assert!(shown.margin.is_some());
+        let below = reading_frame(817.0, 800.0, 0.0, 0.0, true);
+        let above = reading_frame(818.0, 800.0, 0.0, 0.0, true);
+        assert!(below.covers);
+        assert!(!above.covers);
+        assert!((below.card.w - above.card.w - MARGIN_W).abs() < 0.1);
+        let wide_hidden = reading_frame(1440.0, 900.0, 0.0, 0.0, false);
+        let wide_shown = reading_frame(1440.0, 900.0, 0.0, 0.0, true);
+        assert!(wide_hidden.margin.is_none());
+        assert!((wide_hidden.card.w - wide_shown.card.w - MARGIN_W).abs() < 0.1);
+        assert!(!margin_is_column(817.0));
+        assert!(margin_is_column(818.0));
     }
 
     #[test]

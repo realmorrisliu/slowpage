@@ -113,7 +113,7 @@ One white card fills the area between the sidebar and the right region. The radi
 
 Full is the launch form. The sidebar is shown, the card is the library, and the right region is the chat panel. The chat panel is 320 points wide, open at launch, and sits on the gray base. Page and panel is the reading form. Opening a book hides the sidebar, puts the page in the card, and replaces the chat panel with the annotation margin. Immersive reading shows the card edge to edge.
 
-The annotation margin anchors each highlight, note, and agent response to the line it refers to, aligned with that line, and the notes move with the page. Asking about a selection adds one of those notes. The bottom input and the card rules are the 2026-11-10 hard requirement above. Which margin facts are approved is the annotation margin section of `docs/design/shell/spec.md`. S3 does not start while that section still marks items unset.
+The annotation margin anchors each highlight, note, and agent response to the line it refers to, aligned with that line, and the notes move with the page. Asking about a selection adds one of those notes. The bottom input and the card rules are the 2026-11-10 hard requirement above. Which margin facts are approved is the annotation margin section of `docs/design/shell/spec.md`. The shell draws the approved column, cover, and control. It does not draw note cards. S3 is not done.
 
 The sidebar is the version B text rows, 220 points wide. The icon rail is rejected. The traffic lights and the sidebar toggle share the top row.
 
@@ -129,7 +129,7 @@ Until S1, the spike sizes the whole left bar from the traffic lights. `.cursor/s
 
 The shell sidebar is 220 points wide. The same measurement sizes only the top row's left inset, and those two inset gaps differ by at most 0.5 points.
 
-Until S3, the spike centers the page in the area from the bar's right edge to the window's right edge. The book title stays centered on the full window. The toolbar title sits in the middle of the window, and the toolbar controls stay in a group just after the traffic lights. S3 puts the page in the card. The card fills the area between the sidebar and the right region. S3 waits on the items the annotation margin section of `docs/design/shell/spec.md` still marks unset.
+Until S3, the spike centers the page in the area from the bar's right edge to the window's right edge. The book title stays centered on the full window. The toolbar title sits in the middle of the window, and the toolbar controls stay in a group just after the traffic lights. The shell puts the open book's page in the card. Below 818 points a shown margin covers the right side and the page box stays. At and above 818 a shown margin is the 240 point column and the page fits the card beside it. The gap that lines a card up with its line stays unset in `docs/design/shell/spec.md`.
 
 ## Decision log
 
@@ -159,6 +159,7 @@ Until S3, the spike centers the page in the area from the bar's right edge to th
 - 2026-11-10. The reading-form right panel is the annotation margin in Annotation margin (hard requirement, 2026-11-10). Pull request 14's card, type size, connector, and drawer picks are in `docs/design/shell/spec.md`.
 - 2026-11-11. The app shell lands before any other feature. The layout reference is `docs/design/shell/spec.md`. Full shows the library and the chat panel. Page and panel shows the page and the annotation margin. Immersive reading shows the card edge to edge. Shell slices still do not embed alan.
 - 2026-11-20. Mochi conveyed Morris's choice at 15:49 Asia/Shanghai. The annotation margin section of `docs/design/shell/spec.md` records it. Items that section still marks unset stay unset. S3, S4, and checklist item 10 are not done.
+- 2026-11-20. Mochi conveyed Morris's choice at 16:03 Asia/Shanghai, after the open drawer, the threshold, and the state frames. The same section records it. The shell uses that layout. The margin has no note cards. S3, S4, and checklist item 10 are not done.
 - 2026-11-11. The sidebar is 220 points of text rows. Morris rejected the icon rail.
 - 2026-11-17. Reading-form interactions follow `docs/design/reading-interactions.md`. An item merges on the necessary cloud checks and an independent review. A run that did not happen stays not run, and it is not a pass.
 - 2026-11-20. Morris chose that an EPUB turn blocked at the first or last page of the open chapter eases back to that same column. The ease is at most 24 CSS pixels and at most 6 percent of the column width, over the existing 160 ms turn. The page number and the stored sentence stay. A contents choice, an in-book link, and a return still change chapters. PDF paging is unchanged. Checklist item 3 is not done. The page script has no reduce-motion switch, and this choice does not add one.
