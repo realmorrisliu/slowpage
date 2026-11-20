@@ -2165,6 +2165,7 @@ pub fn reading_margin(
     fault: Signal<String>,
     note: Signal<spike_library::margin::NoteField>,
     book_gen: Signal<u64>,
+    measures: Signal<Vec<spike_library::margin::FreshMeasure>>,
 ) -> AnyElement {
     let _tick = ease.get();
     let _form = form.get();
@@ -2178,9 +2179,17 @@ pub fn reading_margin(
     let mut live_for_page = live_now.clone();
     live_for_page.moving = live_for_page.moving || trip.moving();
     let page_hold = spike_library::margin::reconcile(&hold.get(), &live_for_page);
-    let loaded = load_margin(&page_hold.book, page_hold.page, &page_hold.spine);
+    let loaded = if page_hold.spine.is_empty() {
+        load_margin(&page_hold.book, page_hold.page, "")
+    } else {
+        load_spine(&page_hold.book, &page_hold.spine)
+    };
     let (notes, error) = match loaded {
-        Ok(notes) => (notes, String::new()),
+        Ok(notes) if page_hold.spine.is_empty() => (notes, String::new()),
+        Ok(notes) => (
+            spike_library::margin::epub_shown(&notes, &measures.get(), page_hold.page),
+            String::new(),
+        ),
         Err(err) => (Vec::new(), err),
     };
     if fault.get() != error {
@@ -2365,14 +2374,14 @@ fn margin_fit(page: &Rect, page_w: f64, page_h: f64) -> spike_library::margin::F
 pub(crate) fn commit_margin(
     field: &spike_library::margin::NoteField,
     submitted: &str,
-    live: &spike_library::margin::LiveBook,
+    visible: &spike_library::margin::Visible,
 ) -> spike_library::margin::NoteField {
     let path = crate::settings::support_dir().join("annotations.sqlite");
     spike_library::margin::on_return(
         spike_library::margin::ReturnKind::Key,
         field,
         submitted,
-        live,
+        visible,
         &path,
     )
 }
@@ -2430,6 +2439,8 @@ fn margin_note_input(
         .auto_correct(false)
         .bg(transparent_black())
         .submit_behavior(SubmitBehavior::Submit)
+        // NSH `return_key` returns before submit while `hasMarkedText` is set.
+        // This field's composition flag is the second guard. AppKit was not run.
         .value(move || note.get().body)
         .on_change(move |text: &str| {
             let next = spike_library::margin::note_typed(&write.get(), text);
@@ -2449,9 +2460,14 @@ fn margin_note_input(
             let next = commit_margin(
                 &submit.get(),
                 text,
-                &spike_library::margin::LiveBook {
-                    book: current.book,
-                    gen: submit_gen.get(),
+                &spike_library::margin::Visible {
+                    book: spike_library::margin::LiveBook {
+                        book: current.book,
+                        gen: submit_gen.get(),
+                    },
+                    page: current.page,
+                    spine: current.spine,
+                    moving: current.moving,
                 },
             );
             submit.set(next);
@@ -2470,6 +2486,18 @@ pub(crate) fn load_margin(
     let path = crate::settings::support_dir().join("annotations.sqlite");
     let notes = spike_library::margin::Notes::open(&path)?;
     notes.list(book, page, spine)
+}
+
+pub(crate) fn load_spine(
+    book: &str,
+    spine: &str,
+) -> Result<Vec<spike_library::margin::StoredNote>, String> {
+    if book.is_empty() || spine.is_empty() {
+        return Ok(Vec::new());
+    }
+    let path = crate::settings::support_dir().join("annotations.sqlite");
+    let notes = spike_library::margin::Notes::open(&path)?;
+    notes.list_spine(book, spine)
 }
 
 fn margin_card(
@@ -4815,6 +4843,12 @@ mod tests {
             book: passage.book.clone(),
             gen: passage.gen,
         };
+        let place = spike_library::margin::Visible {
+            book: live.clone(),
+            page: passage.page,
+            spine: passage.spine.clone(),
+            moving: false,
+        };
         let status = serde_json::json!({
             "book_gen": passage.gen,
             "passage": crate::visit::passage_value(Some(&passage)),
@@ -4831,13 +4865,13 @@ mod tests {
                 ..field.clone()
             },
             "别丢",
-            &live,
+            &place,
         );
         assert_eq!(failed.body, "别丢");
         assert!(!failed.notice.is_empty());
         assert!(failed.fingerprint.is_none());
         let _ = std::fs::remove_file(dir.join("annotations.sqlite"));
-        let saved = commit_margin(&failed, "别丢", &live);
+        let saved = commit_margin(&failed, "别丢", &place);
         assert!(saved.body.is_empty());
         assert!(saved.notice.is_empty());
         let loaded = load_margin(&passage.book, 4, &passage.spine).unwrap();
@@ -4855,7 +4889,7 @@ mod tests {
         assert_eq!(cards.len(), 1);
         assert!((cards[0].line.top - 20.0).abs() < 0.01);
         assert!((cards[0].line.text_right - 70.0).abs() < 0.01);
-        let echo = commit_margin(&saved, "别丢", &live);
+        let echo = commit_margin(&saved, "别丢", &place);
         assert!(echo.body.is_empty());
         assert_eq!(
             load_margin(&passage.book, 4, &passage.spine).unwrap().len(),
@@ -4868,9 +4902,14 @@ mod tests {
         });
         let cleared = note_from_status(&saved, &switched, "/books/b.epub");
         assert!(cleared.passage.is_none());
-        let other = spike_library::margin::LiveBook {
-            book: "/books/b.epub".into(),
-            gen: passage.gen + 1,
+        let other = spike_library::margin::Visible {
+            book: spike_library::margin::LiveBook {
+                book: "/books/b.epub".into(),
+                gen: passage.gen + 1,
+            },
+            page: 4,
+            spine: String::new(),
+            moving: false,
         };
         let unselected = commit_margin(
             &spike_library::margin::NoteField {
@@ -4882,6 +4921,32 @@ mod tests {
         );
         assert_eq!(unselected.body, "摘录");
         assert_eq!(unselected.notice, spike_library::margin::NOTICE_SELECT);
+        let mut turning = place.clone();
+        turning.moving = true;
+        let mid_turn = commit_margin(
+            &spike_library::margin::NoteField {
+                body: "别丢".into(),
+                passage: Some(passage.clone()),
+                ..spike_library::margin::NoteField::default()
+            },
+            "别丢",
+            &turning,
+        );
+        assert_eq!(mid_turn.body, "别丢");
+        assert_eq!(mid_turn.notice, spike_library::margin::NOTICE_STALE);
+        let mut left = place.clone();
+        left.page += 1;
+        let departed = commit_margin(
+            &spike_library::margin::NoteField {
+                body: "别丢".into(),
+                passage: Some(passage.clone()),
+                ..spike_library::margin::NoteField::default()
+            },
+            "别丢",
+            &left,
+        );
+        assert_eq!(departed.body, "别丢");
+        assert_eq!(departed.notice, spike_library::margin::NOTICE_STALE);
         let stale = commit_margin(
             &spike_library::margin::NoteField {
                 body: "摘录".into(),

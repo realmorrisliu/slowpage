@@ -438,6 +438,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let margin_fault = signal(String::new());
     let margin_note = signal(spike_library::margin::NoteField::default());
     let margin_gen = signal(0_u64);
+    let margin_measures = signal(Vec::<spike_library::margin::FreshMeasure>::new());
     let shell_chrome = signal(form::chrome_off());
     let bars_row = signal(shell_on);
     let dropped = stage.clone();
@@ -873,6 +874,15 @@ pub fn SpikeApp() -> impl IntoElement {
                                 if margin_gen.get() != gen {
                                     margin_gen.set(gen);
                                 }
+                                let next_measures = crate::visit::fresh_measures(
+                                    event
+                                        .data
+                                        .get("margin_measures")
+                                        .unwrap_or(&serde_json::Value::Null),
+                                );
+                                if margin_measures.get() != next_measures {
+                                    margin_measures.set(next_measures);
+                                }
                                 let updated = form::note_from_status(
                                     &margin_note.get(),
                                     &event.data,
@@ -1024,6 +1034,7 @@ pub fn SpikeApp() -> impl IntoElement {
                 let fault = margin_fault.clone();
                 let note = margin_note.clone();
                 let gen = margin_gen.clone();
+                let measures = margin_measures.clone();
                 move || {
                     form::reading_margin(
                         form.clone(),
@@ -1036,6 +1047,7 @@ pub fn SpikeApp() -> impl IntoElement {
                         fault.clone(),
                         note.clone(),
                         gen.clone(),
+                        measures.clone(),
                     )
                 }
             },

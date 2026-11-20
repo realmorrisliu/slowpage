@@ -163,6 +163,7 @@ pub struct Inbox {
     pub selection_text: String,
     pub selection_rects: Vec<(f64, f64, f64, f64)>,
     pub selection_right: f64,
+    pub measures: Vec<spike_library::margin::FreshMeasure>,
     pub ready: bool,
     pub reload: bool,
     pub did_reload: bool,
@@ -340,12 +341,16 @@ define_class!(
                         return;
                     }
                     let turn = report.token.is_some() || (report.kind == "turn" && !report.chase);
-                    if let (Some(page), Some(pages)) =
+                        if let (Some(page), Some(pages)) =
                         (value["page"].as_u64(), value["pages"].as_u64())
                     {
                         let mut inbox = self.ivars().inbox.borrow_mut();
                         let previous = inbox.pages;
                         inbox.pages = Some((page as usize, pages as usize));
+                        if value.get("anchors").is_some() {
+                            inbox.measures =
+                                crate::visit::fresh_measures(value.get("anchors").unwrap_or(&serde_json::Value::Null));
+                        }
                         inbox.sentence = value["sentence"].as_u64().map(|offset| offset as u32);
                         if !turn {
                             if let Some(missed) = value["missed"].as_bool() {
@@ -1060,6 +1065,17 @@ impl WebChapter {
         );
     }
 
+    pub fn set_anchors(&self, payload: &str) {
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeAnchors={payload};if(window.spikeReport)window.spikeReport();"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
     pub fn set_footer(&self, num: &str, rest: &str) {
         let num = serde_json::to_string(num).unwrap_or_else(|_| "\"\"".to_string());
         let rest = serde_json::to_string(rest).unwrap_or_else(|_| "\"\"".to_string());
@@ -1091,6 +1107,7 @@ impl WebChapter {
             handler.ivars().href.replace(href.clone());
             let mut inbox = slot.inbox.borrow_mut();
             inbox.pages = None;
+            inbox.measures.clear();
             inbox.pinned = None;
             inbox.pin_missed = false;
             inbox.await_nav = true;

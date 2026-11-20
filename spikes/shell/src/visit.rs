@@ -214,6 +214,45 @@ pub fn selection_measure(value: &serde_json::Value) -> Option<SelectionMeasure> 
     })
 }
 
+pub fn fresh_measures(value: &serde_json::Value) -> Vec<spike_library::margin::FreshMeasure> {
+    let Some(rows) = value.as_array() else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let id = row.get("id")?.as_i64()?;
+            let page = row.get("page")?.as_u64()? as u32;
+            if page == 0 {
+                return None;
+            }
+            let text_right = row.get("text_right")?.as_f64()?;
+            if !text_right.is_finite() || text_right <= 0.0 {
+                return None;
+            }
+            let quads = row.get("rects")?.as_array()?.iter().filter_map(|rect| {
+                let x = rect.get("x")?.as_f64()?;
+                let y = rect.get("y")?.as_f64()?;
+                let w = rect.get("w")?.as_f64()?;
+                let h = rect.get("h")?.as_f64()?;
+                if ![x, y, w, h].iter().all(|n| n.is_finite()) || w <= 0.0 || h <= 0.0 {
+                    return None;
+                }
+                Some(spike_library::margin::Quad { x, y, w, h })
+            });
+            let quads: Vec<_> = quads.collect();
+            if quads.is_empty() {
+                return None;
+            }
+            Some(spike_library::margin::FreshMeasure {
+                id,
+                page,
+                quads,
+                text_right,
+            })
+        })
+        .collect()
+}
+
 pub fn passage_value(passage: Option<&spike_library::margin::Passage>) -> serde_json::Value {
     let Some(passage) = passage else {
         return serde_json::Value::Null;
@@ -3168,6 +3207,13 @@ mod tests {
         assert_eq!(script_route(&report), ScriptRoute::Place);
         let bare = serde_json::json!({ "start": 1, "end": 4, "text": "the" });
         assert_eq!(script_route(&bare), ScriptRoute::Selection);
+        let fresh = fresh_measures(&serde_json::json!([
+            { "id": 4, "page": 3, "text_right": 140.0, "rects": [{ "x": 90.0, "y": 40.0, "w": 24.0, "h": 16.0 }] },
+            { "id": 5, "page": 3, "text_right": 10.0 }
+        ]));
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, 4);
+        assert!((fresh[0].quads[0].x - 90.0).abs() < 0.01);
     }
 
     #[test]

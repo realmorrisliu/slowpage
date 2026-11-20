@@ -523,6 +523,24 @@ pub struct LiveBook {
     pub gen: u64,
 }
 
+/// The page the reader is looking at. A note saves only while its passage is this page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Visible {
+    pub book: LiveBook,
+    pub page: u32,
+    pub spine: String,
+    pub moving: bool,
+}
+
+/// Line boxes measured from the current layout. Stored viewport pixels are not these.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FreshMeasure {
+    pub id: i64,
+    pub page: u32,
+    pub quads: Vec<Quad>,
+    pub text_right: f64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NoteField {
     pub body: String,
@@ -674,16 +692,33 @@ impl Notes {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn list_spine(&self, book: &str, spine: &str) -> Result<Vec<StoredNote>, String> {
+        if book.is_empty() || spine.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.collect(
+            "SELECT id, page, spine, start_at, end_at, passage, body, author, quads, text_right
+             FROM notes WHERE book = ?1 AND spine = ?2 ORDER BY id",
+            (book, spine),
+        )
+    }
+
     pub fn list(&self, book: &str, page: u32, spine: &str) -> Result<Vec<StoredNote>, String> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, page, spine, start_at, end_at, passage, body, author, quads, text_right
-                 FROM notes WHERE book = ?1 AND page = ?2 AND spine = ?3 ORDER BY id",
-            )
-            .map_err(|err| err.to_string())?;
+        self.collect(
+            "SELECT id, page, spine, start_at, end_at, passage, body, author, quads, text_right
+             FROM notes WHERE book = ?1 AND page = ?2 AND spine = ?3 ORDER BY id",
+            (book, page, spine),
+        )
+    }
+
+    fn collect<P: rusqlite::Params>(
+        &self,
+        sql: &str,
+        params: P,
+    ) -> Result<Vec<StoredNote>, String> {
+        let mut stmt = self.conn.prepare(sql).map_err(|err| err.to_string())?;
         let rows = stmt
-            .query_map(params![book, page, spine], |row| {
+            .query_map(params, |row| {
                 Ok(StoredNote {
                     id: row.get(0)?,
                     page: row.get(1)?,
@@ -845,7 +880,7 @@ pub fn note_typed(field: &NoteField, text: &str) -> NoteField {
 pub fn prepare_save(
     draft: &str,
     passage: Option<&Passage>,
-    live: &LiveBook,
+    visible: &Visible,
     last: Option<&Fingerprint>,
     composing: bool,
 ) -> Result<NewNote, Unsaved> {
@@ -855,7 +890,12 @@ pub fn prepare_save(
     let Some(passage) = passage else {
         return Err(Unsaved::Unselected);
     };
-    if passage.book != live.book || passage.gen != live.gen {
+    if visible.moving
+        || passage.book != visible.book.book
+        || passage.gen != visible.book.gen
+        || passage.page != visible.page
+        || passage.spine != visible.spine
+    {
         return Err(Unsaved::Stale);
     }
     let body = draft.trim();
@@ -869,6 +909,8 @@ pub fn prepare_save(
         end: passage.end,
         body: body.to_string(),
     };
+    // A second Return with no new keystrokes matches this and does not write.
+    // Typing the same words clears it in `note_typed` and saves again.
     if last.is_some_and(|saved| saved == &fingerprint) {
         return Err(Unsaved::Duplicate);
     }
@@ -890,11 +932,11 @@ pub fn submit_note(
     path: &Path,
     draft: &str,
     passage: Option<&Passage>,
-    live: &LiveBook,
+    visible: &Visible,
     last: Option<&Fingerprint>,
     composing: bool,
 ) -> Submit {
-    let note = match prepare_save(draft, passage, live, last, composing) {
+    let note = match prepare_save(draft, passage, visible, last, composing) {
         Ok(note) => note,
         Err(hold) => return Submit::Kept { hold },
     };
@@ -917,7 +959,7 @@ pub fn on_return(
     kind: ReturnKind,
     field: &NoteField,
     submitted: &str,
-    live: &LiveBook,
+    visible: &Visible,
     path: &Path,
 ) -> NoteField {
     if kind == ReturnKind::Blur {
@@ -928,7 +970,7 @@ pub fn on_return(
         path,
         submitted,
         field.passage.as_ref(),
-        live,
+        visible,
         field.fingerprint.as_ref(),
         field.composing,
     ) {
@@ -952,6 +994,26 @@ pub fn on_return(
         }
     }
     next
+}
+
+/// Cards for one EPUB column. A stored viewport box is not a line in the current layout.
+pub fn epub_shown(notes: &[StoredNote], measures: &[FreshMeasure], page: u32) -> Vec<StoredNote> {
+    if page == 0 {
+        return Vec::new();
+    }
+    notes
+        .iter()
+        .filter_map(|note| {
+            let fresh = measures
+                .iter()
+                .find(|measure| measure.id == note.id && measure.page == page)?;
+            let mut shown = note.clone();
+            shown.page = page;
+            shown.quads = fresh.quads.clone();
+            shown.text_right = fresh.text_right;
+            Some(shown)
+        })
+        .collect()
 }
 
 pub fn cards_from(notes: &[StoredNote], fit: Fit) -> Vec<CardIn> {
@@ -1308,9 +1370,21 @@ mod tests {
         two.text = "乙".into();
         let first = passage_from(one).unwrap();
         let second = passage_from(two).unwrap();
-        let saved = on_return(ReturnKind::Key, &field_of(first, "一"), "一", &live, &file);
+        let saved = on_return(
+            ReturnKind::Key,
+            &field_of(first.clone(), "一"),
+            "一",
+            &shown(&live, &first),
+            &file,
+        );
         assert!(saved.body.is_empty());
-        let saved = on_return(ReturnKind::Key, &field_of(second, "二"), "二", &live, &file);
+        let saved = on_return(
+            ReturnKind::Key,
+            &field_of(second.clone(), "二"),
+            "二",
+            &shown(&live, &second),
+            &file,
+        );
         assert!(saved.body.is_empty());
         let notes = Notes::open(&file).unwrap();
         let chapter = notes.list(&live.book, 1, "ch1.xhtml").unwrap();
@@ -1639,6 +1713,15 @@ mod tests {
         }
     }
 
+    fn shown(live: &LiveBook, passage: &Passage) -> Visible {
+        Visible {
+            book: live.clone(),
+            page: passage.page,
+            spine: passage.spine.clone(),
+            moving: false,
+        }
+    }
+
     fn field_of(passage: Passage, body: &str) -> NoteField {
         NoteField {
             body: body.into(),
@@ -1735,13 +1818,19 @@ mod tests {
             ReturnKind::Key,
             &field_of(passage.clone(), "  一句  "),
             "  一句  ",
-            &live,
+            &shown(&live, &passage),
             &file,
         );
         assert!(saved.body.is_empty());
         assert!(saved.notice.is_empty());
         assert_eq!(saved.fingerprint.as_ref().unwrap().body, "一句");
-        let again = on_return(ReturnKind::Key, &saved, "  一句  ", &live, &file);
+        let again = on_return(
+            ReturnKind::Key,
+            &saved,
+            "  一句  ",
+            &shown(&live, &passage),
+            &file,
+        );
         assert!(again.body.is_empty());
         let notes = Notes::open(&file).unwrap();
         let stored = notes
@@ -1778,7 +1867,13 @@ mod tests {
         assert!((cards[0].line.text_right - 80.0).abs() < 0.01);
         let typed = note_typed(&again, "一句");
         assert!(typed.fingerprint.is_none());
-        let second = on_return(ReturnKind::Key, &typed, "一句", &live, &file);
+        let second = on_return(
+            ReturnKind::Key,
+            &typed,
+            "一句",
+            &shown(&live, &passage),
+            &file,
+        );
         assert!(second.body.is_empty());
         assert_eq!(
             reopened
@@ -1806,7 +1901,7 @@ mod tests {
             ReturnKind::Key,
             &field_of(passage.clone(), "   "),
             "   ",
-            &live,
+            &shown(&live, &passage),
             &file,
         );
         assert_eq!(blank.body, "   ");
@@ -1818,7 +1913,7 @@ mod tests {
                 ..NoteField::default()
             },
             "留下",
-            &live,
+            &shown(&live, &passage),
             &file,
         );
         assert_eq!(missing.body, "留下");
@@ -1831,7 +1926,7 @@ mod tests {
             ReturnKind::Key,
             &field_of(passage.clone(), "摘录"),
             "摘录",
-            &other,
+            &shown(&other, &passage),
             &file,
         );
         assert_eq!(stale.body, "摘录");
@@ -1844,7 +1939,7 @@ mod tests {
             ReturnKind::Key,
             &field_of(passage.clone(), "摘录"),
             "摘录",
-            &reopened,
+            &shown(&reopened, &passage),
             &file,
         );
         assert_eq!(old_token.body, "摘录");
@@ -1852,11 +1947,23 @@ mod tests {
         assert!(take_passage(Some(passage.clone()), &reopened).is_none());
         let mut composing = field_of(passage.clone(), "ni");
         composing.composing = true;
-        let held = on_return(ReturnKind::Key, &composing, "ni", &live, &file);
+        let held = on_return(
+            ReturnKind::Key,
+            &composing,
+            "ni",
+            &shown(&live, &passage),
+            &file,
+        );
         assert_eq!(held.body, "ni");
         assert!(held.notice.is_empty());
         let ready = field_of(passage.clone(), "ni");
-        let blurred = on_return(ReturnKind::Blur, &ready, "ni", &live, &file);
+        let blurred = on_return(
+            ReturnKind::Blur,
+            &ready,
+            "ni",
+            &shown(&live, &passage),
+            &file,
+        );
         assert_eq!(blurred.body, "ni");
         assert!(blurred.notice.is_empty());
         assert!(Notes::open(&file)
@@ -1864,7 +1971,96 @@ mod tests {
             .list(&live.book, passage.page, &passage.spine)
             .unwrap()
             .is_empty());
+        let mut left = shown(&live, &passage);
+        left.page += 1;
+        let departed = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "留下"),
+            "留下",
+            &left,
+            &file,
+        );
+        assert_eq!(departed.body, "留下");
+        assert_eq!(departed.notice, NOTICE_STALE);
+        let mut other_chapter = shown(&live, &passage);
+        other_chapter.spine = "other.xhtml".into();
+        let jumped = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "留下"),
+            "留下",
+            &other_chapter,
+            &file,
+        );
+        assert_eq!(jumped.body, "留下");
+        assert_eq!(jumped.notice, NOTICE_STALE);
+        let mut turning = shown(&live, &passage);
+        turning.moving = true;
+        let kept_page = passage.page;
+        let kept_spine = passage.spine.clone();
+        let mid = on_return(
+            ReturnKind::Key,
+            &field_of(passage, "留下"),
+            "留下",
+            &turning,
+            &file,
+        );
+        assert_eq!(mid.body, "留下");
+        assert_eq!(mid.notice, NOTICE_STALE);
+        assert!(Notes::open(&file)
+            .unwrap()
+            .list(&live.book, kept_page, &kept_spine)
+            .unwrap()
+            .is_empty());
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn an_epub_card_uses_the_fresh_line_and_not_the_stored_box() {
+        let stored = StoredNote {
+            id: 4,
+            page: 1,
+            spine: "ch1.xhtml".into(),
+            start: 0,
+            end: 2,
+            passage: "甲".into(),
+            body: "一".into(),
+            author: "读者".into(),
+            quads: vec![Quad {
+                x: 1.0,
+                y: 1.0,
+                w: 8.0,
+                h: 8.0,
+            }],
+            text_right: 20.0,
+            replies: Vec::new(),
+        };
+        let fresh = FreshMeasure {
+            id: 4,
+            page: 3,
+            quads: vec![Quad {
+                x: 90.0,
+                y: 40.0,
+                w: 24.0,
+                h: 16.0,
+            }],
+            text_right: 140.0,
+        };
+        assert!(epub_shown(
+            std::slice::from_ref(&stored),
+            std::slice::from_ref(&fresh),
+            1
+        )
+        .is_empty());
+        assert!(epub_shown(std::slice::from_ref(&stored), &[], 3).is_empty());
+        let shown = epub_shown(
+            std::slice::from_ref(&stored),
+            std::slice::from_ref(&fresh),
+            3,
+        );
+        assert_eq!(shown.len(), 1);
+        assert!((shown[0].quads[0].x - 90.0).abs() < 0.01);
+        assert!((shown[0].text_right - 140.0).abs() < 0.01);
+        assert_eq!(shown[0].page, 3);
     }
 
     #[test]
@@ -1882,9 +2078,9 @@ mod tests {
         };
         let failed = on_return(
             ReturnKind::Key,
-            &field_of(passage, "别丢"),
+            &field_of(passage.clone(), "别丢"),
             "别丢",
-            &live,
+            &shown(&live, &passage),
             &blocker.join("annotations.sqlite"),
         );
         assert_eq!(failed.body, "别丢");

@@ -104,7 +104,7 @@ define_class!(
                     && chrome.reading.get()
                     && chrome.lights_changed(chrome.lights.get())
                 {
-                    self.ivars().state.borrow().publish();
+                    self.ivars().state.borrow_mut().publish();
                 }
                 if open {
                     let target = unsafe { &*(std::ptr::from_ref(self).cast::<AnyObject>()) };
@@ -395,6 +395,8 @@ struct State {
     anchor_page: Option<u32>,
     note: Option<spike_library::margin::Passage>,
     selection_token: u64,
+    selection_view: f64,
+    anchor_payload: String,
     web: Option<crate::web::WebChapter>,
     web_pages: usize,
     trim_id: String,
@@ -884,6 +886,10 @@ impl State {
                 }
             }
         };
+        if moved && matches!(go, crate::visit::ChapterMove::Chapter { .. }) {
+            self.anchor_payload.clear();
+            self.clear_selection();
+        }
         let _ = (moved, go);
     }
 
@@ -914,48 +920,52 @@ impl State {
     }
 
     fn drag_two_lines(&mut self) {
-        let Some(pdf) = self.pdf.as_mut() else {
-            return;
-        };
-        let text = pdf.text.entry(0).or_insert_with(|| pdf.doc.text(0));
-        let Some(at) = text.plain.find("Recent") else {
-            return;
-        };
-        let start = text.plain[..at].chars().count() as u32;
-        let Some(first) = text.glyphs.iter().find(|glyph| glyph.index == start) else {
-            return;
-        };
-        let y0 = first.quad.y;
-        let mut end = start + 20;
-        let mut seen_next = false;
-        for glyph in text.glyphs.iter().filter(|glyph| glyph.index > start) {
-            if !seen_next && glyph.quad.y > y0 + 6.0 {
-                seen_next = true;
-            }
-            if seen_next {
-                end = glyph.index;
-                if glyph.index > start + 80 && glyph.quad.y > y0 + 6.0 {
-                    break;
+        let dragged = {
+            let Some(pdf) = self.pdf.as_mut() else {
+                return;
+            };
+            let text = pdf.text.entry(0).or_insert_with(|| pdf.doc.text(0));
+            let Some(at) = text.plain.find("Recent") else {
+                return;
+            };
+            let start = text.plain[..at].chars().count() as u32;
+            let Some(first) = text.glyphs.iter().find(|glyph| glyph.index == start) else {
+                return;
+            };
+            let y0 = first.quad.y;
+            let line_y = f64::from(y0);
+            let first_pt = (first.quad.x + 1.0, first.quad.y + first.quad.h * 0.5);
+            let mut end = start + 20;
+            let mut seen_next = false;
+            for glyph in text.glyphs.iter().filter(|glyph| glyph.index > start) {
+                if !seen_next && glyph.quad.y > y0 + 6.0 {
+                    seen_next = true;
+                }
+                if seen_next {
+                    end = glyph.index;
+                    if glyph.index > start + 80 && glyph.quad.y > y0 + 6.0 {
+                        break;
+                    }
                 }
             }
-        }
-        let Some(last) = text.glyphs.iter().find(|glyph| glyph.index == end) else {
-            return;
-        };
-        if let Some(mut anchor) = select_points(
-            text,
-            (first.quad.x + 1.0, first.quad.y + first.quad.h * 0.5),
-            (last.quad.x + 1.0, last.quad.y + last.quad.h * 0.5),
-        ) {
+            let Some(last) = text.glyphs.iter().find(|glyph| glyph.index == end) else {
+                return;
+            };
+            let last_pt = (last.quad.x + 1.0, last.quad.y + last.quad.h * 0.5);
+            let Some(mut anchor) = select_points(text, first_pt, last_pt) else {
+                return;
+            };
             if let Anchor::Pdf { page, .. } = &mut anchor {
                 *page = 0;
             }
-            self.store_pdf_anchor(anchor);
-            let display = self.scale.display() as f64;
-            self.offset = (first.quad.y as f64 * display - 36.0).max(0.0);
-            if let Some(Anchor::Pdf { text, .. }) = &self.anchor {
-                let _ = std::fs::write("/tmp/superreader-spike/drag.txt", text);
-            }
+            (anchor, line_y)
+        };
+        let (anchor, line_y) = dragged;
+        self.store_pdf_anchor(anchor);
+        let display = self.scale.display() as f64;
+        self.offset = (line_y * display - 36.0).max(0.0);
+        if let Some(Anchor::Pdf { text, .. }) = &self.anchor {
+            let _ = std::fs::write("/tmp/superreader-spike/drag.txt", text);
         }
     }
 
@@ -1349,6 +1359,7 @@ impl State {
         };
         self.offset = page_offset(&sizes, page, self.scale);
         self.clear_selection();
+        self.anchor_payload.clear();
         self.pdf = Some(PdfView {
             doc,
             sizes,
@@ -1411,6 +1422,7 @@ impl State {
         self.dismiss_web();
         self.pdf = None;
         self.clear_selection();
+        self.anchor_payload.clear();
         self.book_path = book.path.clone();
         let mut replaced_href = String::new();
         let mut offset = 0u32;
@@ -1930,7 +1942,9 @@ impl State {
         plan.pump
     }
 
-    fn publish(&self) {
+    fn publish(&mut self) {
+        self.expire_selection();
+        self.sync_anchors();
         let mut title_opacity = 1.0_f32;
         let mut footer_opacity = 1.0_f32;
         let mut bars_row = false;
@@ -2082,6 +2096,7 @@ impl State {
             "margin_moving": margin_moving,
             "margin_pw": margin_pw,
             "margin_ph": margin_ph,
+            "margin_measures": self.margin_measures(),
             "empty": self.mode == Mode::Empty,
             "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
             "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
@@ -2094,6 +2109,86 @@ impl State {
         self.context.emit("status", status);
     }
 
+    fn margin_measures(&self) -> Value {
+        let Some(web) = &self.web else {
+            return Value::Array(Vec::new());
+        };
+        Value::Array(
+            web.inbox
+                .borrow()
+                .measures
+                .iter()
+                .map(|measure| {
+                    json!({
+                        "id": measure.id,
+                        "page": measure.page,
+                        "text_right": measure.text_right,
+                        "rects": measure.quads.iter().map(|quad| json!({
+                            "x": quad.x,
+                            "y": quad.y,
+                            "w": quad.w,
+                            "h": quad.h,
+                        })).collect::<Vec<_>>(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn expire_selection(&mut self) {
+        if self.note.is_none() {
+            return;
+        }
+        let (book, spine, page, moving, _, _) = self.margin_frame();
+        let view = self
+            .web
+            .as_ref()
+            .map(|web| web.inbox.borrow().view_w)
+            .unwrap_or(0.0);
+        let reflow = self.mode == Mode::WebKit
+            && self.selection_view > 1.0
+            && view > 1.0
+            && (view - self.selection_view).abs() >= 1.0;
+        let stale = self.note.as_ref().is_some_and(|note| {
+            moving
+                || page == 0
+                || note.book != book
+                || note.spine != spine
+                || note.page != page
+                || reflow
+        });
+        if stale {
+            self.clear_selection();
+        }
+    }
+
+    fn sync_anchors(&mut self) {
+        if self.mode != Mode::WebKit {
+            return;
+        }
+        let Some(web) = self.web.clone() else {
+            return;
+        };
+        let href = web.href();
+        if self.book_path.is_empty() || href.is_empty() || web.inbox.borrow().await_nav {
+            self.anchor_payload.clear();
+            return;
+        }
+        let notes = crate::form::load_spine(&self.book_path, &href).unwrap_or_default();
+        let payload = serde_json::to_string(
+            &notes
+                .iter()
+                .map(|note| json!({ "id": note.id, "start": note.start, "end": note.end }))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string());
+        if payload == self.anchor_payload {
+            return;
+        }
+        self.anchor_payload = payload.clone();
+        web.set_anchors(&payload);
+    }
+
     fn published_passage(&self) -> Option<&spike_library::margin::Passage> {
         self.note
             .as_ref()
@@ -2104,6 +2199,7 @@ impl State {
         self.anchor = None;
         self.anchor_page = None;
         self.note = None;
+        self.selection_view = 0.0;
     }
 
     fn store_pdf_anchor(&mut self, anchor: Anchor) {
@@ -2161,6 +2257,11 @@ impl State {
             Anchor::Epub { .. } => None,
         };
         if let Anchor::Pdf { page, .. } = &anchor {
+            let (_, _, shown, moving, _, _) = self.margin_frame();
+            if moving || crate::visit::margin_page_number(*page as usize) != shown {
+                self.clear_selection();
+                return;
+            }
             self.anchor_page = Some(*page);
         }
         self.anchor = Some(anchor);
@@ -2169,16 +2270,35 @@ impl State {
 
     fn apply_epub(&mut self, selection: EpubSelection) {
         self.selection_token = selection.token;
-        self.anchor = selection.anchor.clone();
-        self.anchor_page = None;
-        let spine = match &selection.anchor {
+        let (book, spine, page, moving, _, _) = self.margin_frame();
+        let href = self.web.as_ref().map(|web| web.href()).unwrap_or_default();
+        let view = self
+            .web
+            .as_ref()
+            .map(|web| web.inbox.borrow().view_w)
+            .unwrap_or(0.0);
+        if !selection.ready
+            || moving
+            || page == 0
+            || selection.page != page
+            || href.is_empty()
+            || spine != href
+            || book != self.book_path
+        {
+            self.clear_selection();
+            return;
+        }
+        let selected = match &selection.anchor {
             Some(Anchor::Epub { spine_href, .. }) => spine_href.clone(),
             _ => String::new(),
         };
-        if !selection.ready {
-            self.note = None;
+        if selected != href {
+            self.clear_selection();
             return;
         }
+        self.anchor = selection.anchor.clone();
+        self.anchor_page = None;
+        self.selection_view = view;
         let rects = selection
             .rects
             .iter()
@@ -2406,6 +2526,8 @@ impl Stage {
             anchor_page: None,
             note: None,
             selection_token: 0,
+            selection_view: 0.0,
+            anchor_payload: String::new(),
             web: None,
             web_pages: 1,
             trim_id: crate::settings::load(&crate::settings::path()),
@@ -2767,7 +2889,7 @@ fn publish_shell_if_resized(state: &Rc<RefCell<State>>, width: f64, height: f64,
         state.borrow().chrome.resize_chrome();
     }
     if effect.publish {
-        state.borrow().publish();
+        state.borrow_mut().publish();
     }
 }
 

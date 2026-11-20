@@ -806,6 +806,20 @@ const SCRIPT: &str = r#"
     body.bold_prefixes = [];
     var probeRoot = document.getElementById("sr-bold-probes");
     if (probeRoot) body.bold_prefixes = Array.from(probeRoot.querySelectorAll(".sr-word-start")).map(function (el) { return el.textContent; });
+    if (Array.isArray(window.spikeAnchors)) {
+      body.anchors = [];
+      window.spikeAnchors.forEach(function (item) {
+        if (!item) return;
+        const measured = measureScalars(item.start, item.end);
+        if (!measured) return;
+        body.anchors.push({
+          id: item.id,
+          page: measured.page,
+          rects: measured.rects,
+          text_right: measured.text_right
+        });
+      });
+    }
     window.webkit.messageHandlers.spike.postMessage(JSON.stringify(body));
   }
   function locate(offset) {
@@ -1298,6 +1312,49 @@ const SCRIPT: &str = r#"
     }
     return { rects: rects, text_right: right };
   }
+  function utf16Until(scalars) {
+    const body = document.body.textContent || "";
+    let seen = 0;
+    let i = 0;
+    const stop = Math.max(0, scalars | 0);
+    while (i < body.length && seen < stop) {
+      const code = body.charCodeAt(i);
+      if (code >= 0xD800 && code <= 0xDBFF && i + 1 < body.length) {
+        const next = body.charCodeAt(i + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) i++;
+      }
+      i++;
+      seen++;
+    }
+    return i;
+  }
+  function locateEnd(offset) {
+    const hit = locate(offset);
+    if (hit) return hit;
+    const body = document.body.textContent || "";
+    if (offset !== body.length) return null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let last = null;
+    while (walker.nextNode()) last = walker.currentNode;
+    if (!last) return null;
+    return { node: last, off: (last.textContent || "").length };
+  }
+  function measureScalars(start, end) {
+    const lo = utf16Until(start);
+    const hi = utf16Until(end);
+    if (hi <= lo) return null;
+    const a = locateEnd(lo);
+    const b = locateEnd(hi);
+    if (!a || !b) return null;
+    const range = document.createRange();
+    range.setStart(a.node, a.off);
+    range.setEnd(b.node, b.off);
+    const boxes = selectionBoxes(range);
+    if (!boxes) return null;
+    return { page: column().page, rects: boxes.rects, text_right: boxes.text_right };
+  }
+  window.spikeMeasure = measureScalars;
+  window.spikeReport = function () { post(); };
   document.addEventListener("mouseup", function () {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
@@ -2514,6 +2571,50 @@ mod tests {
         assert!(!lower.contains("theme"));
         assert!(!lower.contains("spread"));
     }
+
+    /// Node runs the production page script. It is not WebKit.
+    #[test]
+    fn a_node_selection_posts_scalars_and_a_reflow_remeasures() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join(format!("superreader-select-{}.js", std::process::id()));
+        let drive = dir.join(format!(
+            "superreader-select-drive-{}.js",
+            std::process::id()
+        ));
+        std::fs::write(&page, &script).unwrap();
+        std::fs::write(&drive, super::SELECTION_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["posted"]["kind"], "selection");
+        assert_eq!(v["posted"]["start"], 0);
+        assert_eq!(v["posted"]["end"], 4);
+        assert_eq!(v["posted"]["scalar_start"], 0);
+        assert_eq!(v["posted"]["scalar_end"], 3);
+        assert_eq!(v["posted"]["text"], "A😀B");
+        assert_eq!(v["posted"]["page"], 1);
+        assert_eq!(v["first"]["page"], 1);
+        assert!((v["first"]["rects"][0]["x"].as_f64().unwrap() - 10.0).abs() < 0.01);
+        assert!((v["moved"]["rects"][0]["x"].as_f64().unwrap() - 80.0).abs() < 0.01);
+        assert!(v["off"].is_null());
+        assert_eq!(v["report"]["id"], 7);
+        assert!((v["report"]["rects"][0]["x"].as_f64().unwrap() - 12.0).abs() < 0.01);
+        assert_eq!(v["anchor"]["id"], 7);
+        assert!((v["anchor"]["rects"][0]["x"].as_f64().unwrap() - 12.0).abs() < 0.01);
+        assert_eq!(v["anchor"]["page"], 1);
+    }
 }
 
 const RELEASE_GLIDE_DRIVE: &str = r#"
@@ -3442,4 +3543,131 @@ const ease = {
 };
 
 console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease }));
+"#;
+
+/// Node is not WebKit. This drive records the production script's mouseup and remeasure.
+const SELECTION_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+const text = {
+  nodeType: 3,
+  textContent: 'A😀B',
+  nodeValue: 'A😀B',
+  parentElement: null,
+  parentNode: null,
+};
+let box = { left: 10, top: 20, width: 30, height: 16, right: 40, bottom: 36 };
+function rectList() {
+  return { length: 1, 0: box };
+}
+function makeRange() {
+  const range = {
+    startContainer: text,
+    endContainer: text,
+    startOffset: 0,
+    endOffset: 4,
+    setStart(node, off) { range.startContainer = node; range.startOffset = off; },
+    setEnd(node, off) { range.endContainer = node; range.endOffset = off; },
+    selectNodeContents(node) { range.startContainer = node; range.endContainer = node; range.startOffset = 0; range.endOffset = (node.textContent || '').length; },
+    getClientRects: rectList,
+    getBoundingClientRect() { return box; },
+  };
+  return range;
+}
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: '', cssText: '' },
+    textContent: '', innerHTML: '', innerText: '', lang: '',
+    scrollLeft: 0, scrollWidth: 400,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return null; },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left: 0, right: 400, top: 0, bottom: 800, width: 400, height: 800 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+body.textContent = 'A😀B';
+body.innerText = 'A😀B';
+body.nodeValue = 'A😀B';
+text.parentElement = body;
+text.parentNode = body;
+const rootEl = el();
+const footer = el();
+footer.id = 'spike-footer';
+const docListeners = {};
+global.document = {
+  createElement() { return el(); },
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll() { return []; },
+  querySelector() { return null; },
+  getElementById(id) { return id === 'spike-footer' ? footer : null; },
+  createTreeWalker() {
+    let pending = text;
+    const walker = {
+      currentNode: text,
+      nextNode() {
+        if (!pending) return null;
+        walker.currentNode = pending;
+        pending = null;
+        return walker.currentNode;
+      },
+    };
+    return walker;
+  },
+  addEventListener(type, fn) { (docListeners[type] = docListeners[type] || []).push(fn); },
+  caretRangeFromPoint() { return null; },
+  createRange: makeRange,
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+global.getComputedStyle = () => new Proxy({
+  position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px',
+  fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal',
+  display: 'block', visibility: 'visible',
+}, { get(target, key) { return key in target ? target[key] : '0px'; } });
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => 0 };
+global.addEventListener = () => {};
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.getSelection = () => ({
+  rangeCount: 1,
+  isCollapsed: false,
+  getRangeAt() {
+    const range = makeRange();
+    range.startOffset = 0;
+    range.endOffset = 4;
+    return range;
+  },
+});
+window.webkit = { messageHandlers: { spike: { postMessage(raw) { posts.push(JSON.parse(raw)); } } } };
+eval(script);
+for (const fn of raf.splice(0)) fn(0);
+posts.length = 0;
+for (const fn of docListeners.mouseup || []) fn({});
+const posted = posts.find((item) => item.kind === 'selection');
+const first = window.spikeMeasure(0, 3);
+box = { left: 80, top: 20, width: 20, height: 16, right: 100, bottom: 36 };
+const moved = window.spikeMeasure(0, 3);
+box = { left: 400, top: 20, width: 20, height: 16, right: 420, bottom: 36 };
+const off = window.spikeMeasure(0, 3);
+box = { left: 12, top: 24, width: 28, height: 16, right: 40, bottom: 40 };
+window.spikeAnchors = [{ id: 7, start: 0, end: 3 }];
+posts.length = 0;
+window.spikeReport();
+const reported = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+const report = reported ? reported.anchors[0] : null;
+posts.length = 0;
+window.spikeSeekLast();
+const sought = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+const anchor = sought ? sought.anchors[0] : null;
+console.log(JSON.stringify({ posted, first, moved, off, report, anchor }));
 "#;
