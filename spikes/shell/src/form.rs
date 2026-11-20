@@ -4525,12 +4525,11 @@ mod tests {
         assert_eq!(moving.hold.page, 4);
         assert!(moving.hold.scroll.abs() < 0.01);
         assert_eq!(moving.hold.selected, Some(7));
-        let scrolled_hold = spike_library::margin::Hold {
-            scroll: 12.0,
-            ..moving.hold.clone()
-        };
-        let scrolled = settle_margin(
-            &scrolled_hold,
+        let refused = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: 12.0,
+                ..moving.hold.clone()
+            },
             &live,
             false,
             &page,
@@ -4538,9 +4537,12 @@ mod tests {
             900.0,
             &[note.clone()],
         );
-        assert!((scrolled.hold.scroll - 12.0).abs() < 0.01);
-        assert!(scrolled.scene.cards[0].segments.is_empty());
-        let cards = spike_library::margin::cards_from(&[note], moving.fit);
+        assert!(refused.scene.scroll_max.abs() < 0.01);
+        assert!(refused.hold.scroll.abs() < 0.01);
+        assert!((refused.scene.cards[0].y - 60.0).abs() < 0.01);
+        assert!(!refused.scene.cards[0].segments.is_empty());
+        assert!((refused.scene.cards[0].segments[0].x - 190.0).abs() < 0.01);
+        let cards = spike_library::margin::cards_from(&[note.clone()], moving.fit);
         assert!((cards[0].line.top - 60.0).abs() < 0.01);
         assert!((cards[0].line.text_right - 190.0).abs() < 0.01);
         assert!(cards[0].line.highlight_right < cards[0].line.text_right);
@@ -4548,6 +4550,51 @@ mod tests {
         let placed = &moving.scene.cards[0];
         assert!((placed.y - 60.0).abs() < 0.01);
         assert!((placed.segments[0].x - 190.0).abs() < 0.01);
+        let mut tall_note = note.clone();
+        tall_note.passage = "word ".repeat(160);
+        let tall = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: 0.0,
+                ..moving.hold.clone()
+            },
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[tall_note.clone()],
+        );
+        assert!(tall.scene.scroll_max > 0.5);
+        assert!(!tall.scene.cards[0].segments.is_empty());
+        let hidden = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: tall.scene.scroll_max,
+                ..tall.hold.clone()
+            },
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[tall_note.clone()],
+        );
+        assert!((hidden.hold.scroll - tall.scene.scroll_max).abs() < 0.01);
+        assert!(hidden.scene.cards[0].segments.is_empty());
+        let restored = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: 0.0,
+                ..hidden.hold.clone()
+            },
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[tall_note],
+        );
+        assert!(restored.hold.scroll.abs() < 0.01);
+        assert!(!restored.scene.cards[0].segments.is_empty());
+        assert!((restored.scene.cards[0].segments[0].x - 190.0).abs() < 0.01);
         let mut arrived = live.clone();
         arrived.moving = false;
         arrived.page = 5;
