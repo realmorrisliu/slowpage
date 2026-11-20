@@ -554,7 +554,16 @@ pub fn SpikeApp() -> impl IntoElement {
                 return;
             }
             seen.set(seq);
-            receive_file(&visit, &notice, &stage, &title, &variant, &history, &path);
+            receive_file(
+                &visit,
+                &shell_form,
+                &notice,
+                &stage,
+                &title,
+                &variant,
+                &history,
+                &path,
+            );
         }
     });
     listen_for_opens(arrival);
@@ -620,6 +629,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let drop_title = title.clone();
     let drop_variant = variant.clone();
     let drop_history = history.clone();
+    let drop_form = shell_form.clone();
     let root_visit = visit.clone();
     let root_notice = notice.clone();
     view()
@@ -639,6 +649,7 @@ pub fn SpikeApp() -> impl IntoElement {
             {
                 receive_file(
                     &drop_visit,
+                    &drop_form,
                     &drop_notice,
                     &dropped,
                     &drop_title,
@@ -838,6 +849,7 @@ pub fn SpikeApp() -> impl IntoElement {
                         let history = history.clone();
                         let source_menu = source_menu.clone();
                         let visit = visit.clone();
+                        let form_open = shell_form.clone();
                         let title = title.clone();
                         let variant = variant.clone();
                         let notice = notice.clone();
@@ -876,6 +888,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                         next_opened_at(&settings_path),
                                     );
                                     notice_open.set(String::new());
+                                    form::show_reading(&form_open);
                                     let mut current = visit_open.get();
                                     current.scroll = form::shelf_scroll();
                                     commit_visit(
@@ -894,6 +907,26 @@ pub fn SpikeApp() -> impl IntoElement {
                     },
                 )),
         )
+        .child(when(
+            {
+                let visit = visit.clone();
+                move || shell_on && visit.get().surface == visit::Surface::Reading
+            },
+            {
+                let form = shell_form.clone();
+                let window = shell_window.clone();
+                let chrome = shell_chrome.clone();
+                let stage = stage.clone();
+                move || {
+                    form::reading_margin(
+                        form.clone(),
+                        window.clone(),
+                        chrome.clone(),
+                        stage.clone(),
+                    )
+                }
+            },
+        ))
         .child(when(move || show_text.get(), {
             let html = html.clone();
             move || {
@@ -972,6 +1005,7 @@ fn ready_book(path: &str) -> bool {
 
 fn receive_file(
     visit: &Signal<visit::Visit>,
+    form: &Signal<form::Form>,
     notice: &Signal<String>,
     stage: &ElementRef,
     title: &Signal<String>,
@@ -986,6 +1020,7 @@ fn receive_file(
         return;
     };
     notice.set(String::new());
+    form::show_reading(form);
     let mut current = visit.get();
     if current.surface == visit::Surface::Library {
         current.scroll = form::shelf_scroll();
@@ -1034,6 +1069,7 @@ fn apply_leave(visit: &Signal<visit::Visit>, form: &Signal<form::Form>, key: vis
     {
         let next = visit::leave_to_library(&visit.get());
         form::restore_shelf_scroll(next.scroll);
+        form::show_shelf(form);
         commit_visit(visit, next);
     }
 }

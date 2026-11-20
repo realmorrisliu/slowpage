@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use nsh_platform_macos::objc2::rc::{Allocated, Retained};
-use nsh_platform_macos::objc2::runtime::{AnyClass, AnyObject};
+use nsh_platform_macos::objc2::runtime::{AnyClass, AnyObject, Sel};
 use nsh_platform_macos::objc2::{
     define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
@@ -209,8 +209,25 @@ define_class!(
                 crate::form::nudge_shelf(-dy as f32);
                 return;
             }
-            let dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
-            self.ivars().state.borrow_mut().scroll(dy);
+            let precise: bool = unsafe { msg_send![event, hasPreciseScrollingDeltas] };
+            let scroll_x: f64 = unsafe { msg_send![event, scrollingDeltaX] };
+            let scroll_y: f64 = unsafe { msg_send![event, scrollingDeltaY] };
+            let line_x: f64 = unsafe { msg_send![event, deltaX] };
+            let line_y: f64 = unsafe { msg_send![event, deltaY] };
+            let phase = event.phase().0 as u64;
+            let momentum = event.momentumPhase().0 as u64;
+            let mut state = self.ivars().state.borrow_mut();
+            if state.fits_card() && matches!(state.mode, Mode::Pdfium | Mode::Hayro) {
+                state.wheel_pdf(
+                    phase,
+                    momentum,
+                    crate::visit::wheel_points(precise, scroll_x, line_x),
+                    crate::visit::wheel_points(precise, scroll_y, line_y),
+                );
+            } else {
+                state.scroll(scroll_y);
+            }
+            drop(state);
             unsafe { msg_send![self, setNeedsDisplay: true] }
         }
 
@@ -288,6 +305,11 @@ fn point_in(view: &StageView, event: &NSEvent) -> (f64, f64) {
     (point.x, point.y)
 }
 
+struct PdfMotion {
+    slide: crate::visit::Slide,
+    started: Instant,
+}
+
 struct PdfView {
     doc: Document,
     sizes: Vec<(f32, f32)>,
@@ -306,6 +328,9 @@ struct State {
     pdf: Option<PdfView>,
     book_kind: &'static str,
     book_path: String,
+    book_gen: u64,
+    pdf_motion: Option<PdfMotion>,
+    pdf_swipe: crate::visit::Swipe,
     product: bool,
     pdf_saved_page: u32,
     pdf_saved_offset: u32,
@@ -421,6 +446,10 @@ impl State {
         self.bind_swipe();
         self.note_probe(view);
         let bounds: NSRect = unsafe { msg_send![view, bounds] };
+        if bounds.size.width > 1.0 && bounds.size.height > 1.0 {
+            self.stage_w = bounds.size.width;
+            self.stage_h = bounds.size.height;
+        }
         self.paint_shell(bounds);
         if self.mode == Mode::Empty {
             return;
@@ -433,14 +462,7 @@ impl State {
                 && self.play_count < 3
                 && !self.turn_pending;
             if self.chrome_moving() || playing || pump {
-                let _: () = unsafe {
-                    msg_send![
-                        view,
-                        performSelector: sel!(pumpChrome),
-                        withObject: std::ptr::null::<objc2::runtime::AnyObject>(),
-                        afterDelay: 0.016_f64
-                    ]
-                };
+                schedule_chrome_pump(view, 0.016);
             }
             return;
         }
@@ -460,8 +482,12 @@ impl State {
         if self.web.is_some() {
             self.dismiss_web();
         }
-        if self.product {
-            self.draw_fitted_pdf(&ctx, bounds);
+        if self.fits_card() {
+            let pump = self.finish_pdf_motion();
+            self.draw_card_pdf(&ctx, bounds);
+            if pump {
+                schedule_chrome_pump(view, 0.016);
+            }
             return;
         }
         let (origin_x, origin_y) = self.pdf_origin();
@@ -511,10 +537,43 @@ impl State {
     }
 
     fn scroll(&mut self, dy: f64) {
+        if self.fits_card() && matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            return;
+        }
         if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
             self.offset = (self.offset - dy).max(0.0);
             self.note_page();
             self.publish();
+        }
+    }
+
+    fn wheel_pdf(&mut self, phase: u64, momentum: u64, dx: f64, dy: f64) {
+        let pages = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0) as u32;
+        if pages == 0 {
+            return;
+        }
+        let page = self.current_page() as u32 + 1;
+        let effect = self.pdf_swipe.offer(
+            crate::visit::WheelTick {
+                finger: crate::visit::finger_bits(phase),
+                momentum: momentum != 0,
+                dx,
+                dy,
+            },
+            page,
+            pages,
+        );
+        match effect {
+            crate::visit::WheelMove::Commit(delta) => {
+                if let Some(token) = self.pdf_swipe.commit_token() {
+                    let _ = self.pdf_swipe.take_commit_post(token);
+                }
+                self.turn_pdf(i64::from(delta));
+            }
+            crate::visit::WheelMove::Ease(_) | crate::visit::WheelMove::Cancel => {
+                let _ = self.pdf_swipe.cancel_release();
+            }
+            _ => {}
         }
     }
 
@@ -765,24 +824,151 @@ impl State {
         self.publish();
     }
 
-    fn draw_fitted_pdf(&mut self, ctx: &CGContext, bounds: NSRect) {
-        let index = self.current_page();
-        let Some(pdf) = self.pdf.as_mut() else {
-            return;
+    fn fits_card(&self) -> bool {
+        self.product || crate::chrome::shell_on()
+    }
+
+    fn fit_box(&self) -> (f64, f64, f64, f64) {
+        if self.fits_card() {
+            let card = self.card_frame().card;
+            (card.w, card.h, card.x, card.y)
+        } else {
+            crate::chrome::content_box(self.stage_w, self.stage_h)
+        }
+    }
+
+    fn card_frame(&self) -> crate::form::ReadingFrame {
+        let shown = crate::chrome::shell_on() && crate::form::margin_shown();
+        let (width, height) = if self.stage_w > 2.0 {
+            (self.stage_w, self.stage_h)
+        } else {
+            (self.shell_w, self.shell_h)
         };
-        if pdf.sizes.is_empty() {
+        crate::form::reading_frame(width, height, 0.0, 0.0, shown)
+    }
+
+    fn draw_card_pdf(&mut self, ctx: &CGContext, bounds: NSRect) {
+        let _ = bounds;
+        let frame = self.card_frame();
+        let card = frame.card;
+        fill_card(
+            ctx,
+            card.x,
+            card.y,
+            card.w,
+            card.h,
+            crate::tokens::CARD_RADIUS,
+        );
+        let count = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0);
+        if count == 0 {
             return;
         }
-        let index = index.min(pdf.sizes.len() - 1);
-        let (pw, ph) = pdf.sizes[index];
+        let index = self.current_page().min(count - 1);
+        let (from, incoming, shift) = self.pdf_shift(index);
+        let from = from.min(count - 1);
+        let Some((pw, ph)) = self
+            .pdf
+            .as_ref()
+            .and_then(|pdf| pdf.sizes.get(from).copied())
+        else {
+            return;
+        };
         if pw < 1.0 || ph < 1.0 {
             return;
         }
-        let (box_w, box_h, left, top) =
-            crate::chrome::content_box(bounds.size.width, bounds.size.height);
-        let (x, y, dw, dh) =
-            spike_report::fitted_pdf_page(left, top, box_w, box_h, f64::from(pw), f64::from(ph));
+        let (x, y, dw, dh) = spike_report::fitted_pdf_page(
+            card.x,
+            card.y,
+            card.w,
+            card.h,
+            f64::from(pw),
+            f64::from(ph),
+        );
+        let forward = self
+            .pdf_motion
+            .as_ref()
+            .map(|motion| motion.slide.forward)
+            .unwrap_or(true);
+        let next_page = incoming.and_then(|next| {
+            let (nw, nh) = self.pdf.as_ref()?.sizes.get(next).copied()?;
+            if nw < 1.0 || nh < 1.0 {
+                return None;
+            }
+            let fitted = spike_report::fitted_pdf_page(
+                card.x,
+                card.y,
+                card.w,
+                card.h,
+                f64::from(nw),
+                f64::from(nh),
+            );
+            Some((next, fitted))
+        });
+        unsafe {
+            CGContext::save_g_state(Some(ctx));
+            CGContext::clip_to_rect(
+                Some(ctx),
+                objc2_core_foundation::CGRect::new(
+                    objc2_core_foundation::CGPoint::new(card.x, card.y),
+                    objc2_core_foundation::CGSize::new(card.w, card.h),
+                ),
+            );
+        }
+        self.paint_pdf_page(ctx, from, x - shift, y, dw, dh);
+        if let Some((next, (nx, ny, ndw, ndh))) = next_page {
+            let step = if forward { dw } else { -dw };
+            self.paint_pdf_page(ctx, next, nx - shift + step, ny, ndw, ndh);
+        }
+        unsafe { CGContext::restore_g_state(Some(ctx)) };
+    }
+
+    fn pdf_shift(&self, index: usize) -> (usize, Option<usize>, f64) {
+        let Some(motion) = &self.pdf_motion else {
+            return (index, None, 0.0);
+        };
+        let elapsed = motion
+            .started
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u32::MAX)) as u32;
+        match crate::visit::slide_at(&motion.slide, elapsed, self.book_gen, 1.0) {
+            crate::visit::SlideAt::Moving { page, .. } => {
+                let width = self.fitted_width(page);
+                let shift =
+                    match crate::visit::slide_at(&motion.slide, elapsed, self.book_gen, width) {
+                        crate::visit::SlideAt::Moving { shift, .. } => shift,
+                        _ => 0.0,
+                    };
+                (page, Some(motion.slide.to), shift)
+            }
+            _ => (index, None, 0.0),
+        }
+    }
+
+    fn fitted_width(&self, index: usize) -> f64 {
+        let Some(pdf) = self.pdf.as_ref() else {
+            return 0.0;
+        };
+        let Some((pw, ph)) = pdf.sizes.get(index).copied() else {
+            return 0.0;
+        };
+        let card = self.card_frame().card;
+        let (_, _, dw, _) = spike_report::fitted_pdf_page(
+            card.x,
+            card.y,
+            card.w,
+            card.h,
+            f64::from(pw),
+            f64::from(ph),
+        );
+        dw
+    }
+
+    fn paint_pdf_page(&mut self, ctx: &CGContext, index: usize, x: f64, y: f64, dw: f64, dh: f64) {
         let key = (index, scale_key(self.scale));
+        let Some(pdf) = self.pdf.as_mut() else {
+            return;
+        };
         if !pdf.cache.contains_key(&key) {
             if let Ok(image) = pdf.doc.raster(index, self.scale) {
                 pdf.cache.insert(key, image);
@@ -791,16 +977,69 @@ impl State {
         let Some(image) = pdf.cache.get(&key).cloned() else {
             return;
         };
-        let bytes = bitmap::flip_rows(image.width, &image.bytes);
+        let mut shown = image;
+        if self.anchor_page == Some(index as u32) {
+            if let Some(Anchor::Pdf { quads, .. }) = &self.anchor {
+                paint_highlight(&mut shown, quads, self.scale);
+            }
+        }
+        let bytes = bitmap::flip_rows(shown.width, &shown.bytes);
         if let Some(cg) = bitmap::rgba_image(
-            image.width,
-            image.height,
+            shown.width,
+            shown.height,
             bytes,
             matches!(self.mode, Mode::Hayro),
         ) {
             let rect = NSRect::new(NSPoint::new(x, y), NSSize::new(dw, dh));
             unsafe { CGContext::draw_image(Some(ctx), rect, Some(&cg)) };
         }
+    }
+
+    fn finish_pdf_motion(&mut self) -> bool {
+        let Some(motion) = self.pdf_motion.take() else {
+            return false;
+        };
+        let elapsed = motion
+            .started
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u32::MAX)) as u32;
+        match crate::visit::pdf_turn(&motion.slide, elapsed, self.book_gen) {
+            crate::visit::PdfTurn::Dropped => false,
+            crate::visit::PdfTurn::Moving { .. } => {
+                self.pdf_motion = Some(motion);
+                true
+            }
+            crate::visit::PdfTurn::Landed { page, queued } => {
+                if let Some(pdf) = self.pdf.as_ref() {
+                    let sizes = pdf.sizes.clone();
+                    self.offset = page_offset(&sizes, page as u32 + 1, self.scale);
+                }
+                self.note_page();
+                self.publish();
+                if queued != 0 {
+                    self.start_pdf_slide(i64::from(queued));
+                }
+                self.pdf_motion.is_some()
+            }
+        }
+    }
+
+    fn start_pdf_slide(&mut self, delta: i64) -> bool {
+        let Some(pdf) = self.pdf.as_ref() else {
+            return false;
+        };
+        let count = pdf.sizes.len();
+        let Some(slide) =
+            crate::visit::begin_slide(self.book_gen, count, self.current_page(), delta as i32)
+        else {
+            return false;
+        };
+        self.pdf_motion = Some(PdfMotion {
+            slide,
+            started: Instant::now(),
+        });
+        true
     }
 
     fn load_pdf_at(&mut self, engine: PdfEngine, path: &str, page: u32) -> bool {
@@ -848,18 +1087,15 @@ impl State {
     }
 
     fn turn_pdf(&mut self, delta: i64) {
-        let Some(pdf) = self.pdf.as_ref() else {
-            return;
-        };
-        let count = pdf.sizes.len();
-        if count == 0 {
-            return;
+        let _ = self.pdf_swipe.abandon();
+        if let Some(motion) = self.pdf_motion.as_mut() {
+            if motion.slide.book == self.book_gen {
+                crate::visit::queue_slide(&mut motion.slide, delta as i32);
+                return;
+            }
         }
-        let current = self.current_page();
-        let next = crate::visit::step_index(current, count, delta);
-        let sizes = pdf.sizes.clone();
-        self.offset = page_offset(&sizes, next as u32 + 1, self.scale);
-        self.note_page();
+        self.pdf_motion = None;
+        self.start_pdf_slide(delta);
     }
 
     fn open_at(&mut self, view: &StageView, path: &str, page: u32) -> bool {
@@ -877,6 +1113,9 @@ impl State {
             crate::books::BookKind::Epub => spike_library::OpenKind::EpubFile,
         };
         let mut page = page.max(1);
+        self.book_gen = self.book_gen.wrapping_add(1);
+        self.pdf_motion = None;
+        let _ = self.pdf_swipe.abandon();
         self.page_total = None;
         crate::web::set_book(&book.path);
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
@@ -985,15 +1224,18 @@ impl State {
     }
 
     fn note_page(&mut self) {
-        let Some(page) = self.settled_page() else {
+        let Some(shown) = self.settled_page() else {
             return;
         };
-        if self.book_path.is_empty() || page == self.pdf_saved_page {
+        if self.book_path.is_empty() {
             return;
         }
+        let Some((page, offset)) =
+            crate::visit::landed_progress(self.pdf_saved_page, self.pdf_saved_offset, shown)
+        else {
+            return;
+        };
         let path = self.book_path.clone();
-        let (page, offset) =
-            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, 0);
         self.pdf_saved_page = page;
         self.pdf_saved_offset = offset;
         let _ = crate::settings::record_progress(
@@ -1222,7 +1464,7 @@ impl State {
         }
         let item = crate::reading::trim(&self.trim_id);
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
-        let (box_w, box_h, left, top) = crate::chrome::content_box(self.stage_w, self.stage_h);
+        let (box_w, box_h, left, top) = self.fit_box();
         let (ix, iy, w, h) = crate::reading::fit_page(box_w, box_h, rw, rh);
         let x = crate::chrome::reader_page_x(left, ix);
         let y = top + iy;
@@ -1585,18 +1827,31 @@ impl State {
         if pdf.sizes.is_empty() {
             return crate::visit::PageEdge::None;
         }
-        if self.product {
+        if self.fits_card() {
             let index = self.current_page().min(pdf.sizes.len() - 1);
             let (pw, ph) = pdf.sizes[index];
-            let (box_w, box_h, left, top) = crate::chrome::content_box(stage_w, stage_h);
-            let (rx, ry, rw, rh) = spike_report::fitted_pdf_page(
-                left,
-                top,
-                box_w,
-                box_h,
+            let frame = if stage_w > 1.0 {
+                crate::form::reading_frame(
+                    stage_w,
+                    stage_h,
+                    0.0,
+                    0.0,
+                    crate::chrome::shell_on() && crate::form::margin_shown(),
+                )
+            } else {
+                self.card_frame()
+            };
+            let card = frame.card;
+            let (rx, ry, mut rw, rh) = spike_report::fitted_pdf_page(
+                card.x,
+                card.y,
+                card.w,
+                card.h,
                 f64::from(pw),
                 f64::from(ph),
             );
+            let (rx, spanned) = crate::form::visible_page_span(rx, rw, &frame);
+            rw = spanned;
             return crate::visit::page_edge(x, y, rx, ry, rw, rh);
         }
         let display = self.scale.display() as f64;
@@ -1677,6 +1932,9 @@ impl Stage {
             pdf: None,
             book_kind: "pride",
             book_path: String::new(),
+            book_gen: 1,
+            pdf_motion: None,
+            pdf_swipe: crate::visit::Swipe::default(),
             product: false,
             pdf_saved_page: 0,
             pdf_saved_offset: 0,
@@ -1894,6 +2152,21 @@ fn pop_chapters(view: &StageView, titles: &[String], back: bool) {
     }
 }
 
+fn fill_card(ctx: &CGContext, x: f64, y: f64, w: f64, h: f64, radius: f64) {
+    let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
+    unsafe {
+        CGContext::set_rgb_fill_color(Some(ctx), 1.0, 1.0, 1.0, 1.0);
+        CGContext::begin_path(Some(ctx));
+        CGContext::move_to_point(Some(ctx), x + r, y);
+        CGContext::add_arc_to_point(Some(ctx), x + w, y, x + w, y + h, r);
+        CGContext::add_arc_to_point(Some(ctx), x + w, y + h, x, y + h, r);
+        CGContext::add_arc_to_point(Some(ctx), x, y + h, x, y, r);
+        CGContext::add_arc_to_point(Some(ctx), x, y, x + w, y, r);
+        CGContext::close_path(Some(ctx));
+        CGContext::fill_path(Some(ctx));
+    }
+}
+
 fn page_offset(sizes: &[(f32, f32)], page: u32, scale: PixelScale) -> f64 {
     let display = scale.display() as f64;
     let index = page.saturating_sub(1) as usize;
@@ -1942,19 +2215,27 @@ fn layout_target(placed_width: f64, zoom: f64) -> f64 {
 }
 
 /// `performSelector:afterDelay:` waits in the default mode only. Common modes
-/// include the tracking mode a window resize runs in, so the pump still sees
-/// the content view while the mouse is down.
-fn schedule_shell_pump(view: &StageView, delay: f64) {
+/// include the tracking mode a window drag runs in, so a pump still fires
+/// while the mouse is down.
+fn schedule_on_common_modes(view: &StageView, selector: Sel, delay: f64) {
     let modes = NSArray::from_slice(&[unsafe { NSRunLoopCommonModes }]);
     let _: () = unsafe {
         msg_send![
             view,
-            performSelector: sel!(pumpLights),
+            performSelector: selector,
             withObject: std::ptr::null::<AnyObject>(),
             afterDelay: delay,
             inModes: &*modes,
         ]
     };
+}
+
+fn schedule_shell_pump(view: &StageView, delay: f64) {
+    schedule_on_common_modes(view, sel!(pumpLights), delay);
+}
+
+fn schedule_chrome_pump(view: &StageView, delay: f64) {
+    schedule_on_common_modes(view, sel!(pumpChrome), delay);
 }
 
 /// One shared key, so a layout callback and the pump do not publish the same
@@ -2092,10 +2373,42 @@ mod tests {
             pump.contains("NSRunLoopCommonModes") || pump.contains("schedule_shell_pump"),
             "the lights pump has to be scheduled in the tracking run-loop mode"
         );
-        let schedule = source.split("fn schedule_shell_pump").nth(1).unwrap_or("");
+        let schedule = source
+            .split("fn schedule_on_common_modes")
+            .nth(1)
+            .unwrap_or("");
         assert!(
             schedule.contains("NSRunLoopCommonModes"),
-            "schedule_shell_pump must use common modes, not afterDelay alone"
+            "a pump must use common modes, not afterDelay alone"
+        );
+        let draw = source
+            .split("fn draw(")
+            .nth(1)
+            .and_then(|rest| rest.split("fn scroll(").next())
+            .unwrap_or("");
+        assert!(
+            draw.contains("schedule_chrome_pump"),
+            "the PDF slide pump has to run while a window drag is tracking"
+        );
+        assert!(
+            !draw.contains("sel!(pumpChrome)"),
+            "pumpChrome must not wait in the default run-loop mode"
+        );
+        let finish = source
+            .split("fn finish_pdf_motion")
+            .nth(1)
+            .and_then(|rest| rest.split("fn start_pdf_slide").next())
+            .unwrap_or("");
+        assert!(finish.contains("pdf_turn"));
+        assert!(finish.contains("note_page"));
+        let edge = source
+            .split("fn page_edge_at")
+            .nth(1)
+            .and_then(|rest| rest.split("fn locate").next())
+            .unwrap_or("");
+        assert!(
+            edge.contains("visible_page_span"),
+            "a click uses the page that remains beside the cover"
         );
     }
 
