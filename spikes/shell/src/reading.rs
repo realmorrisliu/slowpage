@@ -1186,11 +1186,112 @@ const SCRIPT: &str = r#"
     if (event.buttons !== 1) return;
     if (Math.abs(event.clientX - edgeX) >= __SLOP__ || Math.abs(event.clientY - edgeY) >= __SLOP__) edgeDrag = true;
   }, true);
+  function decodeHref(raw) {
+    try { return decodeURIComponent(String(raw)); } catch (e) { return null; }
+  }
+  function samePath(path, here) {
+    const stack = path.charAt(0) === '/' ? [] : here.split('/').slice(0, -1);
+    const parts = path.split('/');
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i];
+      if (!seg || seg === '.') continue;
+      if (seg === '..') {
+        if (!stack.length) return false;
+        stack.pop();
+        continue;
+      }
+      if (seg.indexOf(':') >= 0) return false;
+      stack.push(seg);
+    }
+    if (!stack.length) return false;
+    const joined = stack[0] === '' ? stack.join('/') : '/' + stack.join('/');
+    const norm = here.charAt(0) === '/' ? here : '/' + here;
+    return joined === norm;
+  }
+  function linkInDocument(raw) {
+    const decoded = decodeHref(raw);
+    if (decoded == null) return false;
+    const hash = decoded.indexOf('#');
+    const path = (hash < 0 ? decoded : decoded.slice(0, hash)).trim();
+    if (!path) return true;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return false;
+    if (path.indexOf('?') >= 0 || path.indexOf('\\') >= 0) return false;
+    const loc = (document.location && document.location.pathname) || '';
+    const here = decodeHref(loc);
+    if (here == null) return false;
+    return samePath(path, here);
+  }
+  function styleHides(node) {
+    let el = node && node.parentElement;
+    while (el) {
+      const style = window.getComputedStyle(el);
+      if (style && (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse')) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+  function liveChar(node) {
+    if (!node || node.nodeType !== 3) return null;
+    if (styleHides(node)) return null;
+    const text = node.textContent || '';
+    for (let i = 0; i < text.length; i++) {
+      if (!text.charAt(i).trim()) continue;
+      if (!liveRect(charRect(node, i))) continue;
+      return offsetOf(node, i);
+    }
+    return null;
+  }
+  function textOffsetIn(el) {
+    if (!el) return null;
+    const inside = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let saw = false;
+    while (inside.nextNode()) {
+      saw = true;
+      const at = liveChar(inside.currentNode);
+      if (at != null) return at;
+    }
+    if (saw) return null;
+    const all = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (all.nextNode()) {
+      const node = all.currentNode;
+      if (!(el.compareDocumentPosition && (el.compareDocumentPosition(node) & 4))) continue;
+      const at = liveChar(node);
+      if (at != null) return at;
+    }
+    return null;
+  }
+  function followLink(event) {
+    const node = event.target;
+    if (!node || !node.closest) return false;
+    const a = node.closest("a[href]");
+    if (!a || !a.getAttribute) return false;
+    const raw = a.getAttribute("href") || "";
+    if (!raw) return false;
+    if (event.preventDefault) event.preventDefault();
+    let measured = false;
+    let offset = 0;
+    const decoded = decodeHref(raw);
+    const lookup = decoded == null ? '' : decoded;
+    const hash = lookup.indexOf('#');
+    const fragment = hash < 0 ? '' : lookup.slice(hash + 1);
+    if (fragment && linkInDocument(raw)) {
+      const at = textOffsetIn(document.getElementById(fragment));
+      if (at == null) {
+        post({ kind: "link", raw: raw, load: pageLoad, measured: false });
+        return true;
+      }
+      measured = true;
+      offset = at;
+    }
+    post({ kind: "link", raw: raw, load: pageLoad, offset: offset, measured: measured });
+    return true;
+  }
   window.addEventListener("click", function (event) {
     if (event.button !== 0) return;
     const dragged = edgeDrag;
     edgeDrag = false;
     if (dragged) return;
+    if (followLink(event)) return;
     const bar = document.getElementById('spike-footer');
     if (bar) {
       const box = bar.getBoundingClientRect();
@@ -1333,6 +1434,12 @@ const SCRIPT: &str = r#"
       else post();
     });
   }
+  if (window.__spikeFragment) {
+    const stored = String(window.__spikeFragment);
+    const id = decodeHref(stored);
+    const at = id == null ? null : textOffsetIn(document.getElementById(id));
+    post({ kind: "link", raw: '#' + (id == null ? stored : id), load: pageLoad, offset: at == null ? 0 : at, measured: at != null, auto: true });
+  }
   requestAnimationFrame(function () { post(); });
 })();
 "#;
@@ -1354,6 +1461,61 @@ mod tests {
         let (left, right) = footer_zh(2, 2);
         assert_eq!(left, "2/2页");
         assert_eq!(right, "本章还剩0页");
+    }
+
+    #[test]
+    fn a_page_link_click_posts_the_character_offset() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join(format!("superreader-link-page-{}.js", std::process::id()));
+        let drive = dir.join(format!("superreader-link-drive-{}.js", std::process::id()));
+        std::fs::write(&page, &script).unwrap();
+        std::fs::write(&drive, LINK_CLICK_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["link"]["kind"], "link");
+        assert_eq!(v["link"]["raw"], "#note");
+        assert_eq!(v["link"]["measured"], true);
+        assert_eq!(v["link"]["offset"], 7);
+        assert_eq!(v["edgeLink"]["raw"], "#note");
+        assert_eq!(v["edgeLink"]["offset"], 7);
+        assert_eq!(v["turns"], serde_json::json!([]));
+        assert_eq!(v["edgeText"], "ok");
+        assert_eq!(v["dragLinks"], 0);
+        assert_eq!(v["otherButton"], 0);
+        assert_eq!(v["cross"]["measured"], serde_json::json!(false));
+        assert_eq!(v["cross"]["raw"], "next.xhtml#fn1");
+        assert_eq!(v["encoded"]["raw"], "#%6Eote");
+        assert_eq!(v["encoded"]["measured"], true);
+        assert_eq!(v["encoded"]["offset"], 7);
+        assert_eq!(v["encodedFile"]["raw"], "chapter%2Exhtml#%6Eote");
+        assert_eq!(v["encodedFile"]["offset"], 7);
+        assert_eq!(v["spaced"]["raw"], "spaced%20name.xhtml#note");
+        assert_eq!(v["spaced"]["measured"], serde_json::json!(false));
+        assert_eq!(v["hid"]["raw"], "#hid");
+        assert_eq!(v["hid"]["measured"], serde_json::json!(false));
+        assert_eq!(v["zero"]["raw"], "#zero");
+        assert_eq!(v["zero"]["measured"], serde_json::json!(false));
+        assert_eq!(v["empty"]["raw"], "#mark");
+        assert_eq!(v["empty"]["measured"], true);
+        assert_eq!(v["empty"]["offset"], 13);
+        assert_eq!(v["far"]["raw"], "#far");
+        assert_eq!(v["far"]["measured"], true);
+        assert_eq!(v["far"]["offset"], 4);
+        assert_eq!(v["vis"]["raw"], "#vis");
+        assert_eq!(v["vis"]["measured"], serde_json::json!(false));
     }
 
     #[test]
@@ -2265,4 +2427,163 @@ const swipes = posts.map(function (p) { return p.swipe; }).filter(function (s) {
 const long = { answers: answers[0], count: swipes.length, first: swipes[0], last: swipes[swipes.length - 1], swipes: swipes, bodies: posts.filter(function (p) { return p.swipe != null; }) };
 
 console.log(JSON.stringify({ second, key, killed, long }));
+"#;
+
+const LINK_CLICK_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = (el) => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal', display: el && el.display || 'block', visibility: el && el.visibility || 'visible' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+const parent = { closest() { return null; } };
+function text(value, hidden) {
+  return { nodeType: 3, textContent: value, nodeValue: value, parentElement: parent, hidden: !!hidden, compareDocumentPosition(){ return 0; } };
+}
+const prefix = text('aaaa', false);
+const noteSpaces = text('   ', false);
+const noteText = text('Target', false);
+const hidSpace = text(' ', true);
+const zeroLetter = text('Z', true);
+const tail = text('Tail', false);
+const farText = text('Page', false);
+const visHost = { parentElement: null, nodeType: 1, visibility: 'hidden', closest(){ return null; } };
+const visText = { nodeType: 3, textContent: 'Hide', nodeValue: 'Hide', parentElement: visHost, compareDocumentPosition(){ return 0; } };
+const note = { id: 'note', compareDocumentPosition(){ return 0; } };
+const hid = { id: 'hid', compareDocumentPosition(){ return 0; } };
+const zero = { id: 'zero', compareDocumentPosition(){ return 0; } };
+const mark = { id: 'mark', compareDocumentPosition(node) { return node === tail ? 4 : 0; } };
+const far = { id: 'far', compareDocumentPosition(){ return 0; } };
+const vis = { id: 'vis', compareDocumentPosition(){ return 0; } };
+function walker(list) {
+  let i = -1;
+  return {
+    currentNode: null,
+    nextNode() {
+      i += 1;
+      this.currentNode = list[i] || null;
+      return i < list.length;
+    },
+  };
+}
+let bodyNodes = [prefix, noteSpaces, noteText];
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  location: { pathname: '/OEBPS/chapter.xhtml' },
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: (id) => (id === 'note' ? note : id === 'hid' ? hid : id === 'zero' ? zero : id === 'mark' ? mark : id === 'far' ? far : id === 'vis' ? vis : null),
+  createTreeWalker: (root) => walker(root === note ? [noteSpaces, noteText] : root === hid ? [hidSpace] : root === zero ? [zeroLetter] : root === mark ? [] : root === far ? [farText] : root === vis ? [visText] : bodyNodes),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){
+    let startNode = null;
+    return {
+      setStart(node){ startNode = node; },
+      setEnd(){},
+      selectNodeContents(node){ startNode = node; },
+      getClientRects(){ return []; },
+      getBoundingClientRect(){
+        if (startNode && startNode.hidden) return { left:0, right:0, top:0, bottom:0, width:0, height:0 };
+        if (startNode && startNode.far) return { left:2000, right:2008, top:-40, bottom:-30, width:8, height:10 };
+        return { left:0, right:8, top:0, bottom:10, width:8, height:10 };
+      },
+    };
+  },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+global.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+eval(script);
+flush();
+posts.length = 0;
+const seen = [];
+const orig = window.spikeTurn;
+window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+function click(x, href, button, drag) {
+  const before = posts.length;
+  const target = { closest(sel) { return href && sel === 'a[href]' ? { getAttribute() { return href; } } : null; } };
+  fire('mousedown', { button: button || 0, clientX: x, clientY: 80 });
+  if (drag) fire('mousemove', { buttons: 1, clientX: x + 20, clientY: 80 });
+  fire('click', { button: button || 0, clientX: x, clientY: 80, target, preventDefault(){} });
+  return posts.slice(before).filter((post) => post.kind === 'link');
+}
+const link = click(200, '#note', 0, false);
+const edgeLink = click(20, '#note', 0, false);
+const turnsAfterLinks = seen.slice();
+seen.length = 0;
+click(390, null, 0, false);
+const edgeText = seen[0] || '';
+const dragBefore = posts.length;
+click(20, '#note', 0, true);
+const dragLinks = posts.slice(dragBefore).filter((post) => post.kind === 'link').length;
+const otherBefore = posts.length;
+click(20, '#note', 2, false);
+const otherButton = posts.slice(otherBefore).filter((post) => post.kind === 'link').length;
+const cross = click(200, 'next.xhtml#fn1', 0, false);
+const encoded = click(200, '#%6Eote', 0, false);
+const encodedFile = click(200, 'chapter%2Exhtml#%6Eote', 0, false);
+const spaced = click(200, 'spaced%20name.xhtml#note', 0, false);
+bodyNodes = [prefix, hidSpace];
+const hidClick = click(200, '#hid', 0, false);
+bodyNodes = [prefix, zeroLetter];
+const zeroClick = click(200, '#zero', 0, false);
+bodyNodes = [prefix, noteSpaces, noteText, tail];
+const empty = click(200, '#mark', 0, false);
+farText.far = true;
+bodyNodes = [prefix, farText];
+const farClick = click(200, '#far', 0, false);
+bodyNodes = [prefix, visText];
+const visClick = click(200, '#vis', 0, false);
+console.log(JSON.stringify({
+  link: link[0] || null,
+  edgeLink: edgeLink[0] || null,
+  turns: turnsAfterLinks,
+  edgeText,
+  dragLinks,
+  otherButton,
+  cross: cross[0] || null,
+  encoded: encoded[0] || null,
+  encodedFile: encodedFile[0] || null,
+  spaced: spaced[0] || null,
+  hid: hidClick[0] || null,
+  zero: zeroClick[0] || null,
+  empty: empty[0] || null,
+  far: farClick[0] || null,
+  vis: visClick[0] || null,
+}));
 "#;
