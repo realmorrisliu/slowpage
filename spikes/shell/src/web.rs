@@ -164,6 +164,9 @@ pub struct Inbox {
     pub selection_rects: Vec<(f64, f64, f64, f64)>,
     pub selection_right: f64,
     pub measures: Vec<spike_library::margin::FreshMeasure>,
+    pub layout_gen: u64,
+    pub layout_hold: u64,
+    pub view_h: f64,
     pub ready: bool,
     pub reload: bool,
     pub did_reload: bool,
@@ -347,9 +350,23 @@ define_class!(
                         let mut inbox = self.ivars().inbox.borrow_mut();
                         let previous = inbox.pages;
                         inbox.pages = Some((page as usize, pages as usize));
-                        if value.get("anchors").is_some() {
-                            inbox.measures =
-                                crate::visit::fresh_measures(value.get("anchors").unwrap_or(&serde_json::Value::Null));
+                        if let Some(view_h) = value["view_h"].as_f64() {
+                            inbox.view_h = view_h;
+                        }
+                        if let Some(gen) = value["layout_gen"].as_u64() {
+                            if spike_library::margin::accept_layout(
+                                inbox.layout_gen,
+                                inbox.layout_hold,
+                                gen,
+                            ) {
+                                inbox.layout_gen = gen;
+                                inbox.measures = value
+                                    .get("anchors")
+                                    .map(crate::visit::fresh_measures)
+                                    .unwrap_or_default();
+                            }
+                        } else if let Some(anchors) = value.get("anchors") {
+                            inbox.measures = crate::visit::fresh_measures(anchors);
                         }
                         inbox.sentence = value["sentence"].as_u64().map(|offset| offset as u32);
                         if !turn {
@@ -1108,6 +1125,9 @@ impl WebChapter {
             let mut inbox = slot.inbox.borrow_mut();
             inbox.pages = None;
             inbox.measures.clear();
+            inbox.layout_gen = 0;
+            inbox.layout_hold = 0;
+            inbox.view_h = 0.0;
             inbox.pinned = None;
             inbox.pin_missed = false;
             inbox.await_nav = true;
@@ -1219,7 +1239,7 @@ impl WebChapter {
 
 fn page_target_js(width: f64) -> String {
     format!(
-        "window.spikePageW={width};if(window.spikeJustify)window.spikeJustify.onPageBoxChanged()"
+        "window.spikePageW={width};if(window.reflowPage)window.reflowPage();else if(window.spikeJustify)window.spikeJustify.onPageBoxChanged()"
     )
 }
 

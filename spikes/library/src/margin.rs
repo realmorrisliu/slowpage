@@ -541,6 +541,37 @@ pub struct FreshMeasure {
     pub text_right: f64,
 }
 
+/// A layout post is current when its generation is newer than the frame we invalidated.
+pub fn accept_layout(current: u64, hold: u64, gen: u64) -> bool {
+    gen > 0 && gen > hold && gen >= current
+}
+
+/// The webview frame moved. Old line boxes belong to the previous frame.
+pub fn frame_changed(prev_w: f64, prev_h: f64, next_w: f64, next_h: f64) -> bool {
+    (prev_w - next_w).abs() >= 1.0 || (prev_h - next_h).abs() >= 1.0
+}
+
+/// Line boxes from a held generation stay hidden until a newer post arrives.
+pub fn measures_ready(hold: u64, gen: u64) -> bool {
+    !(gen > 0 && hold >= gen)
+}
+
+/// Width, height, or a newer layout generation means the selection's lines moved.
+pub fn selection_reflowed(
+    saved_w: f64,
+    saved_h: f64,
+    saved_gen: u64,
+    view_w: f64,
+    view_h: f64,
+    gen: u64,
+    hold: u64,
+) -> bool {
+    (saved_w > 1.0 && view_w > 1.0 && (view_w - saved_w).abs() >= 1.0)
+        || (saved_h > 1.0 && view_h > 1.0 && (view_h - saved_h).abs() >= 1.0)
+        || (saved_gen > 0 && gen > saved_gen)
+        || !measures_ready(hold, gen)
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NoteField {
     pub body: String,
@@ -607,7 +638,10 @@ impl Notes {
             std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
         let conn = Connection::open(path).map_err(|err| err.to_string())?;
-        conn.execute_batch(
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| err.to_string())?;
+        tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY,
                 book TEXT NOT NULL,
@@ -629,6 +663,8 @@ impl Notes {
             CREATE INDEX IF NOT EXISTS notes_book_page ON notes(book, page);",
         )
         .map_err(|err| err.to_string())?;
+        add_spine_if_missing(&tx)?;
+        tx.commit().map_err(|err| err.to_string())?;
         Ok(Self { conn })
     }
 
@@ -754,6 +790,33 @@ impl Notes {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.to_string())
     }
+}
+
+fn add_spine_if_missing(tx: &rusqlite::Transaction<'_>) -> Result<(), String> {
+    let has_spine = {
+        let mut stmt = tx
+            .prepare("PRAGMA table_info(notes)")
+            .map_err(|err| err.to_string())?;
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|err| err.to_string())?;
+        let mut found = false;
+        for name in names {
+            if name.map_err(|err| err.to_string())? == "spine" {
+                found = true;
+            }
+        }
+        found
+    };
+    if has_spine {
+        return Ok(());
+    }
+    tx.execute(
+        "ALTER TABLE notes ADD COLUMN spine TEXT NOT NULL DEFAULT ''",
+        [],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 const LINE_SLACK: f64 = 5.0;
@@ -2061,6 +2124,206 @@ mod tests {
         assert!((shown[0].quads[0].x - 90.0).abs() < 0.01);
         assert!((shown[0].text_right - 140.0).abs() < 0.01);
         assert_eq!(shown[0].page, 3);
+        assert!(!accept_layout(5, 5, 5));
+        assert!(accept_layout(5, 5, 6));
+        assert!(accept_layout(6, 5, 6));
+        assert!(!accept_layout(6, 5, 4));
+        assert!(frame_changed(400.0, 800.0, 400.0, 900.0));
+        assert!(frame_changed(400.0, 800.0, 818.0, 800.0));
+        assert!(!frame_changed(400.0, 800.0, 400.4, 800.2));
+        assert!(!measures_ready(5, 5));
+        assert!(measures_ready(5, 6));
+        assert!(measures_ready(0, 0));
+        assert!(selection_reflowed(400.0, 800.0, 2, 400.0, 900.0, 2, 0));
+        assert!(selection_reflowed(400.0, 800.0, 2, 400.0, 800.0, 3, 0));
+        assert!(selection_reflowed(400.0, 800.0, 2, 400.0, 800.0, 2, 2));
+        assert!(!selection_reflowed(400.0, 800.0, 2, 400.0, 800.0, 2, 0));
+    }
+
+    #[test]
+    fn an_existing_notes_table_gains_spine_and_keeps_its_rows() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("margin-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        // Merged #78 creates `spine`. A table from before that column is what
+        // CREATE TABLE IF NOT EXISTS does not alter. Both must open in place.
+        let older = rusqlite::Connection::open(&file).unwrap();
+        older
+            .execute_batch(
+                "CREATE TABLE notes (
+                    id INTEGER PRIMARY KEY,
+                    book TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    start_at INTEGER NOT NULL,
+                    end_at INTEGER NOT NULL,
+                    passage TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    author TEXT NOT NULL,
+                    quads TEXT NOT NULL,
+                    text_right REAL NOT NULL
+                );
+                CREATE TABLE replies (
+                    id INTEGER PRIMARY KEY,
+                    note_id INTEGER NOT NULL,
+                    body TEXT NOT NULL
+                );
+                INSERT INTO notes (book, page, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/a.pdf', 2, 0, 3, 'ink', '甲', '读者', '[]', 40.0);
+                INSERT INTO replies (note_id, body) VALUES (1, '回');
+                INSERT INTO notes (book, page, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/b.pdf', 2, 0, 3, 'other', '乙', '读者', '[]', 12.0);",
+            )
+            .unwrap();
+        drop(older);
+        let mut perms = std::fs::metadata(&file).unwrap().permissions();
+        perms.set_mode(0o444);
+        std::fs::set_permissions(&file, perms).unwrap();
+        assert!(Notes::open(&file).is_err());
+        let mut perms = std::fs::metadata(&file).unwrap().permissions();
+        perms.set_mode(0o644);
+        std::fs::set_permissions(&file, perms).unwrap();
+        let still = rusqlite::Connection::open(&file).unwrap();
+        let cols: i64 = still
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = 'spine'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cols, 0);
+        let kept: String = still
+            .query_row(
+                "SELECT body FROM notes WHERE book = '/books/a.pdf'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, "甲");
+        drop(still);
+        let notes = Notes::open(&file).unwrap();
+        let again = Notes::open(&file).unwrap();
+        drop(again);
+        let loaded = notes.list("/books/a.pdf", 2, "").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].body, "甲");
+        assert_eq!(loaded[0].passage, "ink");
+        assert_eq!(loaded[0].spine, "");
+        assert_eq!(loaded[0].replies, vec!["回".to_string()]);
+        assert!(notes.list("/books/b.pdf", 2, "").unwrap().len() == 1);
+        assert!(notes
+            .list("/books/a.pdf", 2, "ch.xhtml")
+            .unwrap()
+            .is_empty());
+        let epub = NewNote {
+            book: "/books/a.epub".into(),
+            page: 1,
+            spine: "ch1.xhtml".into(),
+            start: 0,
+            end: 1,
+            passage: "句".into(),
+            body: "丙".into(),
+            author: "读者".into(),
+            quads: Vec::new(),
+            text_right: 8.0,
+        };
+        notes.insert(&epub).unwrap();
+        drop(notes);
+        let reopened = Notes::open(&file).unwrap();
+        assert_eq!(reopened.list("/books/a.pdf", 2, "").unwrap()[0].body, "甲");
+        assert_eq!(
+            reopened.list_spine("/books/a.epub", "ch1.xhtml").unwrap()[0].body,
+            "丙"
+        );
+        assert!(reopened
+            .list("/books/b.pdf", 2, "ch1.xhtml")
+            .unwrap()
+            .is_empty());
+        let shipped = rusqlite::Connection::open(&file).unwrap();
+        shipped
+            .execute(
+                "INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+                 VALUES ('/books/c.pdf', 4, 'kept', 1, 2, 'pdf', '丁', '读者', '[]', 9.0)",
+                [],
+            )
+            .unwrap();
+        drop(shipped);
+        let third = Notes::open(&file).unwrap();
+        let pdf = third.list("/books/c.pdf", 4, "kept").unwrap();
+        assert_eq!(pdf.len(), 1);
+        assert_eq!(pdf[0].spine, "kept");
+        assert_eq!(pdf[0].body, "丁");
+        let shipped_file = path.join("annotations-78.sqlite");
+        let shipped_db = rusqlite::Connection::open(&shipped_file).unwrap();
+        shipped_db
+            .execute_batch(
+                "CREATE TABLE notes (
+                    id INTEGER PRIMARY KEY,
+                    book TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    spine TEXT NOT NULL,
+                    start_at INTEGER NOT NULL,
+                    end_at INTEGER NOT NULL,
+                    passage TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    author TEXT NOT NULL,
+                    quads TEXT NOT NULL,
+                    text_right REAL NOT NULL
+                );
+                CREATE TABLE replies (
+                    id INTEGER PRIMARY KEY,
+                    note_id INTEGER NOT NULL,
+                    body TEXT NOT NULL
+                );
+                CREATE INDEX notes_book_page ON notes(book, page);
+                INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/a.pdf', 2, '', 0, 3, 'ink', '甲', '读者', '[]', 40.0);
+                INSERT INTO replies (note_id, body) VALUES (1, '回');
+                INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/a.epub', 1, 'ch1.xhtml', 0, 1, '句', '丙', '读者', '[]', 8.0);",
+            )
+            .unwrap();
+        drop(shipped_db);
+        let opened = Notes::open(&shipped_file).unwrap();
+        let again = Notes::open(&shipped_file).unwrap();
+        drop(again);
+        let pdf_note = opened.list("/books/a.pdf", 2, "").unwrap();
+        assert_eq!(pdf_note.len(), 1);
+        assert_eq!(pdf_note[0].body, "甲");
+        assert_eq!(pdf_note[0].spine, "");
+        assert_eq!(pdf_note[0].replies, vec!["回".to_string()]);
+        assert_eq!(
+            opened.list_spine("/books/a.epub", "ch1.xhtml").unwrap()[0].body,
+            "丙"
+        );
+        opened
+            .insert(&NewNote {
+                book: "/books/b.pdf".into(),
+                page: 3,
+                spine: String::new(),
+                start: 1,
+                end: 2,
+                passage: "more".into(),
+                body: "戊".into(),
+                author: "读者".into(),
+                quads: Vec::new(),
+                text_right: 4.0,
+            })
+            .unwrap();
+        drop(opened);
+        let reread = Notes::open(&shipped_file).unwrap();
+        assert_eq!(reread.list("/books/a.pdf", 2, "").unwrap()[0].body, "甲");
+        assert_eq!(reread.list("/books/b.pdf", 3, "").unwrap()[0].body, "戊");
+        assert_eq!(
+            reread.list_spine("/books/a.epub", "ch1.xhtml").unwrap()[0].spine,
+            "ch1.xhtml"
+        );
+        assert!(reread
+            .list("/books/a.pdf", 2, "ch1.xhtml")
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[test]

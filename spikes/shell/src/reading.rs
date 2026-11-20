@@ -602,11 +602,15 @@ const SCRIPT: &str = r#"
     document.documentElement.style.setProperty('overflow', 'hidden', 'important');
     document.documentElement.style.setProperty('clip-path', 'inset(0)', 'important');
   }
+  let layoutGen = 1;
   function reflowPage() {
     fitColumns();
     if (flying !== "restore") snapSettled();
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
+    layoutGen++;
+    post();
   }
+  window.reflowPage = reflowPage;
   function ensureFooter() {
     let bar = document.getElementById('spike-footer');
     if (!bar) {
@@ -773,7 +777,7 @@ const SCRIPT: &str = r#"
   function post(extra) {
     const box = column();
     const fill = columnFill();
-    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
+    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, view_h: window.innerHeight, layout_gen: layoutGen, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
     body.fill_gap = fill.fill_gap;
     body.line_h = fill.line_h;
     body.content_bottom = fill.content_bottom;
@@ -1695,8 +1699,9 @@ const SCRIPT: &str = r#"
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(function () {
       measured = false;
+      layoutGen++;
       if (window.spikeJustify) window.spikeJustify.onPageBoxChanged();
-      else post();
+      post();
     });
   }
   if (window.__spikeFragment) {
@@ -2609,11 +2614,18 @@ mod tests {
         assert!((v["first"]["rects"][0]["x"].as_f64().unwrap() - 10.0).abs() < 0.01);
         assert!((v["moved"]["rects"][0]["x"].as_f64().unwrap() - 80.0).abs() < 0.01);
         assert!(v["off"].is_null());
-        assert_eq!(v["report"]["id"], 7);
-        assert!((v["report"]["rects"][0]["x"].as_f64().unwrap() - 12.0).abs() < 0.01);
-        assert_eq!(v["anchor"]["id"], 7);
-        assert!((v["anchor"]["rects"][0]["x"].as_f64().unwrap() - 12.0).abs() < 0.01);
-        assert_eq!(v["anchor"]["page"], 1);
+        assert!(v["tall"]["gen"].as_u64().unwrap() > 1);
+        assert_eq!(v["tall"]["view_w"], 400.0);
+        assert_eq!(v["tall"]["view_h"], 900.0);
+        assert_eq!(v["tall"]["anchor"]["id"], 7);
+        assert!((v["tall"]["anchor"]["rects"][0]["y"].as_f64().unwrap() - 44.0).abs() < 0.01);
+        assert!(v["font"]["gen"].as_u64().unwrap() > v["tall"]["gen"].as_u64().unwrap());
+        assert_eq!(v["font"]["view_w"], 400.0);
+        assert_eq!(v["font"]["view_h"], 900.0);
+        assert!((v["font"]["anchor"]["rects"][0]["y"].as_f64().unwrap() - 44.0).abs() < 0.01);
+        assert!(v["wide"]["gen"].as_u64().unwrap() > v["font"]["gen"].as_u64().unwrap());
+        assert_eq!(v["wide"]["view_w"], 818.0);
+        assert!((v["wide"]["anchor"]["rects"][0]["x"].as_f64().unwrap() - 18.0).abs() < 0.01);
     }
 }
 
@@ -3626,6 +3638,8 @@ global.document = {
   caretRangeFromPoint() { return null; },
   createRange: makeRange,
 };
+let releaseFonts;
+global.document.fonts = { ready: new Promise((resolve) => { releaseFonts = resolve; }) };
 global.NodeFilter = { SHOW_TEXT: 4 };
 global.getComputedStyle = () => new Proxy({
   position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px',
@@ -3634,7 +3648,8 @@ global.getComputedStyle = () => new Proxy({
 }, { get(target, key) { return key in target ? target[key] : '0px'; } });
 global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
 global.performance = { now: () => 0 };
-global.addEventListener = () => {};
+const winListeners = {};
+global.addEventListener = (type, fn) => { (winListeners[type] = winListeners[type] || []).push(fn); };
 global.window = global;
 window.innerWidth = 400;
 window.innerHeight = 800;
@@ -3650,24 +3665,35 @@ window.getSelection = () => ({
 });
 window.webkit = { messageHandlers: { spike: { postMessage(raw) { posts.push(JSON.parse(raw)); } } } };
 eval(script);
-for (const fn of raf.splice(0)) fn(0);
-posts.length = 0;
-for (const fn of docListeners.mouseup || []) fn({});
-const posted = posts.find((item) => item.kind === 'selection');
-const first = window.spikeMeasure(0, 3);
-box = { left: 80, top: 20, width: 20, height: 16, right: 100, bottom: 36 };
-const moved = window.spikeMeasure(0, 3);
-box = { left: 400, top: 20, width: 20, height: 16, right: 420, bottom: 36 };
-const off = window.spikeMeasure(0, 3);
-box = { left: 12, top: 24, width: 28, height: 16, right: 40, bottom: 40 };
-window.spikeAnchors = [{ id: 7, start: 0, end: 3 }];
-posts.length = 0;
-window.spikeReport();
-const reported = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
-const report = reported ? reported.anchors[0] : null;
-posts.length = 0;
-window.spikeSeekLast();
-const sought = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
-const anchor = sought ? sought.anchors[0] : null;
-console.log(JSON.stringify({ posted, first, moved, off, report, anchor }));
+window.spikeReport = function () { throw new Error("reflow must post from reflowPage"); };
+(async () => {
+  for (const fn of raf.splice(0)) fn(0);
+  posts.length = 0;
+  for (const fn of docListeners.mouseup || []) fn({});
+  const posted = posts.find((item) => item.kind === 'selection');
+  const first = window.spikeMeasure(0, 3);
+  box = { left: 80, top: 20, width: 20, height: 16, right: 100, bottom: 36 };
+  const moved = window.spikeMeasure(0, 3);
+  box = { left: 400, top: 20, width: 20, height: 16, right: 420, bottom: 36 };
+  const off = window.spikeMeasure(0, 3);
+  if (!(winListeners.resize || []).length) throw new Error("resize listener missing");
+  if (winListeners.resize[0] !== window.reflowPage) throw new Error("resize is not reflowPage");
+  window.spikeAnchors = [{ id: 7, start: 0, end: 3 }];
+  box = { left: 12, top: 44, width: 28, height: 18, right: 40, bottom: 62 };
+  window.innerHeight = 900;
+  posts.length = 0;
+  for (const fn of winListeners.resize) fn({});
+  const tallPost = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+  posts.length = 0;
+  releaseFonts();
+  await new Promise((resolve) => setImmediate(resolve));
+  const fontPost = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+  box = { left: 18, top: 44, width: 22, height: 18, right: 40, bottom: 62 };
+  window.innerWidth = 818;
+  posts.length = 0;
+  window.reflowPage();
+  const widePost = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+  const pack = (item) => item ? { gen: item.layout_gen, view_w: item.view_w, view_h: item.view_h, anchor: item.anchors[0] } : null;
+  console.log(JSON.stringify({ posted, first, moved, off, tall: pack(tallPost), font: pack(fontPost), wide: pack(widePost) }));
+})().catch((err) => { console.error(err); process.exit(1); });
 "#;

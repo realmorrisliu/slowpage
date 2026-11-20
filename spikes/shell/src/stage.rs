@@ -396,6 +396,8 @@ struct State {
     note: Option<spike_library::margin::Passage>,
     selection_token: u64,
     selection_view: f64,
+    selection_view_h: f64,
+    selection_gen: u64,
     anchor_payload: String,
     web: Option<crate::web::WebChapter>,
     web_pages: usize,
@@ -1914,10 +1916,14 @@ impl State {
                 let Some(web) = &self.web else {
                     return plan.pump;
                 };
-                web.place_at(x, y, w, h, zoom);
-                web.set_page_target(layout_target(w, zoom));
                 {
                     let mut inbox = web.inbox.borrow_mut();
+                    if inbox.layout_gen > 0
+                        && spike_library::margin::frame_changed(inbox.page_w, inbox.page_h, w, h)
+                    {
+                        inbox.layout_hold = inbox.layout_gen;
+                        inbox.measures.clear();
+                    }
                     inbox.page_w = w;
                     inbox.page_h = h;
                     inbox.page_x = x;
@@ -1926,6 +1932,8 @@ impl State {
                     inbox.trim = self.trim_id.clone();
                     inbox.page_source = source.to_string();
                 }
+                web.place_at(x, y, w, h, zoom);
+                web.set_page_target(layout_target(w, zoom));
                 let href = web.href();
                 crate::web::write_inbox(&web.inbox.borrow(), &href);
                 if let Some(offset) = reveal {
@@ -2113,9 +2121,12 @@ impl State {
         let Some(web) = &self.web else {
             return Value::Array(Vec::new());
         };
+        let inbox = web.inbox.borrow();
+        if !spike_library::margin::measures_ready(inbox.layout_hold, inbox.layout_gen) {
+            return Value::Array(Vec::new());
+        }
         Value::Array(
-            web.inbox
-                .borrow()
+            inbox
                 .measures
                 .iter()
                 .map(|measure| {
@@ -2140,15 +2151,29 @@ impl State {
             return;
         }
         let (book, spine, page, moving, _, _) = self.margin_frame();
-        let view = self
+        let (view, view_h, gen, hold) = self
             .web
             .as_ref()
-            .map(|web| web.inbox.borrow().view_w)
-            .unwrap_or(0.0);
+            .map(|web| {
+                let inbox = web.inbox.borrow();
+                (
+                    inbox.view_w,
+                    inbox.view_h,
+                    inbox.layout_gen,
+                    inbox.layout_hold,
+                )
+            })
+            .unwrap_or((0.0, 0.0, 0, 0));
         let reflow = self.mode == Mode::WebKit
-            && self.selection_view > 1.0
-            && view > 1.0
-            && (view - self.selection_view).abs() >= 1.0;
+            && spike_library::margin::selection_reflowed(
+                self.selection_view,
+                self.selection_view_h,
+                self.selection_gen,
+                view,
+                view_h,
+                gen,
+                hold,
+            );
         let stale = self.note.as_ref().is_some_and(|note| {
             moving
                 || page == 0
@@ -2200,6 +2225,8 @@ impl State {
         self.anchor_page = None;
         self.note = None;
         self.selection_view = 0.0;
+        self.selection_view_h = 0.0;
+        self.selection_gen = 0;
     }
 
     fn store_pdf_anchor(&mut self, anchor: Anchor) {
@@ -2299,6 +2326,16 @@ impl State {
         self.anchor = selection.anchor.clone();
         self.anchor_page = None;
         self.selection_view = view;
+        self.selection_view_h = self
+            .web
+            .as_ref()
+            .map(|web| web.inbox.borrow().view_h)
+            .unwrap_or(0.0);
+        self.selection_gen = self
+            .web
+            .as_ref()
+            .map(|web| web.inbox.borrow().layout_gen)
+            .unwrap_or(0);
         let rects = selection
             .rects
             .iter()
@@ -2527,6 +2564,8 @@ impl Stage {
             note: None,
             selection_token: 0,
             selection_view: 0.0,
+            selection_view_h: 0.0,
+            selection_gen: 0,
             anchor_payload: String::new(),
             web: None,
             web_pages: 1,
