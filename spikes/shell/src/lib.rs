@@ -12,6 +12,7 @@ mod settings;
 mod shelf;
 mod stage;
 mod tokens;
+mod verify_session;
 mod visit;
 mod web;
 

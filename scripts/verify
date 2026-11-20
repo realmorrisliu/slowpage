@@ -10,6 +10,7 @@ import inspect
 import json
 import os
 import re
+import secrets
 import shutil
 import struct
 import subprocess
@@ -5594,6 +5595,7 @@ def child_env(extra):
         "SUPERREADER_OPEN_KIND",
         "SUPERREADER_OPEN_PATH",
         "SUPERREADER_OPEN_TITLE",
+        "SUPERREADER_VERIFY_SESSION",
     ):
         env.pop(key, None)
     env.update(extra)
@@ -9045,7 +9047,7 @@ def run_chrome(out, window_tool, ocr_tool):
 READING_CHROME_CHECKS = (
     ("reading-chrome-entry-status", "structure"),
     ("reading-chrome-entry-lights", "native"),
-    ("reading-chrome-entry-title-field", "native"),
+    ("reading-chrome-entry-title", "native"),
     ("reading-chrome-enter", "native"),
     ("reading-chrome-short-leave", "native"),
     ("reading-chrome-leave", "native"),
@@ -9058,6 +9060,7 @@ READING_CHROME_CHECKS = (
     ("reading-chrome-shot-hidden", "screenshot"),
     ("reading-chrome-shot-fullscreen", "screenshot"),
     ("reading-chrome-shot-minimum", "screenshot"),
+    ("reading-chrome-visual", "visual"),
 )
 READING_CHROME_DELAY_MS = 400
 READING_CHROME_STEP = 0.25
@@ -9135,19 +9138,6 @@ def _align_row(sample):
     return "pass", f"close and zoom centers differ by {gap:.2f}"
 
 
-def _shared_tracks(samples):
-    for sample in samples:
-        if not sample.get("chrome_shared"):
-            continue
-        title = _chrome_num(sample, "title_opacity")
-        button = _chrome_num(sample, "button_alpha")
-        if title is None or button is None:
-            return "blocked", "shared title opacity or button alpha was not read"
-        if abs(title - button) > READING_CHROME_STEP + 0.05:
-            return "fail", f"title_opacity {title:.2f} and button alpha {button:.2f} diverged"
-    return None
-
-
 def _hold_and_steps(samples):
     timed = []
     for sample in samples:
@@ -9183,9 +9173,6 @@ def _hold_and_steps(samples):
             cursor += 1
     if cursor < 3:
         return "blocked", "the poll missed a 0.25 step"
-    shared = _shared_tracks(samples)
-    if shared is not None:
-        return shared
     return "pass", "held 400 ms then stepped by 0.25 to 0"
 
 
@@ -9198,7 +9185,10 @@ def _entry_status(lines):
     if opacity is None or "chrome_shared" not in first:
         return "blocked", "the first status did not carry title_opacity and chrome_shared"
     if opacity <= 0.02 and first.get("chrome_shared") is True:
-        return "pass", f"first status title_opacity {opacity:.2f} chrome_shared true"
+        return (
+            "pass",
+            f"status cell title_opacity {opacity:.2f} chrome_shared true. This is not the rendered title.",
+        )
     return "fail", (
         f"first status title_opacity {opacity:.2f} chrome_shared {first.get('chrome_shared')}"
     )
@@ -9226,24 +9216,12 @@ def _entry_lights(lines, samples):
     return "fail", f"standardWindowButton alpha {alpha:.2f} at the first status"
 
 
-def _entry_field(samples):
-    reading_samples = [
-        sample for sample in _chrome_phase(samples, "entry") if sample.get("reading") is True
-    ]
-    if not reading_samples:
-        return "blocked", "the reading entry was not sampled"
-    sample = reading_samples[0]
-    if sample.get("title_field_present") is not True:
-        return (
-            "pass",
-            "NSTextField absent. title_opacity is the NSH status value and was not read from this field.",
-        )
-    alpha = _chrome_num(sample, "title_field_alpha")
-    if alpha is None:
-        return "blocked", "NSTextField alphaValue was not read"
-    if alpha <= 0.02:
-        return "pass", f"NSTextField alpha {alpha:.2f}"
-    return "fail", f"NSTextField alpha {alpha:.2f}"
+def _rendered_title(_samples):
+    return (
+        "blocked",
+        "the GPUI title was not read from the renderer. "
+        "title_opacity is the status cell and NSTextField is not that title.",
+    )
 
 
 def _enter_row(samples):
@@ -9255,9 +9233,6 @@ def _enter_row(samples):
         return "blocked", "standardWindowButton alphaValue was not read"
     if alpha < 0.9:
         return "fail", f"enter ended at button alpha {alpha:.2f}"
-    shared = _shared_tracks([phase[-1]])
-    if shared is not None:
-        return shared
     return "pass", f"enter ended at button alpha {alpha:.2f}"
 
 
@@ -9369,9 +9344,13 @@ def _minimum_row(samples):
 def _shot_row(check_id, shots):
     raw = shots.get(check_id) if isinstance(shots, dict) else None
     path = Path(raw) if raw else None
-    if path is None or not path.is_file() or path.stat().st_size < 1000:
+    if path is None or not path.is_file():
         return "blocked", "no screenshot"
-    return "pass", "screenshot captured. This row does not score pixels or the structure."
+    try:
+        decode_png_bytes(path.read_bytes())
+    except (OSError, ValueError, struct.error, zlib.error):
+        return "fail", "capture is not a PNG"
+    return "pass", "PNG capture is intact. This row does not score pixels."
 
 
 def score_reading_chrome(status_lines, samples, shots, blocked_reason=None):
@@ -9380,7 +9359,8 @@ def score_reading_chrome(status_lines, samples, shots, blocked_reason=None):
     decisions = {
         "reading-chrome-entry-status": _entry_status(status_lines or []),
         "reading-chrome-entry-lights": _entry_lights(status_lines or [], samples or []),
-        "reading-chrome-entry-title-field": _entry_field(samples or []),
+        "reading-chrome-entry-title": _rendered_title(samples or []),
+        "reading-chrome-visual": ("blocked", "visual acceptance was not scored"),
         "reading-chrome-enter": _enter_row(samples or []),
         "reading-chrome-short-leave": _short_leave(samples or []),
         "reading-chrome-leave": _hold_and_steps(_chrome_phase(samples or [], "leave")),
@@ -9400,6 +9380,10 @@ def score_reading_chrome(status_lines, samples, shots, blocked_reason=None):
             evidence = Path(shots[check_id]).name
         rows.append(check(check_id, "window-chrome", kind, status, detail, evidence))
     return rows
+
+
+def _row(rows, check_id):
+    return next(row for row in rows if row["id"] == check_id)
 
 
 def reading_chrome_self_test():
@@ -9460,37 +9444,58 @@ def reading_chrome_self_test():
     lines = [{"t_ms": 1000, "reading": True, "title_opacity": 0.0, "chrome_shared": True}]
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        shots = {}
+        junk = {}
+        pngs = {}
         for check_id, kind in READING_CHROME_CHECKS:
             if kind != "screenshot":
                 continue
-            path = folder / f"{check_id}.png"
-            path.write_bytes(b"x" * 1000)
-            shots[check_id] = str(path)
+            raw = folder / f"{check_id}-raw.png"
+            raw.write_bytes(b"x" * 1000)
+            junk[check_id] = str(raw)
+            real = folder / f"{check_id}.png"
+            real.write_bytes(encode_png(1, 1, bytes((0, 0, 0, 255))))
+            pngs[check_id] = str(real)
         bare = score_reading_chrome(lines, samples, {})
         assert summary_failed(bare)
-        assert any(row["id"] == "reading-chrome-entry-status" and row["status"] == "pass" for row in bare)
-        assert any(
-            row["id"] == "reading-chrome-shot-entry" and row["status"] == "blocked" for row in bare
-        )
-        good = score_reading_chrome(lines, samples, shots)
-        assert not summary_failed(good), [
-            (row["id"], row["status"], row["detail"]) for row in good if row["status"] != "pass"
-        ]
-        assert any("NSTextField absent" in row["detail"] for row in good)
+        assert _row(bare, "reading-chrome-entry-status")["status"] == "pass"
+        assert _row(bare, "reading-chrome-shot-entry")["status"] == "blocked"
+        forged = score_reading_chrome(lines, samples, junk)
+        assert _row(forged, "reading-chrome-shot-entry")["status"] == "fail"
+        assert "not a PNG" in _row(forged, "reading-chrome-shot-entry")["detail"]
+        sampled = score_reading_chrome(lines, samples, pngs)
+        assert _row(sampled, "reading-chrome-shot-entry")["status"] == "pass"
+        assert "does not score pixels" in _row(sampled, "reading-chrome-shot-entry")["detail"]
+        assert _row(sampled, "reading-chrome-visual")["status"] == "blocked"
+        assert _row(sampled, "reading-chrome-entry-title")["status"] == "blocked"
+        assert "GPUI" in _row(sampled, "reading-chrome-entry-title")["detail"]
+        assert summary_failed(sampled)
+        assert any(row["status"] == "pass" for row in sampled)
         flashed = score_reading_chrome(
             [{"t_ms": 1000, "reading": True, "title_opacity": 1.0, "chrome_shared": False}],
             samples,
-            shots,
+            pngs,
         )
-        assert any(row["id"] == "reading-chrome-entry-status" and row["status"] == "fail" for row in flashed)
-        assert any(row["id"] == "reading-chrome-shot-shown" and row["status"] == "pass" for row in flashed)
+        assert _row(flashed, "reading-chrome-entry-status")["status"] == "fail"
+        assert _row(flashed, "reading-chrome-shot-shown")["status"] == "pass"
+        assert summary_failed(flashed)
+        gapped = [row for row in samples if row["phase"] != "leave"]
+        gapped.extend([sample("leave", 5000, 1.0), sample("leave", 5200, 1.0)])
+        gap_rows = score_reading_chrome(lines, gapped, pngs)
+        assert _row(gap_rows, "reading-chrome-leave")["status"] == "blocked"
+        assert "poll gap" in _row(gap_rows, "reading-chrome-leave")["detail"]
+        assert _row(gap_rows, "reading-chrome-entry-status")["status"] == "pass"
+        assert any(row["status"] != "blocked" for row in gap_rows)
+        assert summary_failed(gap_rows)
         late = score_reading_chrome(lines, [sample("entry", 1200, 0.0)], {})
         assert any("button sample was" in row["detail"] and row["status"] == "blocked" for row in late)
         jumped = fade("leave", 5000)
         jumped[-4]["button_alpha"] = 0.0
-        jumped[-4]["title_opacity"] = 0.0
         assert _hold_and_steps(jumped)[0] == "fail"
+        cell = fade("leave", 5000)
+        for row in cell:
+            row["title_opacity"] = 1.0
+        assert _hold_and_steps(cell)[0] == "pass"
+        assert _rendered_title(cell)[0] == "blocked"
         early = fade("leave", 5000)
         early[1]["button_alpha"] = 0.5
         early[1]["title_opacity"] = 0.5
@@ -9500,16 +9505,74 @@ def reading_chrome_self_test():
         assert _resize_row(stuck)[0] == "fail"
         assert _blur_row([sample("blur", 0, 1.0, focused=True)])[0] == "fail"
         assert _fullscreen_row([sample("fullscreen", 0, 0.0, fullscreen=True, close=None, zoom=None)])[0] == "blocked"
-        refused = score_reading_chrome(lines, samples, shots, "this host is linux")
+        refused = score_reading_chrome(lines, samples, pngs, "this host is linux")
         assert all(row["status"] == "blocked" for row in refused)
-        assert all("NSTextField" not in row["detail"] for row in refused)
+        assert all("GPUI" not in row["detail"] for row in refused)
         assert summary_failed(refused)
-        present = [sample("entry", 1040, 0.0, title_field_present=True, title_field_alpha=1.0)]
-        assert _entry_field(present)[0] == "fail"
+        absent = [sample("entry", 1040, 0.0, title_field_present=False)]
+        present = [sample("entry", 1040, 0.0, title_field_present=True, title_field_alpha=0.0)]
+        assert _rendered_title(absent)[0] == "blocked"
+        assert _rendered_title(present)[0] == "blocked"
+        planted = folder / "summary.json"
+        planted.write_text(json.dumps({
+            "ok": True,
+            "reusable": True,
+            "status": "passed",
+            "run_id": "old-run-id",
+            "head": "a" * 40,
+            "session": "old-run-id",
+        }))
+        invalidate_summary(folder, "new-session", "b" * 40, "new-session")
+        running = json.loads(planted.read_text())
+        assert running["status"] == "running" and running["ok"] is False
+        assert not summary_reusable(running)
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = write_summary(
+                folder,
+                [check("reading-chrome-leave", "window-chrome", "native", "blocked", "poll gap 200 ms")],
+                "",
+                0.0,
+                "new-session",
+                "new-session",
+            )
+        assert code == 1
+        terminal = json.loads(planted.read_text())
+        assert terminal["status"] == "failed"
+        assert terminal["run_id"] == "new-session" and terminal["session"] == "new-session"
+        assert terminal["head"]
+        assert not summary_reusable(terminal)
+        assert summary_reusable({
+            "ok": True,
+            "reusable": True,
+            "status": "passed",
+            "run_id": "new-session",
+            "head": "b" * 40,
+            "session": "new-session",
+        })
+        assert not summary_reusable({"ok": True})
+        leaked = reset_fixture_root(folder)
+        (leaked / "leftover").write_text("x")
+        again = reset_fixture_root(folder)
+        assert again == leaked
+        assert again.is_dir() and not (again / "leftover").exists()
 
 
-def read_status_lines():
-    path = Path("/tmp/superreader-spike/chrome-status.jsonl")
+def verify_session_root(session_id):
+    return Path("/tmp/superreader-spike") / f"verify-{session_id}"
+
+
+def reset_fixture_root(out):
+    root = out / "library-fixture"
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    return root
+
+
+def read_status_lines(session_id):
+    path = verify_session_root(session_id) / "chrome-status.jsonl"
     if not path.is_file():
         return []
     rows = []
@@ -9526,14 +9589,17 @@ def read_status_lines():
     return rows
 
 
-def clear_reading_chrome_files():
-    for path in (
-        Path("/tmp/superreader-spike/chrome-blur"),
-        Path("/tmp/superreader-spike/chrome-status.jsonl"),
-        Path("/tmp/superreader-spike/shell-frame"),
-        BAR_FULLSCREEN,
-    ):
-        path.unlink(missing_ok=True)
+def sweep_verify_sessions(keep):
+    base = Path("/tmp/superreader-spike")
+    if not base.is_dir():
+        return
+    for child in base.glob("verify-*"):
+        if child.name != f"verify-{keep}":
+            shutil.rmtree(child, ignore_errors=True)
+
+
+def clear_reading_chrome_files(session_id):
+    shutil.rmtree(verify_session_root(session_id), ignore_errors=True)
 
 
 def absorb_chrome(bucket, phase, seconds):
@@ -9556,12 +9622,12 @@ def snap_reading(out, window_tool, pid, filename):
         capture(metrics["id"], dest)
     except (RuntimeError, OSError):
         return None
-    if dest.is_file() and dest.stat().st_size >= 1000:
+    if dest.is_file():
         return str(dest)
     return None
 
 
-def run_reading_chrome(out):
+def run_reading_chrome(out, session_id):
     session = read_gui_session()
     if session.platform != "darwin":
         return reading_chrome_blocked(gui_session_detail(session))
@@ -9587,18 +9653,21 @@ def run_reading_chrome(out):
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or proc.stdout).splitlines()[-8:])
         return reading_chrome_blocked(tail or "library-fixture did not build")
-    root = Path(tempfile.mkdtemp(prefix="superreader-reading-chrome-"))
-    subprocess.run(
-        [str(release_bin("library-fixture")), str(root), "form"],
-        check=True,
-        cwd=SPIKES,
-    )
-    libs = FormLibraries(root)
-    clear_reading_chrome_files()
     state = None
     samples = []
     shots = {}
+    root = None
     try:
+        root = reset_fixture_root(out)
+        subprocess.run(
+            [str(release_bin("library-fixture")), str(root), "form"],
+            check=True,
+            cwd=SPIKES,
+        )
+        libs = FormLibraries(root)
+        sweep_verify_sessions(session_id)
+        session_root = verify_session_root(session_id)
+        session_root.mkdir(parents=True, exist_ok=True)
         window_tool = compile_window_id(out)
         mouse = compile_mouse(out)
         state = launch(
@@ -9612,6 +9681,7 @@ def run_reading_chrome(out):
                     "SUPERREADER_LIBRARY": str(libs.apple),
                     "SUPERREADER_CALIBRE": str(libs.calibre),
                     "SUPERREADER_FOLDER": str(libs.folder),
+                    "SUPERREADER_VERIFY_SESSION": session_id,
                 }
             ),
             lambda names: "Pride and Prejudice" in names,
@@ -9629,7 +9699,7 @@ def run_reading_chrome(out):
         )
         metrics = window_metrics(window_tool, state["pid"])
         if not metrics:
-            return score_reading_chrome(read_status_lines(), samples, shots)
+            return score_reading_chrome(read_status_lines(session_id), samples, shots)
         park_mouse(mouse, metrics["screen_h"])
         reveal_lights(mouse, metrics)
         absorb_chrome(samples, "enter", 1.0)
@@ -9644,11 +9714,11 @@ def run_reading_chrome(out):
         shots["reading-chrome-shot-hidden"] = snap_reading(
             out, window_tool, state["pid"], "reading-chrome-hidden.png"
         )
-        Path("/tmp/superreader-spike/shell-frame").write_text("1100 800\n")
+        (session_root / "shell-frame").write_text("1100 800\n")
         absorb_chrome(samples, "resize", 1.4)
-        Path("/tmp/superreader-spike/chrome-blur").write_text("1\n")
+        (session_root / "chrome-blur").write_text("1\n")
         absorb_chrome(samples, "blur", 0.6)
-        Path("/tmp/superreader-spike/chrome-blur").unlink(missing_ok=True)
+        (session_root / "chrome-blur").unlink(missing_ok=True)
         subprocess.run(
             [
                 "osascript",
@@ -9658,22 +9728,24 @@ def run_reading_chrome(out):
             capture_output=True,
             text=True,
         )
-        Path("/tmp/superreader-spike/shell-frame").write_text("578 528\n")
+        (session_root / "shell-frame").write_text("578 528\n")
         absorb_chrome(samples, "minimum", 1.5)
         shots["reading-chrome-shot-minimum"] = snap_reading(
             out, window_tool, state["pid"], "reading-chrome-minimum.png"
         )
-        Path("/tmp/superreader-spike/shell-frame").unlink(missing_ok=True)
-        BAR_FULLSCREEN.write_text("1\n")
+        (session_root / "shell-frame").unlink(missing_ok=True)
+        (session_root / "bar-fullscreen").write_text("1\n")
         absorb_chrome(samples, "fullscreen", 2.0)
         shots["reading-chrome-shot-fullscreen"] = snap_reading(
             out, window_tool, state["pid"], "reading-chrome-fullscreen.png"
         )
-        BAR_FULLSCREEN.write_text("0\n")
+        (session_root / "bar-fullscreen").write_text("0\n")
         present = {key: value for key, value in shots.items() if value}
-        return score_reading_chrome(read_status_lines(), samples, present)
+        return score_reading_chrome(read_status_lines(session_id), samples, present)
     finally:
-        clear_reading_chrome_files()
+        clear_reading_chrome_files(session_id)
+        if root is not None:
+            shutil.rmtree(root, ignore_errors=True)
         if state:
             finish_launch(state)
 
@@ -10208,10 +10280,45 @@ def git_head():
     return text
 
 
-def write_summary(out, rows, version, load_start):
+def summary_reusable(body):
+    if not isinstance(body, dict):
+        return False
+    if body.get("status") != "passed" or body.get("ok") is not True or body.get("reusable") is not True:
+        return False
+    for key in ("run_id", "head", "session"):
+        value = body.get(key)
+        if not isinstance(value, str) or not value:
+            return False
+    return True
+
+
+def invalidate_summary(out, run_id, head, session):
+    path = out / "summary.json"
+    sentinel = {
+        "ok": False,
+        "reusable": False,
+        "status": "running",
+        "run_id": run_id,
+        "head": head,
+        "session": session,
+        "checks": [],
+    }
+    path.unlink(missing_ok=True)
+    temporary = out / f".summary-{run_id}.json"
+    temporary.write_text(json.dumps(sentinel) + "\n")
+    os.replace(temporary, path)
+
+
+def write_summary(out, rows, version, load_start, run_id=None, session=None):
     failing = summary_failed(rows)
+    run_id = run_id or secrets.token_hex(8)
+    session = session or run_id
     summary = {
         "ok": not failing,
+        "reusable": not failing,
+        "status": "failed" if failing else "passed",
+        "run_id": run_id,
+        "session": session,
         "nsh": version,
         "load_start": load_start,
         "load_end": one_minute_load(),
@@ -11408,6 +11515,12 @@ def main():
     if not out.is_absolute():
         out = ROOT / out
     out.mkdir(parents=True, exist_ok=True)
+    run_id = secrets.token_hex(8)
+    invalidate_summary(out, run_id, git_head(), run_id)
+
+    def finish(rows):
+        return write_summary(out, rows, version, load_start, run_id, run_id)
+
     private_support(out)
     version = nsh_version()
     rows = doctor()
@@ -11415,27 +11528,27 @@ def main():
         rows.extend(skipped("not run because doctor failed"))
         rows.extend(reading_chrome_blocked("not run because doctor failed"))
         rows.extend(pending_rows())
-        return write_summary(out, rows, version, load_start)
+        return finish(rows)
     built = build(out / "build.log")
     rows.append(built)
     if built["status"] == "fail":
         rows.extend(skipped("not run because the release build failed"))
         rows.extend(reading_chrome_blocked("not run because the release build failed"))
         rows.extend(pending_rows())
-        return write_summary(out, rows, version, load_start)
+        return finish(rows)
     if args.subset == "reading-chrome":
         try:
-            rows.extend(run_reading_chrome(out))
+            rows.extend(run_reading_chrome(out, run_id))
         except Exception as exc:
             rows.extend(reading_chrome_blocked(f"session stopped: {exc}"))
-        return write_summary(out, rows, version, load_start)
+        return finish(rows)
     if args.subset == "cache":
         rows.extend(cache_subset(out))
-        return write_summary(out, rows, version, load_start)
+        return finish(rows)
     if args.subset == "alpha":
         tool = compile_window_id(out)
         rows.extend(run_alpha(out, tool))
-        code = write_summary(out, rows, version, load_start)
+        code = finish(rows)
         alpha_dir = ROOT / "docs" / "verify" / "alpha"
         alpha_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(out / "summary.json", alpha_dir / "summary.json")
@@ -11446,7 +11559,7 @@ def main():
             rows.extend(run_form_fixture(out, tool))
         except Exception as exc:
             rows.append(check("shell-form-fixture", "shell", "window", "fail", str(exc)))
-        return write_summary(out, rows, version, load_start)
+        return finish(rows)
     if args.subset == "shelf":
         try:
             rows.extend(row for row in run_nsh(out) if str(row["id"]).startswith("shelf-"))
@@ -11461,7 +11574,7 @@ def main():
             rows.extend(run_smoke(out, tool))
         except Exception as exc:
             rows.append(check("smoke-launch", "smoke", "window", "fail", str(exc)))
-        code = write_summary(out, rows, version, load_start)
+        code = finish(rows)
         shelf_dir = ROOT / "docs" / "verify" / "shelf"
         shelf_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(out / "summary.json", shelf_dir / "summary.json")
@@ -11523,7 +11636,7 @@ def main():
         rows.append(check("shell-form-parity", "shell", "window", "fail", str(exc)))
     rows.append(check("smoke-shell-click", "smoke", "window", "pending", SHELL_CLICK_GAP))
     try:
-        rows.extend(run_reading_chrome(out))
+        rows.extend(run_reading_chrome(out, run_id))
     except Exception as exc:
         rows.extend(reading_chrome_blocked(f"session stopped: {exc}"))
     rows.extend(pending_rows())
@@ -11537,7 +11650,7 @@ def main():
             head or "git rev-parse HEAD was empty",
         )
     )
-    summary_path = write_summary(out, rows, version, load_start)
+    summary_path = finish(rows)
     alpha_dir = ROOT / "docs" / "verify" / "alpha"
     alpha_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(out / "summary.json", alpha_dir / "summary.json")

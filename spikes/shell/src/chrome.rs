@@ -1057,10 +1057,11 @@ fn settle_bar(window: &NSWindow, rt: &Runtime) {
 }
 
 fn note_blur(window: &NSWindow) {
-    if std::path::Path::new("/tmp/superreader-spike/chrome-blur").is_file() {
-        unsafe {
-            let _: () = msg_send![window, resignKeyWindow];
-        }
+    if !crate::verify_session::VerifyHooks::from_env().should_resign() {
+        return;
+    }
+    unsafe {
+        let _: () = msg_send![window, resignKeyWindow];
     }
 }
 
@@ -1090,8 +1091,6 @@ fn title_field_alpha(rt: &Runtime) -> Option<f64> {
 }
 
 pub fn append_chrome_status(rt: &Runtime) {
-    let dir = "/tmp/superreader-spike";
-    let _ = std::fs::create_dir_all(dir);
     let line = serde_json::json!({
         "t_ms": unix_ms(),
         "reading": rt.reading.get(),
@@ -1099,14 +1098,10 @@ pub fn append_chrome_status(rt: &Runtime) {
         "chrome_shared": rt.chrome_shared.get(),
         "lights": rt.lights.get(),
     });
-    let path = format!("{dir}/chrome-status.jsonl");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        use std::io::Write;
-        let _ = writeln!(file, "{line}");
-    }
+    let _ = crate::verify_session::VerifyHooks::from_env().append_status(&line.to_string());
 }
 
-fn file_flag(path: &str) -> Option<bool> {
+fn file_flag(path: impl AsRef<std::path::Path>) -> Option<bool> {
     let raw = std::fs::read_to_string(path).ok()?;
     let text = raw.trim();
     if text.is_empty() {
@@ -1126,7 +1121,9 @@ fn note_immersive(rt: &Runtime) {
 }
 
 fn note_fullscreen_hook(window: &NSWindow, rt: &Runtime) {
-    let Some(want) = file_flag("/tmp/superreader-spike/bar-fullscreen") else {
+    let Some(want) =
+        file_flag(crate::verify_session::VerifyHooks::from_env().scoped("bar-fullscreen"))
+    else {
         return;
     };
     let is_full = window.styleMask().contains(NSWindowStyleMask::FullScreen);
@@ -1333,7 +1330,10 @@ fn expose_window(window: &NSWindow) {
 }
 
 fn pinned_frame() -> Option<(f64, f64)> {
-    let raw = std::fs::read_to_string("/tmp/superreader-spike/shell-frame").ok()?;
+    let raw = std::fs::read_to_string(
+        crate::verify_session::VerifyHooks::from_env().scoped("shell-frame"),
+    )
+    .ok()?;
     let mut parts = raw.split_whitespace();
     let width: f64 = parts.next()?.parse().ok()?;
     let height: f64 = parts.next()?.parse().ok()?;
