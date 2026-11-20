@@ -1,6 +1,6 @@
 //! Annotation cards. Geometry is the 2026-11-20 22:42 set. Storage is the
-//! local SQLite the route already assigned to SuperReader. This module does
-//! not call an agent and does not ship sample notes.
+//! local SQLite the route already assigned to SuperReader. `on_return` is the
+//! only save. This module does not call an agent and does not ship sample notes.
 
 use std::path::Path;
 
@@ -447,6 +447,117 @@ pub struct NewNote {
     pub text_right: f64,
 }
 
+/// The reader who typed the note. There is no account on this save.
+pub const LOCAL_AUTHOR: &str = "读者";
+
+pub const NOTICE_BLANK: &str = "先写一句笔记";
+pub const NOTICE_SELECT: &str = "先选中原文";
+pub const NOTICE_STALE: &str = "选区已经换了";
+
+/// One PDF glyph in page points. The index is a Unicode scalar offset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphBox {
+    pub index: u32,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// One measured EPUB line box, in the page's own points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeasuredRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// The selection captured with the book that was open. `gen` is that open's
+/// session token. It is not stored.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Passage {
+    pub book: String,
+    pub gen: u64,
+    pub page: u32,
+    pub spine: String,
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub quads: Vec<Quad>,
+    pub text_right: f64,
+}
+
+/// Unchecked geometry. [`passage_from`] is what makes it a [`Passage`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Selection {
+    pub book: String,
+    pub gen: u64,
+    pub page: u32,
+    pub spine: String,
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub quads: Vec<Quad>,
+    pub text_right: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fingerprint {
+    pub book: String,
+    pub page: u32,
+    pub start: u32,
+    pub end: u32,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveBook {
+    pub book: String,
+    pub gen: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NoteField {
+    pub body: String,
+    pub composing: bool,
+    pub passage: Option<Passage>,
+    pub fingerprint: Option<Fingerprint>,
+    pub notice: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReturnKind {
+    Key,
+    Blur,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unsaved {
+    Composing,
+    Blank,
+    Unselected,
+    Stale,
+    Duplicate,
+}
+
+impl Unsaved {
+    pub fn notice(self) -> Option<&'static str> {
+        match self {
+            Unsaved::Composing | Unsaved::Duplicate => None,
+            Unsaved::Blank => Some(NOTICE_BLANK),
+            Unsaved::Unselected => Some(NOTICE_SELECT),
+            Unsaved::Stale => Some(NOTICE_STALE),
+        }
+    }
+}
+
+pub enum Submit {
+    Saved { id: i64, fingerprint: Fingerprint },
+    Kept { hold: Unsaved },
+    Failed { notice: String },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredNote {
     pub id: i64,
@@ -507,25 +618,30 @@ impl Notes {
         if note.author.trim().is_empty() {
             return Err("note needs an author".into());
         }
-        self.conn
-            .execute(
-                "INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    note.book,
-                    note.page,
-                    note.spine,
-                    note.start,
-                    note.end,
-                    note.passage,
-                    note.body,
-                    note.author,
-                    encode_quads(&note.quads),
-                    note.text_right,
-                ],
-            )
+        let tx = self
+            .conn
+            .unchecked_transaction()
             .map_err(|err| err.to_string())?;
-        Ok(self.conn.last_insert_rowid())
+        tx.execute(
+            "INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                note.book,
+                note.page,
+                note.spine,
+                note.start,
+                note.end,
+                note.passage,
+                note.body,
+                note.author,
+                encode_quads(&note.quads),
+                note.text_right,
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+        let id = tx.last_insert_rowid();
+        tx.commit().map_err(|err| err.to_string())?;
+        Ok(id)
     }
 
     pub fn reply(&self, note_id: i64, body: &str) -> Result<i64, String> {
@@ -597,6 +713,239 @@ impl Notes {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.to_string())
     }
+}
+
+const LINE_SLACK: f64 = 5.0;
+
+/// Right edge of the first selected line. Glyphs on that line outside the
+/// selection count. The next line does not.
+pub fn pdf_line_end(glyphs: &[GlyphBox], start: u32, end: u32) -> Option<f64> {
+    let first = glyphs
+        .iter()
+        .find(|glyph| glyph.index >= start && glyph.index < end)?;
+    if !first.y.is_finite() {
+        return None;
+    }
+    let mut right = f64::NEG_INFINITY;
+    for glyph in glyphs {
+        if (glyph.y - first.y).abs() > LINE_SLACK {
+            continue;
+        }
+        let edge = glyph.x + glyph.w;
+        if edge.is_finite() {
+            right = right.max(edge);
+        }
+    }
+    if right.is_finite() && right > 0.0 {
+        Some(right)
+    } else {
+        None
+    }
+}
+
+/// Keep rects that were actually measured. A zero box is not a line.
+pub fn measured_quads(rects: &[MeasuredRect]) -> Vec<Quad> {
+    rects
+        .iter()
+        .filter(|rect| {
+            rect.x.is_finite()
+                && rect.y.is_finite()
+                && rect.w.is_finite()
+                && rect.h.is_finite()
+                && rect.w > 0.0
+                && rect.h > 0.0
+        })
+        .map(|rect| Quad {
+            x: rect.x,
+            y: rect.y,
+            w: rect.w,
+            h: rect.h,
+        })
+        .collect()
+}
+
+/// The placed EPUB view's point size. Zero stays unmapped so a card is not drawn.
+pub fn epub_page_size(page_w: f64, page_h: f64) -> (f64, f64) {
+    if page_w.is_finite() && page_h.is_finite() && page_w >= 1.0 && page_h >= 1.0 {
+        (page_w, page_h)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+pub fn passage_from(selection: Selection) -> Option<Passage> {
+    if selection.gen == 0 || selection.book.is_empty() || selection.page == 0 {
+        return None;
+    }
+    if selection.end <= selection.start {
+        return None;
+    }
+    if selection.text.chars().count() != (selection.end - selection.start) as usize {
+        return None;
+    }
+    if selection.text.trim().is_empty() {
+        return None;
+    }
+    if !selection.text_right.is_finite() || selection.text_right <= 0.0 {
+        return None;
+    }
+    if selection.quads.is_empty() || selection.quads.iter().any(|quad| !quad_live(quad)) {
+        return None;
+    }
+    Some(Passage {
+        book: selection.book,
+        gen: selection.gen,
+        page: selection.page,
+        spine: selection.spine,
+        start: selection.start,
+        end: selection.end,
+        text: selection.text,
+        quads: selection.quads,
+        text_right: selection.text_right,
+    })
+}
+
+fn quad_live(quad: &Quad) -> bool {
+    quad.x.is_finite()
+        && quad.y.is_finite()
+        && quad.w.is_finite()
+        && quad.h.is_finite()
+        && quad.w > 0.0
+        && quad.h > 0.0
+}
+
+pub fn take_passage(published: Option<Passage>, live: &LiveBook) -> Option<Passage> {
+    let passage = published?;
+    if passage.book.is_empty() || passage.book != live.book || passage.gen != live.gen {
+        None
+    } else {
+        Some(passage)
+    }
+}
+
+/// A keystroke replaces the draft. The last save no longer applies to it.
+pub fn note_typed(field: &NoteField, text: &str) -> NoteField {
+    if field.body == text {
+        return field.clone();
+    }
+    NoteField {
+        body: text.to_string(),
+        fingerprint: None,
+        notice: String::new(),
+        ..field.clone()
+    }
+}
+
+pub fn prepare_save(
+    draft: &str,
+    passage: Option<&Passage>,
+    live: &LiveBook,
+    last: Option<&Fingerprint>,
+    composing: bool,
+) -> Result<NewNote, Unsaved> {
+    if composing {
+        return Err(Unsaved::Composing);
+    }
+    let Some(passage) = passage else {
+        return Err(Unsaved::Unselected);
+    };
+    if passage.book != live.book || passage.gen != live.gen {
+        return Err(Unsaved::Stale);
+    }
+    let body = draft.trim();
+    if body.is_empty() {
+        return Err(Unsaved::Blank);
+    }
+    let fingerprint = Fingerprint {
+        book: passage.book.clone(),
+        page: passage.page,
+        start: passage.start,
+        end: passage.end,
+        body: body.to_string(),
+    };
+    if last.is_some_and(|saved| saved == &fingerprint) {
+        return Err(Unsaved::Duplicate);
+    }
+    Ok(NewNote {
+        book: passage.book.clone(),
+        page: passage.page,
+        spine: passage.spine.clone(),
+        start: passage.start,
+        end: passage.end,
+        passage: passage.text.clone(),
+        body: body.to_string(),
+        author: LOCAL_AUTHOR.into(),
+        quads: passage.quads.clone(),
+        text_right: passage.text_right,
+    })
+}
+
+pub fn submit_note(
+    path: &Path,
+    draft: &str,
+    passage: Option<&Passage>,
+    live: &LiveBook,
+    last: Option<&Fingerprint>,
+    composing: bool,
+) -> Submit {
+    let note = match prepare_save(draft, passage, live, last, composing) {
+        Ok(note) => note,
+        Err(hold) => return Submit::Kept { hold },
+    };
+    match Notes::open(path).and_then(|notes| notes.insert(&note)) {
+        Ok(id) => Submit::Saved {
+            id,
+            fingerprint: Fingerprint {
+                book: note.book,
+                page: note.page,
+                start: note.start,
+                end: note.end,
+                body: note.body,
+            },
+        },
+        Err(notice) => Submit::Failed { notice },
+    }
+}
+
+pub fn on_return(
+    kind: ReturnKind,
+    field: &NoteField,
+    submitted: &str,
+    live: &LiveBook,
+    path: &Path,
+) -> NoteField {
+    if kind == ReturnKind::Blur {
+        return field.clone();
+    }
+    let mut next = field.clone();
+    match submit_note(
+        path,
+        submitted,
+        field.passage.as_ref(),
+        live,
+        field.fingerprint.as_ref(),
+        field.composing,
+    ) {
+        Submit::Saved { fingerprint, .. } => {
+            next.body.clear();
+            next.notice.clear();
+            next.fingerprint = Some(fingerprint);
+        }
+        Submit::Kept {
+            hold: Unsaved::Duplicate | Unsaved::Composing,
+        } => {}
+        Submit::Kept { hold } => {
+            next.body = submitted.to_string();
+            if let Some(text) = hold.notice() {
+                next.notice = text.to_string();
+            }
+        }
+        Submit::Failed { notice } => {
+            next.body = submitted.to_string();
+            next.notice = notice;
+        }
+    }
+    next
 }
 
 pub fn cards_from(notes: &[StoredNote], fit: Fit) -> Vec<CardIn> {
@@ -1194,6 +1543,266 @@ mod tests {
         let seg = &scene.cards[0].segments[0];
         assert!((seg.x - 1136.0).abs() < 0.01);
         assert!(seg.x > 56.0);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn sample_selection() -> Selection {
+        Selection {
+            book: "/books/a.pdf".into(),
+            gen: 4,
+            page: 3,
+            spine: String::new(),
+            start: 0,
+            end: 2,
+            text: "你😀".into(),
+            quads: vec![Quad {
+                x: 12.0,
+                y: 30.0,
+                w: 40.0,
+                h: 16.0,
+            }],
+            text_right: 80.0,
+        }
+    }
+
+    fn field_of(passage: Passage, body: &str) -> NoteField {
+        NoteField {
+            body: body.into(),
+            passage: Some(passage),
+            ..NoteField::default()
+        }
+    }
+
+    #[test]
+    fn pdf_line_end_stops_at_the_first_line() {
+        let glyphs = [
+            GlyphBox {
+                index: 0,
+                x: 10.0,
+                y: 20.0,
+                w: 8.0,
+                h: 10.0,
+            },
+            GlyphBox {
+                index: 1,
+                x: 20.0,
+                y: 20.0,
+                w: 8.0,
+                h: 10.0,
+            },
+            GlyphBox {
+                index: 2,
+                x: 40.0,
+                y: 20.0,
+                w: 6.0,
+                h: 10.0,
+            },
+            GlyphBox {
+                index: 3,
+                x: 10.0,
+                y: 40.0,
+                w: 30.0,
+                h: 10.0,
+            },
+        ];
+        let right = pdf_line_end(&glyphs, 0, 2).unwrap();
+        assert!((right - 46.0).abs() < 0.01);
+        assert!(pdf_line_end(&glyphs, 9, 10).is_none());
+    }
+
+    #[test]
+    fn an_epub_measure_keeps_real_rects_and_rejects_a_utf16_span() {
+        let quads = measured_quads(&[
+            MeasuredRect {
+                x: 12.0,
+                y: 30.0,
+                w: 40.0,
+                h: 16.0,
+            },
+            MeasuredRect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 10.0,
+            },
+            MeasuredRect {
+                x: 8.0,
+                y: 50.0,
+                w: 20.0,
+                h: 16.0,
+            },
+        ]);
+        assert_eq!(quads.len(), 2);
+        let mut selection = sample_selection();
+        selection.quads = quads;
+        selection.spine = "chapter.xhtml".into();
+        let passage = passage_from(selection.clone()).unwrap();
+        assert_eq!(passage.end - passage.start, 2);
+        assert_eq!(passage.quads.len(), 2);
+        selection.end = 3;
+        assert!(passage_from(selection).is_none());
+        assert_eq!(epub_page_size(0.0, 800.0), (0.0, 0.0));
+        assert_eq!(epub_page_size(640.0, 800.0), (640.0, 800.0));
+    }
+
+    #[test]
+    fn return_saves_reopens_and_keeps_the_other_book_empty() {
+        let path =
+            std::env::temp_dir().join(format!("margin-return-{}-{}", std::process::id(), "save"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let saved = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "  一句  "),
+            "  一句  ",
+            &live,
+            &file,
+        );
+        assert!(saved.body.is_empty());
+        assert!(saved.notice.is_empty());
+        assert_eq!(saved.fingerprint.as_ref().unwrap().body, "一句");
+        let again = on_return(ReturnKind::Key, &saved, "  一句  ", &live, &file);
+        assert!(again.body.is_empty());
+        let notes = Notes::open(&file).unwrap();
+        let stored = notes.list(&passage.book, passage.page).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].body, "一句");
+        assert_eq!(stored[0].passage, "你😀");
+        assert_eq!(stored[0].start, 0);
+        assert_eq!(stored[0].end, 2);
+        assert!((stored[0].text_right - 80.0).abs() < 0.01);
+        assert!(notes.list(&passage.book, 5).unwrap().is_empty());
+        assert!(notes
+            .list("/books/b.epub", passage.page)
+            .unwrap()
+            .is_empty());
+        drop(notes);
+        let reopened = Notes::open(&file).unwrap();
+        let cards = cards_from(
+            &reopened.list(&passage.book, passage.page).unwrap(),
+            Fit {
+                origin_x: 0.0,
+                origin_y: 0.0,
+                scale: 1.0,
+            },
+        );
+        assert_eq!(cards.len(), 1);
+        assert!((cards[0].line.top - 30.0).abs() < 0.01);
+        assert!((cards[0].line.text_right - 80.0).abs() < 0.01);
+        let typed = note_typed(&again, "一句");
+        assert!(typed.fingerprint.is_none());
+        let second = on_return(ReturnKind::Key, &typed, "一句", &live, &file);
+        assert!(second.body.is_empty());
+        assert_eq!(reopened.list(&passage.book, passage.page).unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn a_blank_missing_stale_composing_or_blur_keeps_the_draft() {
+        let path =
+            std::env::temp_dir().join(format!("margin-return-{}-{}", std::process::id(), "keep"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let blank = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "   "),
+            "   ",
+            &live,
+            &file,
+        );
+        assert_eq!(blank.body, "   ");
+        assert_eq!(blank.notice, NOTICE_BLANK);
+        let missing = on_return(
+            ReturnKind::Key,
+            &NoteField {
+                body: "留下".into(),
+                ..NoteField::default()
+            },
+            "留下",
+            &live,
+            &file,
+        );
+        assert_eq!(missing.body, "留下");
+        assert_eq!(missing.notice, NOTICE_SELECT);
+        let other = LiveBook {
+            book: "/books/b.epub".into(),
+            gen: live.gen,
+        };
+        let stale = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "摘录"),
+            "摘录",
+            &other,
+            &file,
+        );
+        assert_eq!(stale.body, "摘录");
+        assert_eq!(stale.notice, NOTICE_STALE);
+        let reopened = LiveBook {
+            book: live.book.clone(),
+            gen: live.gen + 1,
+        };
+        let old_token = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "摘录"),
+            "摘录",
+            &reopened,
+            &file,
+        );
+        assert_eq!(old_token.body, "摘录");
+        assert_eq!(old_token.notice, NOTICE_STALE);
+        assert!(take_passage(Some(passage.clone()), &reopened).is_none());
+        let mut composing = field_of(passage.clone(), "ni");
+        composing.composing = true;
+        let held = on_return(ReturnKind::Key, &composing, "ni", &live, &file);
+        assert_eq!(held.body, "ni");
+        assert!(held.notice.is_empty());
+        let ready = field_of(passage.clone(), "ni");
+        let blurred = on_return(ReturnKind::Blur, &ready, "ni", &live, &file);
+        assert_eq!(blurred.body, "ni");
+        assert!(blurred.notice.is_empty());
+        assert!(Notes::open(&file)
+            .unwrap()
+            .list(&live.book, passage.page)
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn a_failed_store_keeps_the_draft() {
+        let path =
+            std::env::temp_dir().join(format!("margin-return-{}-{}", std::process::id(), "fail"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let blocker = path.join("blocked");
+        std::fs::write(&blocker, b"x").unwrap();
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let failed = on_return(
+            ReturnKind::Key,
+            &field_of(passage, "别丢"),
+            "别丢",
+            &live,
+            &blocker.join("annotations.sqlite"),
+        );
+        assert_eq!(failed.body, "别丢");
+        assert!(!failed.notice.is_empty());
+        assert!(failed.fingerprint.is_none());
         let _ = std::fs::remove_dir_all(path);
     }
 }

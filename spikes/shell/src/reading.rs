@@ -1256,6 +1256,48 @@ const SCRIPT: &str = r#"
     }
     requestAnimationFrame(frame);
   }
+  function scalarsUntil(utf16) {
+    const body = document.body.textContent || "";
+    const stop = Math.max(0, Math.min(utf16 | 0, body.length));
+    let scalars = 0;
+    for (let i = 0; i < stop; i++) {
+      const code = body.charCodeAt(i);
+      if (code >= 0xD800 && code <= 0xDBFF && i + 1 < body.length) {
+        const next = body.charCodeAt(i + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) i++;
+      }
+      scalars++;
+    }
+    return scalars;
+  }
+  function selectionBoxes(range) {
+    const list = range.getClientRects();
+    const rects = [];
+    for (let i = 0; i < list.length; i++) {
+      const rect = list[i];
+      if (!intersectsColumn(rect)) continue;
+      rects.push({ x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+    }
+    if (!rects.length) return null;
+    rects.sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+    const line = rects[0];
+    const slack = Math.max(line.h, 1);
+    let right = line.x + line.w;
+    const y = line.y + line.h * 0.5;
+    const stride = columnStride();
+    const step = Math.max(4, line.h * 0.5);
+    for (let x = line.x + line.w; x < stride; x += step) {
+      const caret = document.caretRangeFromPoint(x, y);
+      if (!caret || !caret.startContainer || caret.startContainer.nodeType !== 3) continue;
+      const len = (caret.startContainer.textContent || "").length;
+      const at = Math.min(caret.startOffset || 0, Math.max(0, len - 1));
+      const hit = charRect(caret.startContainer, at);
+      if (!liveRect(hit) || !intersectsColumn(hit)) continue;
+      if (Math.abs(hit.top - line.y) > slack) continue;
+      if (hit.right > right) right = hit.right;
+    }
+    return { rects: rects, text_right: right };
+  }
   document.addEventListener("mouseup", function () {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
@@ -1264,10 +1306,22 @@ const SCRIPT: &str = r#"
     if (!range.endContainer || range.endContainer.nodeType !== 3) return;
     const start = offsetOf(range.startContainer, range.startOffset || 0);
     const end = offsetOf(range.endContainer, range.endOffset || 0);
-    const text = (document.body.textContent || "").slice(Math.min(start, end), Math.max(start, end));
+    const lo = Math.min(start, end);
+    const hi = Math.max(start, end);
+    const text = (document.body.textContent || "").slice(lo, hi);
     if (!text.trim()) return;
+    const boxes = selectionBoxes(range);
+    if (!boxes) return;
     window.webkit.messageHandlers.spike.postMessage(JSON.stringify({
-      kind: "selection", start: start, end: end, text: text
+      kind: "selection",
+      start: start,
+      end: end,
+      scalar_start: scalarsUntil(lo),
+      scalar_end: scalarsUntil(hi),
+      text: text,
+      rects: boxes.rects,
+      text_right: boxes.text_right,
+      page: column().page
     }));
   }, true);
   window.spikeSeekLast = function () {

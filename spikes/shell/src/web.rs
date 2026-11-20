@@ -155,6 +155,14 @@ pub struct Inbox {
     pub cjk_gap: u32,
     pub scroll: f64,
     pub anchor: Option<Anchor>,
+    pub selection_token: u64,
+    pub selection_ready: bool,
+    pub selection_page: u32,
+    pub selection_start: u32,
+    pub selection_end: u32,
+    pub selection_text: String,
+    pub selection_rects: Vec<(f64, f64, f64, f64)>,
+    pub selection_right: f64,
     pub ready: bool,
     pub reload: bool,
     pub did_reload: bool,
@@ -453,6 +461,7 @@ define_class!(
                         end,
                         text: selected,
                     });
+                    note_selection(&mut inbox, &value);
                     if std::env::var("SPIKE_RELOAD").as_deref() == Ok("1") && !inbox.did_reload {
                         inbox.reload = true;
                     }
@@ -553,6 +562,27 @@ define_class!(
         }
     }
 );
+
+fn note_selection(inbox: &mut Inbox, value: &serde_json::Value) {
+    inbox.selection_token = inbox.selection_token.wrapping_add(1);
+    if let Some(measure) = crate::visit::selection_measure(value) {
+        inbox.selection_ready = true;
+        inbox.selection_page = measure.page;
+        inbox.selection_start = measure.start;
+        inbox.selection_end = measure.end;
+        inbox.selection_text = measure.text;
+        inbox.selection_rects = measure.rects;
+        inbox.selection_right = measure.text_right;
+    } else {
+        inbox.selection_ready = false;
+        inbox.selection_page = 0;
+        inbox.selection_start = 0;
+        inbox.selection_end = 0;
+        inbox.selection_text.clear();
+        inbox.selection_rects.clear();
+        inbox.selection_right = 0.0;
+    }
+}
 
 pub(crate) fn write_inbox(inbox: &Inbox, href: &str) {
     if inbox.open_ms.is_none() && inbox.pages.is_none() && inbox.anchor.is_none() {
@@ -657,6 +687,7 @@ fn eval(web: &AnyObject, js: &str, inbox: Rc<RefCell<Inbox>>, href: String, turn
                     end: parsed["end"].as_u64().unwrap_or(0) as u32,
                     text: text.to_string(),
                 });
+                note_selection(&mut inbox, &parsed);
                 if std::env::var("SPIKE_RELOAD").as_deref() == Ok("1") && !inbox.did_reload {
                     inbox.reload = true;
                 }

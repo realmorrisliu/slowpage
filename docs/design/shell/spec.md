@@ -122,7 +122,7 @@ Mochi conveyed Morris's 2026-11-20 22:42 Asia/Shanghai widget answer: implement 
 - The card area scrolls on its own. Its top is the bottom of the 48 point header. Its bottom is the top of the input. The input sits outside that area, inset 18, radius 14, height 88, and it does not paint over card text. Scrolling reaches the body and the replies of a card taller than the area. Scrolling away from the anchor hides the connector. Scrolling back restores it. A line in the header parks the card at the top of the area. A line in the input band parks the card 8 points above the input.
 - During a page turn or the immersive slide the cards stay on the departing page. They change together when the slide lands.
 
-The local store is `annotations.sqlite` in the support directory. A card draws when that page has a stored note and a line. There is no control that creates, edits, or sends a note, and the shell does not call an agent. S3, S4, and checklist item 10 stay open.
+The local store is `annotations.sqlite` in the support directory. A card draws when that page has a stored note and a line. Return in the existing bottom input saves that note locally and clears the field. A failed save keeps the draft and uses the existing notice line. Editing a card and replying in the margin are not in this slice, and the shell does not call an agent. S3, S4, and checklist item 10 stay open.
 
 A shell change does not invent an unset item. Pull request 29's connector is not this approval.
 

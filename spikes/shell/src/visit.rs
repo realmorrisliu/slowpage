@@ -174,6 +174,104 @@ pub fn margin_page_number(index: usize) -> u32 {
     (index as u32).saturating_add(1)
 }
 
+/// Measured EPUB selection. Offsets are Unicode scalars, not the UTF-16
+/// indexes the page script still uses to paint and resume.
+pub struct SelectionMeasure {
+    pub page: u32,
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub rects: Vec<(f64, f64, f64, f64)>,
+    pub text_right: f64,
+}
+
+pub fn selection_measure(value: &serde_json::Value) -> Option<SelectionMeasure> {
+    let page = value.get("page")?.as_u64()? as u32;
+    let start = value.get("scalar_start")?.as_u64()? as u32;
+    let end = value.get("scalar_end")?.as_u64()? as u32;
+    let text = value.get("text")?.as_str()?.to_string();
+    let text_right = value.get("text_right")?.as_f64()?;
+    let rects = value
+        .get("rects")?
+        .as_array()?
+        .iter()
+        .filter_map(|rect| {
+            Some((
+                rect.get("x")?.as_f64()?,
+                rect.get("y")?.as_f64()?,
+                rect.get("w")?.as_f64()?,
+                rect.get("h")?.as_f64()?,
+            ))
+        })
+        .collect();
+    Some(SelectionMeasure {
+        page,
+        start,
+        end,
+        text,
+        rects,
+        text_right,
+    })
+}
+
+pub fn passage_value(passage: Option<&spike_library::margin::Passage>) -> serde_json::Value {
+    let Some(passage) = passage else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "book": passage.book,
+        "gen": passage.gen,
+        "page": passage.page,
+        "spine": passage.spine,
+        "start": passage.start,
+        "end": passage.end,
+        "text": passage.text,
+        "quads": passage
+            .quads
+            .iter()
+            .map(|quad| [quad.x, quad.y, quad.w, quad.h])
+            .collect::<Vec<_>>(),
+        "text_right": passage.text_right,
+    })
+}
+
+pub fn passage_from_value(value: &serde_json::Value) -> Option<spike_library::margin::Passage> {
+    if value.is_null() {
+        return None;
+    }
+    let quads = value.get("quads")?.as_array().map(|rows| {
+        rows.iter()
+            .filter_map(|quad| {
+                let row = quad.as_array()?;
+                if row.len() != 4 {
+                    return None;
+                }
+                Some(spike_library::margin::Quad {
+                    x: row[0].as_f64()?,
+                    y: row[1].as_f64()?,
+                    w: row[2].as_f64()?,
+                    h: row[3].as_f64()?,
+                })
+            })
+            .collect()
+    })?;
+    spike_library::margin::passage_from(spike_library::margin::Selection {
+        book: value.get("book")?.as_str()?.to_string(),
+        gen: value.get("gen")?.as_u64()?,
+        page: value.get("page")?.as_u64()? as u32,
+        spine: value
+            .get("spine")
+            .and_then(|spine| spine.as_str())
+            .unwrap_or("")
+            .to_string(),
+        start: value.get("start")?.as_u64()? as u32,
+        end: value.get("end")?.as_u64()? as u32,
+        text: value.get("text")?.as_str()?.to_string(),
+        quads,
+        text_right: value.get("text_right")?.as_f64()?,
+    })
+}
+
 /// The scroll monitor is installed for a direct file as well as the shelf.
 /// `shell` is the shelf flag. It does not gate installation.
 pub fn arms_page_wheel(shell: bool) -> bool {

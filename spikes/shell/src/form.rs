@@ -2163,9 +2163,12 @@ pub fn reading_margin(
     live: Signal<spike_library::margin::LivePage>,
     hold: Signal<spike_library::margin::Hold>,
     fault: Signal<String>,
+    note: Signal<spike_library::margin::NoteField>,
+    book_gen: Signal<u64>,
 ) -> AnyElement {
     let _tick = ease.get();
     let _form = form.get();
+    let _note = note.get();
     let size = window.get();
     let row = chrome.get();
     let top = f64::from(row.top.max(0.0));
@@ -2278,7 +2281,16 @@ pub fn reading_margin(
                 .rounded(px(crate::tokens::COMPOSER_RADIUS))
                 .bg(rgb(crate::tokens::CARD).to_hsla())
                 .shadow(crate::tokens::margin_ring())
-                .pointer_events(PointerEvents::Auto),
+                .pointer_events(PointerEvents::Auto)
+                .flex()
+                .flex_row()
+                .items_center()
+                .px(px(crate::tokens::COMPOSER_PAD))
+                .child(margin_note_input(
+                    note.clone(),
+                    live.clone(),
+                    book_gen.clone(),
+                )),
         );
     }
     if frame.panel_toggle {
@@ -2348,6 +2360,103 @@ fn margin_fit(page: &Rect, page_w: f64, page_h: f64) -> spike_library::margin::F
         origin_y: y,
         scale: w / page_w,
     }
+}
+
+pub(crate) fn commit_margin(
+    field: &spike_library::margin::NoteField,
+    submitted: &str,
+    live: &spike_library::margin::LiveBook,
+) -> spike_library::margin::NoteField {
+    let path = crate::settings::support_dir().join("annotations.sqlite");
+    spike_library::margin::on_return(
+        spike_library::margin::ReturnKind::Key,
+        field,
+        submitted,
+        live,
+        &path,
+    )
+}
+
+pub(crate) fn note_from_status(
+    field: &spike_library::margin::NoteField,
+    value: &serde_json::Value,
+    book: &str,
+) -> spike_library::margin::NoteField {
+    let gen = value
+        .get("book_gen")
+        .and_then(|gen| gen.as_u64())
+        .unwrap_or(0);
+    let published = value
+        .get("passage")
+        .map(crate::visit::passage_from_value)
+        .unwrap_or(None);
+    let taken = spike_library::margin::take_passage(
+        published,
+        &spike_library::margin::LiveBook {
+            book: book.to_string(),
+            gen,
+        },
+    );
+    if field.passage == taken {
+        return field.clone();
+    }
+    spike_library::margin::NoteField {
+        passage: taken,
+        fingerprint: None,
+        ..field.clone()
+    }
+}
+
+fn margin_note_input(
+    note: Signal<spike_library::margin::NoteField>,
+    live: Signal<spike_library::margin::LivePage>,
+    book_gen: Signal<u64>,
+) -> AnyElement {
+    let write = note.clone();
+    let compose = note.clone();
+    let submit = note.clone();
+    let submit_live = live.clone();
+    let submit_gen = book_gen.clone();
+    nsh_core::element::input()
+        .key("margin-note")
+        .flex_1()
+        .min_w(px(0.0))
+        .font_family(SharedString::from(crate::tokens::FONT_STACK))
+        .text_size(px(crate::tokens::BODY_SIZE))
+        .font_weight(crate::tokens::BODY_WEIGHT)
+        .text_color(ink())
+        .placeholder_color(quiet())
+        .placeholder("笔记")
+        .auto_correct(false)
+        .bg(transparent_black())
+        .submit_behavior(SubmitBehavior::Submit)
+        .value(move || note.get().body)
+        .on_change(move |text: &str| {
+            let next = spike_library::margin::note_typed(&write.get(), text);
+            if next != write.get() {
+                write.set(next);
+            }
+        })
+        .on_composition_change(move |event: &Composition| {
+            let mut field = compose.get();
+            if field.composing != event.composing {
+                field.composing = event.composing;
+                compose.set(field);
+            }
+        })
+        .on_submit(move |text: &str| {
+            let current = submit_live.get();
+            let next = commit_margin(
+                &submit.get(),
+                text,
+                &spike_library::margin::LiveBook {
+                    book: current.book,
+                    gen: submit_gen.get(),
+                },
+            );
+            submit.set(next);
+        })
+        .into_element()
 }
 
 pub(crate) fn load_margin(
@@ -4661,6 +4770,125 @@ mod tests {
         let loaded = load_margin("/books/a.pdf", 2).unwrap();
         assert_eq!(loaded.len(), 1);
         assert!(load_margin("", 2).unwrap().is_empty());
+        drop(restore);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn return_saves_the_margin_note_and_keeps_a_failed_draft() {
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+                    None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+                }
+            }
+        }
+        let restore = Restore(std::env::var("SUPERREADER_SUPPORT_DIR").ok());
+        let dir = std::env::temp_dir().join(format!("margin-commit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
+        std::fs::write(dir.join("annotations.sqlite"), b"not a database").unwrap();
+        let passage = spike_library::margin::passage_from(spike_library::margin::Selection {
+            book: "/books/a.pdf".into(),
+            gen: 2,
+            page: 4,
+            spine: String::new(),
+            start: 0,
+            end: 3,
+            text: "ink".into(),
+            quads: vec![spike_library::margin::Quad {
+                x: 10.0,
+                y: 20.0,
+                w: 30.0,
+                h: 8.0,
+            }],
+            text_right: 70.0,
+        })
+        .unwrap();
+        let live = spike_library::margin::LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let status = serde_json::json!({
+            "book_gen": passage.gen,
+            "passage": crate::visit::passage_value(Some(&passage)),
+        });
+        let field = note_from_status(
+            &spike_library::margin::NoteField::default(),
+            &status,
+            &passage.book,
+        );
+        assert_eq!(field.passage.as_ref().unwrap().page, 4);
+        let failed = commit_margin(
+            &spike_library::margin::NoteField {
+                body: "别丢".into(),
+                ..field.clone()
+            },
+            "别丢",
+            &live,
+        );
+        assert_eq!(failed.body, "别丢");
+        assert!(!failed.notice.is_empty());
+        assert!(failed.fingerprint.is_none());
+        let _ = std::fs::remove_file(dir.join("annotations.sqlite"));
+        let saved = commit_margin(&failed, "别丢", &live);
+        assert!(saved.body.is_empty());
+        assert!(saved.notice.is_empty());
+        let loaded = load_margin(&passage.book, 4).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].body, "别丢");
+        assert_eq!(loaded[0].passage, "ink");
+        let cards = spike_library::margin::cards_from(
+            &loaded,
+            spike_library::margin::Fit {
+                origin_x: 0.0,
+                origin_y: 0.0,
+                scale: 1.0,
+            },
+        );
+        assert_eq!(cards.len(), 1);
+        assert!((cards[0].line.top - 20.0).abs() < 0.01);
+        assert!((cards[0].line.text_right - 70.0).abs() < 0.01);
+        let echo = commit_margin(&saved, "别丢", &live);
+        assert!(echo.body.is_empty());
+        assert_eq!(load_margin(&passage.book, 4).unwrap().len(), 1);
+        assert!(load_margin("/books/b.epub", 4).unwrap().is_empty());
+        let switched = serde_json::json!({
+            "book_gen": passage.gen + 1,
+            "passage": serde_json::Value::Null,
+        });
+        let cleared = note_from_status(&saved, &switched, "/books/b.epub");
+        assert!(cleared.passage.is_none());
+        let other = spike_library::margin::LiveBook {
+            book: "/books/b.epub".into(),
+            gen: passage.gen + 1,
+        };
+        let unselected = commit_margin(
+            &spike_library::margin::NoteField {
+                body: "摘录".into(),
+                ..cleared
+            },
+            "摘录",
+            &other,
+        );
+        assert_eq!(unselected.body, "摘录");
+        assert_eq!(unselected.notice, spike_library::margin::NOTICE_SELECT);
+        let stale = commit_margin(
+            &spike_library::margin::NoteField {
+                body: "摘录".into(),
+                passage: Some(passage),
+                ..spike_library::margin::NoteField::default()
+            },
+            "摘录",
+            &other,
+        );
+        assert_eq!(stale.body, "摘录");
+        assert_eq!(stale.notice, spike_library::margin::NOTICE_STALE);
+        assert!(load_margin("/books/b.epub", 4).unwrap().is_empty());
+        assert_eq!(load_margin("/books/a.pdf", 4).unwrap().len(), 1);
         drop(restore);
         let _ = std::fs::remove_dir_all(dir);
     }

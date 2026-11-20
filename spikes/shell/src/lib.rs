@@ -436,6 +436,8 @@ pub fn SpikeApp() -> impl IntoElement {
     let margin_live = signal(spike_library::margin::LivePage::default());
     let margin_hold = signal(spike_library::margin::Hold::default());
     let margin_fault = signal(String::new());
+    let margin_note = signal(spike_library::margin::NoteField::default());
+    let margin_gen = signal(0_u64);
     let shell_chrome = signal(form::chrome_off());
     let bars_row = signal(shell_on);
     let dropped = stage.clone();
@@ -702,22 +704,30 @@ pub fn SpikeApp() -> impl IntoElement {
             {
                 let notice = root_notice.clone();
                 let fault = margin_fault.clone();
+                let note = margin_note.clone();
                 let visit = visit.clone();
                 move || {
                     let reading = visit.get().surface == visit::Surface::Reading;
-                    !notice.get().is_empty() || (reading && !fault.get().is_empty())
+                    !notice.get().is_empty()
+                        || (reading && (!fault.get().is_empty() || !note.get().notice.is_empty()))
                 }
             },
             {
                 let notice = root_notice.clone();
                 let fault = margin_fault.clone();
+                let note = margin_note.clone();
                 move || {
                     text(move || {
                         let open = notice.get();
                         if !open.is_empty() {
                             open
                         } else {
-                            fault.get()
+                            let save = note.get().notice;
+                            if !save.is_empty() {
+                                save
+                            } else {
+                                fault.get()
+                            }
                         }
                     })
                     .text_size(px(13.0))
@@ -813,6 +823,8 @@ pub fn SpikeApp() -> impl IntoElement {
                             let visit = visit.clone();
                             let ease_tick = ease_tick.clone();
                             let margin_live = margin_live.clone();
+                            let margin_note = margin_note.clone();
+                            let margin_gen = margin_gen.clone();
                             move |event: &NativeEvent| {
                                 if event.name.as_ref() == "ease" {
                                     let leg = event.data["leg"].as_u64().unwrap_or(0);
@@ -851,7 +863,19 @@ pub fn SpikeApp() -> impl IntoElement {
                                     moving: event.data["margin_moving"].as_bool().unwrap_or(false),
                                 };
                                 if margin_live.get() != next_live {
-                                    margin_live.set(next_live);
+                                    margin_live.set(next_live.clone());
+                                }
+                                let gen = event.data["book_gen"].as_u64().unwrap_or(0);
+                                if margin_gen.get() != gen {
+                                    margin_gen.set(gen);
+                                }
+                                let updated = form::note_from_status(
+                                    &margin_note.get(),
+                                    &event.data,
+                                    &next_live.book,
+                                );
+                                if updated != margin_note.get() {
+                                    margin_note.set(updated);
                                 }
                                 title.set(event.data["title"].as_str().unwrap_or("").to_string());
                                 variant
@@ -994,6 +1018,8 @@ pub fn SpikeApp() -> impl IntoElement {
                 let live = margin_live.clone();
                 let hold = margin_hold.clone();
                 let fault = margin_fault.clone();
+                let note = margin_note.clone();
+                let gen = margin_gen.clone();
                 move || {
                     form::reading_margin(
                         form.clone(),
@@ -1004,6 +1030,8 @@ pub fn SpikeApp() -> impl IntoElement {
                         live.clone(),
                         hold.clone(),
                         fault.clone(),
+                        note.clone(),
+                        gen.clone(),
                     )
                 }
             },

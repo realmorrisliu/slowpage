@@ -139,6 +139,7 @@ jobs:
             a_wheel_on_the_margin_stays_with_the_cards \
             the_margin_keeps_the_departing_page_and_maps_its_line \
             a_broken_annotation_store_keeps_its_error \
+            return_saves_the_margin_note_and_keeps_a_failed_draft \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -201,7 +202,8 @@ jobs:
             margin_card_tokens_match_the_layout \
             a_wheel_on_the_margin_stays_with_the_cards \
             the_margin_keeps_the_departing_page_and_maps_its_line \
-            a_broken_annotation_store_keeps_its_error
+            a_broken_annotation_store_keeps_its_error \
+            return_saves_the_margin_note_and_keeps_a_failed_draft
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

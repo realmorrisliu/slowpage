@@ -279,7 +279,11 @@ define_class!(
                 }
                 return;
             }
-            self.ivars().state.borrow_mut().drag = Some((point, point));
+            {
+                let mut state = self.ivars().state.borrow_mut();
+                state.drag_gen = state.book_gen;
+                state.drag = Some((point, point));
+            }
         }
 
         #[unsafe(method(mouseDragged:))]
@@ -353,6 +357,18 @@ struct PdfView {
     frame_ms: Vec<f64>,
 }
 
+struct EpubSelection {
+    token: u64,
+    anchor: Option<Anchor>,
+    ready: bool,
+    page: u32,
+    start: u32,
+    end: u32,
+    text: String,
+    rects: Vec<(f64, f64, f64, f64)>,
+    right: f64,
+}
+
 struct State {
     context: ComponentContext,
     mode: Mode,
@@ -364,6 +380,7 @@ struct State {
     book_kind: &'static str,
     book_path: String,
     book_gen: u64,
+    drag_gen: u64,
     pdf_motion: Option<PdfMotion>,
     pdf_drag: f64,
     pdf_glide: Option<PdfGlide>,
@@ -376,6 +393,8 @@ struct State {
     epub_page: usize,
     anchor: Option<Anchor>,
     anchor_page: Option<u32>,
+    note: Option<spike_library::margin::Passage>,
+    selection_token: u64,
     web: Option<crate::web::WebChapter>,
     web_pages: usize,
     trim_id: String,
@@ -720,6 +739,9 @@ impl State {
     }
 
     fn finish_drag(&mut self, start: (f64, f64), end: (f64, f64)) {
+        if self.drag_gen != self.book_gen {
+            return;
+        }
         let display = self.scale.display() as f64;
         let (origin_x, origin_y) = self.pdf_origin();
         let Some(pdf) = self.pdf.as_mut() else {
@@ -746,8 +768,7 @@ impl State {
             if let Anchor::Pdf { page: slot, .. } = &mut anchor {
                 *slot = page as u32;
             }
-            self.anchor_page = Some(page as u32);
-            self.anchor = Some(anchor);
+            self.store_pdf_anchor(anchor);
             self.publish();
         }
     }
@@ -882,8 +903,7 @@ impl State {
             .filter(|glyph| glyph.index >= start && glyph.index < end)
             .map(|glyph| glyph.quad)
             .collect();
-        self.anchor_page = Some(0);
-        self.anchor = Some(Anchor::Pdf {
+        self.store_pdf_anchor(Anchor::Pdf {
             page: 0,
             start,
             end,
@@ -930,8 +950,7 @@ impl State {
             if let Anchor::Pdf { page, .. } = &mut anchor {
                 *page = 0;
             }
-            self.anchor_page = Some(0);
-            self.anchor = Some(anchor);
+            self.store_pdf_anchor(anchor);
             let display = self.scale.display() as f64;
             self.offset = (first.quad.y as f64 * display - 36.0).max(0.0);
             if let Some(Anchor::Pdf { text, .. }) = &self.anchor {
@@ -1329,7 +1348,7 @@ impl State {
             PdfEngine::Pdfium => Mode::Pdfium,
         };
         self.offset = page_offset(&sizes, page, self.scale);
-        self.anchor = None;
+        self.clear_selection();
         self.pdf = Some(PdfView {
             doc,
             sizes,
@@ -1391,7 +1410,7 @@ impl State {
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
         self.dismiss_web();
         self.pdf = None;
-        self.anchor = None;
+        self.clear_selection();
         self.book_path = book.path.clone();
         let mut replaced_href = String::new();
         let mut offset = 0u32;
@@ -1548,10 +1567,10 @@ impl State {
     }
 
     fn poll_web(&mut self) {
-        let Some(web) = &self.web else {
+        let Some(web) = self.web.clone() else {
             return;
         };
-        let (reload, changed) = {
+        let (reload, changed, selection) = {
             let inbox = web.inbox.borrow();
             let mut changed = false;
             if let Some((page, pages)) = inbox.pages {
@@ -1567,12 +1586,27 @@ impl State {
                     self.footer_at = Some(Instant::now());
                 }
             }
-            if inbox.anchor.is_some() && self.anchor != inbox.anchor {
-                self.anchor = inbox.anchor.clone();
+            let selection = if inbox.selection_token != self.selection_token {
                 changed = true;
-            }
-            (inbox.reload && !inbox.did_reload, changed)
+                Some(EpubSelection {
+                    token: inbox.selection_token,
+                    anchor: inbox.anchor.clone(),
+                    ready: inbox.selection_ready,
+                    page: inbox.selection_page,
+                    start: inbox.selection_start,
+                    end: inbox.selection_end,
+                    text: inbox.selection_text.clone(),
+                    rects: inbox.selection_rects.clone(),
+                    right: inbox.selection_right,
+                })
+            } else {
+                None
+            };
+            (inbox.reload && !inbox.did_reload, changed, selection)
         };
+        if let Some(selection) = selection {
+            self.apply_epub(selection);
+        }
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
             if let Some(offset) = crate::web::take_reader_reveal() {
                 web.reveal(offset);
@@ -2026,36 +2060,140 @@ impl State {
                 web.set_footer(&left, &right);
             }
         }
-        self.context.emit(
-            "status",
-            json!({
-                "title": title,
-                "variant": variant,
-                "left": left,
-                "right": right,
-                "show_text": show_text,
-                "html": html,
-                "anchor": anchor,
-                "title_opacity": title_opacity,
-                "chrome_shared": entered.chrome_shared,
-                "footer_opacity": footer_opacity,
-                "bars_row": bars_row,
-                "trim": self.trim_id,
-                "page": shown_page,
-                "pages": shown_pages,
-                "margin_book": margin_book,
-                "margin_page": margin_page,
-                "margin_moving": margin_moving,
-                "margin_pw": margin_pw,
-                "margin_ph": margin_ph,
-                "empty": self.mode == Mode::Empty,
-                "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
-                "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
-                "bar_w": self.chrome.bar_w.get(),
-                "lights_visible": self.chrome.lights_visible.get(),
-                "content_top": self.chrome.content_top.get(),
-            }),
-        );
+        let mut status = json!({
+            "title": title,
+            "variant": variant,
+            "left": left,
+            "right": right,
+            "show_text": show_text,
+            "html": html,
+            "anchor": anchor,
+            "title_opacity": title_opacity,
+            "chrome_shared": entered.chrome_shared,
+            "footer_opacity": footer_opacity,
+            "bars_row": bars_row,
+            "trim": self.trim_id,
+            "page": shown_page,
+            "pages": shown_pages,
+            "margin_book": margin_book,
+            "margin_page": margin_page,
+            "margin_moving": margin_moving,
+            "margin_pw": margin_pw,
+            "margin_ph": margin_ph,
+            "empty": self.mode == Mode::Empty,
+            "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
+            "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
+            "bar_w": self.chrome.bar_w.get(),
+            "lights_visible": self.chrome.lights_visible.get(),
+            "content_top": self.chrome.content_top.get(),
+        });
+        status["passage"] = crate::visit::passage_value(self.published_passage());
+        status["book_gen"] = json!(self.book_gen);
+        self.context.emit("status", status);
+    }
+
+    fn published_passage(&self) -> Option<&spike_library::margin::Passage> {
+        self.note
+            .as_ref()
+            .filter(|note| note.book == self.book_path && note.gen == self.book_gen)
+    }
+
+    fn clear_selection(&mut self) {
+        self.anchor = None;
+        self.anchor_page = None;
+        self.note = None;
+    }
+
+    fn store_pdf_anchor(&mut self, anchor: Anchor) {
+        let built = match &anchor {
+            Anchor::Pdf {
+                page,
+                start,
+                end,
+                text,
+                quads,
+            } => {
+                let glyphs = self
+                    .pdf
+                    .as_ref()
+                    .and_then(|pdf| pdf.text.get(&(*page as usize)))
+                    .map(|page_text| {
+                        page_text
+                            .glyphs
+                            .iter()
+                            .map(|glyph| spike_library::margin::GlyphBox {
+                                index: glyph.index,
+                                x: f64::from(glyph.quad.x),
+                                y: f64::from(glyph.quad.y),
+                                w: f64::from(glyph.quad.w),
+                                h: f64::from(glyph.quad.h),
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                let text_right = glyphs
+                    .as_deref()
+                    .and_then(|glyphs| spike_library::margin::pdf_line_end(glyphs, *start, *end));
+                let quads = quads
+                    .iter()
+                    .map(|quad| spike_library::margin::Quad {
+                        x: f64::from(quad.x),
+                        y: f64::from(quad.y),
+                        w: f64::from(quad.w),
+                        h: f64::from(quad.h),
+                    })
+                    .collect();
+                text_right.and_then(|text_right| {
+                    spike_library::margin::passage_from(spike_library::margin::Selection {
+                        book: self.book_path.clone(),
+                        gen: self.book_gen,
+                        page: crate::visit::margin_page_number(*page as usize),
+                        spine: String::new(),
+                        start: *start,
+                        end: *end,
+                        text: text.clone(),
+                        quads,
+                        text_right,
+                    })
+                })
+            }
+            Anchor::Epub { .. } => None,
+        };
+        if let Anchor::Pdf { page, .. } = &anchor {
+            self.anchor_page = Some(*page);
+        }
+        self.anchor = Some(anchor);
+        self.note = built;
+    }
+
+    fn apply_epub(&mut self, selection: EpubSelection) {
+        self.selection_token = selection.token;
+        self.anchor = selection.anchor.clone();
+        self.anchor_page = None;
+        let spine = match &selection.anchor {
+            Some(Anchor::Epub { spine_href, .. }) => spine_href.clone(),
+            _ => String::new(),
+        };
+        if !selection.ready {
+            self.note = None;
+            return;
+        }
+        let rects = selection
+            .rects
+            .iter()
+            .copied()
+            .map(|(x, y, w, h)| spike_library::margin::MeasuredRect { x, y, w, h })
+            .collect::<Vec<_>>();
+        self.note = spike_library::margin::passage_from(spike_library::margin::Selection {
+            book: self.book_path.clone(),
+            gen: self.book_gen,
+            page: selection.page,
+            spine,
+            start: selection.start,
+            end: selection.end,
+            text: selection.text,
+            quads: spike_library::margin::measured_quads(&rects),
+            text_right: selection.right,
+        });
     }
 
     fn margin_frame(&self) -> (String, u32, bool, f64, f64) {
@@ -2087,13 +2225,21 @@ impl State {
                 )
             }
             Mode::WebKit => {
-                let moving = self.web.as_ref().is_some_and(|web| web.inbox.borrow().leaf);
+                let (moving, page_w, page_h) = self
+                    .web
+                    .as_ref()
+                    .map(|web| {
+                        let inbox = web.inbox.borrow();
+                        (inbox.leaf, inbox.page_w, inbox.page_h)
+                    })
+                    .unwrap_or((false, 0.0, 0.0));
+                let (page_w, page_h) = spike_library::margin::epub_page_size(page_w, page_h);
                 (
                     book,
                     (self.epub_page as u32).saturating_add(1),
                     moving,
-                    0.0,
-                    0.0,
+                    page_w,
+                    page_h,
                 )
             }
             _ => (book, 0, false, 0.0, 0.0),
@@ -2240,6 +2386,7 @@ impl Stage {
             book_kind: "pride",
             book_path: String::new(),
             book_gen: 1,
+            drag_gen: 0,
             pdf_motion: None,
             pdf_drag: 0.0,
             pdf_glide: None,
@@ -2252,6 +2399,8 @@ impl Stage {
             epub_page: 0,
             anchor: None,
             anchor_page: None,
+            note: None,
+            selection_token: 0,
             web: None,
             web_pages: 1,
             trim_id: crate::settings::load(&crate::settings::path()),
