@@ -100,6 +100,7 @@ jobs:
             a_page_link_click_posts_the_character_offset \
             a_blocked_page_eases_back_to_the_same_column \
             a_blocked_ease_leaves_the_stored_sentence \
+            reading_chrome_follows_the_pointer_and_drops_a_stale_hide \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
@@ -144,6 +145,7 @@ jobs:
             a_page_link_click_posts_the_character_offset \
             a_blocked_page_eases_back_to_the_same_column \
             a_blocked_ease_leaves_the_stored_sentence \
+            reading_chrome_follows_the_pointer_and_drops_a_stale_hide \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \

@@ -354,6 +354,76 @@ pub fn title_alpha(shown_ms: u32) -> f32 {
     fade_down(shown_ms, TITLE_DELAY_MS, TITLE_OVER_MS).clamp(0.0, 1.0)
 }
 
+/// One step of the shell reading chrome. The same value paints the traffic
+/// lights and the book title. A key, Space, a trackpad swipe, and an edge
+/// click are not inputs: they cannot raise this alpha.
+pub const CHROME_STEP: f32 = 0.25;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChromeFade {
+    pub alpha: f32,
+    pub generation: u64,
+    pub away_ms: Option<u32>,
+}
+
+impl ChromeFade {
+    pub const fn hidden() -> Self {
+        Self {
+            alpha: 0.0,
+            generation: 0,
+            away_ms: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChromeSample {
+    pub generation: u64,
+    pub pointer_at_top: bool,
+    pub focused: bool,
+    pub dt_ms: u32,
+    pub cut: bool,
+}
+
+pub fn step_chrome(mut clock: ChromeFade, sample: ChromeSample) -> ChromeFade {
+    if sample.cut || sample.generation != clock.generation {
+        clock.generation = sample.generation;
+        clock.away_ms = None;
+        if sample.cut {
+            clock.alpha = 0.0;
+        }
+    }
+    if !sample.focused {
+        clock.alpha = 0.0;
+        clock.away_ms = None;
+        return clock;
+    }
+    if sample.pointer_at_top {
+        clock.away_ms = None;
+        clock.alpha = approach_chrome(clock.alpha, 1.0);
+        return clock;
+    }
+    let away = clock.away_ms.unwrap_or(0).saturating_add(sample.dt_ms);
+    clock.away_ms = Some(away);
+    if away < TITLE_DELAY_MS {
+        return clock;
+    }
+    clock.alpha = approach_chrome(clock.alpha, 0.0);
+    if clock.alpha < 0.02 {
+        clock.alpha = 0.0;
+    }
+    clock
+}
+
+fn approach_chrome(current: f32, target: f32) -> f32 {
+    let delta = target - current;
+    if delta.abs() <= CHROME_STEP {
+        target
+    } else {
+        current + delta.signum() * CHROME_STEP
+    }
+}
+
 fn fade_down(elapsed: u32, delay: u32, over: u32) -> f32 {
     let value = if elapsed <= delay {
         1.0
@@ -2076,6 +2146,142 @@ mod tests {
         assert!(!lower.contains("theme"));
         assert!(!lower.contains("spread"));
         assert!(!lower.contains("text-wrap"));
+    }
+
+    fn chrome_sample(
+        generation: u64,
+        pointer_at_top: bool,
+        focused: bool,
+        dt_ms: u32,
+        cut: bool,
+    ) -> ChromeSample {
+        ChromeSample {
+            generation,
+            pointer_at_top,
+            focused,
+            dt_ms,
+            cut,
+        }
+    }
+
+    #[test]
+    fn reading_chrome_follows_the_pointer_and_drops_a_stale_hide() {
+        let mut clock = ChromeFade::hidden();
+        for _ in 0..4 {
+            clock = step_chrome(clock, chrome_sample(0, true, true, 16, false));
+        }
+        assert_eq!(clock.alpha, 1.0);
+        assert_eq!(clock.away_ms, None);
+
+        clock = step_chrome(clock, chrome_sample(0, false, true, 16, false));
+        assert_eq!(clock.alpha, 1.0);
+        assert_eq!(clock.away_ms, Some(16));
+        clock = step_chrome(clock, chrome_sample(0, true, true, 16, false));
+        assert_eq!(clock.alpha, 1.0);
+        assert_eq!(clock.away_ms, None);
+
+        clock = step_chrome(clock, chrome_sample(0, false, true, 399, false));
+        assert_eq!(clock.alpha, 1.0);
+        clock = step_chrome(clock, chrome_sample(0, false, true, 1, false));
+        assert_eq!(clock.alpha, 0.75);
+        let hidden = {
+            let mut faded = clock;
+            for _ in 0..4 {
+                faded = step_chrome(faded, chrome_sample(0, false, true, 16, false));
+            }
+            faded
+        };
+        assert_eq!(hidden.alpha, 0.0);
+
+        let mut held = ChromeFade {
+            alpha: 1.0,
+            generation: 0,
+            away_ms: None,
+        };
+        for _ in 0..10 {
+            held = step_chrome(held, chrome_sample(0, false, true, 16, false));
+            held = step_chrome(held, chrome_sample(0, true, true, 16, false));
+        }
+        assert_eq!(held.alpha, 1.0);
+        assert_eq!(held.away_ms, None);
+
+        let mut quiet = ChromeFade::hidden();
+        for _ in 0..20 {
+            quiet = step_chrome(quiet, chrome_sample(0, false, true, 50, false));
+        }
+        assert_eq!(quiet.alpha, 0.0);
+
+        let blurred = step_chrome(
+            ChromeFade {
+                alpha: 1.0,
+                generation: 3,
+                away_ms: Some(100),
+            },
+            chrome_sample(3, true, false, 16, false),
+        );
+        assert_eq!(blurred.alpha, 0.0);
+        assert_eq!(blurred.away_ms, None);
+
+        let stale = ChromeFade {
+            alpha: 1.0,
+            generation: 1,
+            away_ms: Some(390),
+        };
+        let resized = step_chrome(stale, chrome_sample(2, false, true, 16, false));
+        assert_eq!(resized.alpha, 1.0);
+        assert_eq!(resized.away_ms, Some(16));
+        assert_eq!(resized.generation, 2);
+
+        let switched = step_chrome(stale, chrome_sample(2, false, true, 16, true));
+        assert_eq!(switched.alpha, 0.0);
+        assert_eq!(switched.away_ms, Some(16));
+        let switched_at_top = step_chrome(stale, chrome_sample(2, true, true, 16, true));
+        assert_eq!(switched_at_top.alpha, CHROME_STEP);
+        assert_eq!(switched_at_top.away_ms, None);
+
+        let chrome = include_str!("chrome.rs");
+        let sync = chrome
+            .split("pub fn sync")
+            .nth(1)
+            .and_then(|rest| rest.split("pub fn paint_paper_layer").next())
+            .unwrap_or("");
+        assert!(sync.contains("reading_chrome_alpha"));
+        assert!(sync.contains("rt.reading.get()"));
+        assert!(sync.contains("paint_lights"));
+        assert!(sync.contains("align_traffic_centers"));
+        assert!(sync.contains("measure_traffic_bar"));
+        assert!(sync.contains("place_fullscreen_lights"));
+        assert!(chrome.contains("9.0 + index as f64 * 22.0"));
+        assert!(chrome.contains("crate::tokens::chrome_center()"));
+        let keys = chrome
+            .split("NSEventMask::KeyDown")
+            .next()
+            .and_then(|head| head.rsplit("RcBlock::new").next())
+            .unwrap_or("");
+        assert!(keys.contains("abandon_swipe"));
+        assert!(!keys.contains("lights"));
+        assert!(chrome.contains("fn reading_chrome_alpha"));
+        assert!(chrome.contains("step_chrome"));
+        assert!(chrome.contains("near_top"));
+        assert!(chrome.contains("isKeyWindow"));
+
+        let stage = include_str!("stage.rs");
+        assert!(stage.contains("self.chrome.cut_chrome()"));
+        assert!(stage.contains("chrome.resize_chrome()"));
+        assert!(stage.contains("self.chrome.lights.get() as f32"));
+        assert!(stage.contains("chrome.lights_changed"));
+
+        let root = include_str!("lib.rs");
+        assert!(root.contains("if !chrome_shared.get()"));
+        assert!(root.contains("if shared || !title_hover.get()"));
+        assert!(stage.contains("\"chrome_shared\""));
+
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+        )
+        .unwrap_or_default();
+        assert!(manifest.contains("nsh-core = \"=0.5.1\""));
+        assert!(manifest.contains("nsh-platform-macos"));
     }
 
     #[test]

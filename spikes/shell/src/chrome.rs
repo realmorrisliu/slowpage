@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use nsh_platform_macos::objc2::rc::Retained;
 use nsh_platform_macos::objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
@@ -98,6 +99,11 @@ pub struct Runtime {
     bar_fullscreen_sent: Cell<bool>,
     pub laying_out: Cell<bool>,
     traffic: RefCell<Option<TrafficLights>>,
+    chrome_fade: Cell<crate::reading::ChromeFade>,
+    chrome_gen: Cell<u64>,
+    chrome_cut: Cell<bool>,
+    chrome_tick: Cell<Option<Instant>>,
+    sent_lights: Cell<f64>,
 }
 
 impl Default for Runtime {
@@ -149,6 +155,11 @@ impl Default for Runtime {
             bar_fullscreen_sent: Cell::new(false),
             laying_out: Cell::new(false),
             traffic: RefCell::new(None),
+            chrome_fade: Cell::new(crate::reading::ChromeFade::hidden()),
+            chrome_gen: Cell::new(0),
+            chrome_cut: Cell::new(false),
+            chrome_tick: Cell::new(None),
+            sent_lights: Cell::new(f64::NAN),
         }
     }
 }
@@ -156,6 +167,26 @@ impl Default for Runtime {
 impl Runtime {
     pub fn set_title(&self, title: &str) {
         *self.title.borrow_mut() = title.to_string();
+    }
+
+    pub fn cut_chrome(&self) {
+        self.chrome_cut.set(true);
+        self.chrome_gen.set(self.chrome_gen.get().wrapping_add(1));
+        self.lights.set(0.0);
+        self.sent_lights.set(f64::NAN);
+    }
+
+    pub fn resize_chrome(&self) {
+        self.chrome_gen.set(self.chrome_gen.get().wrapping_add(1));
+    }
+
+    pub fn lights_changed(&self, alpha: f64) -> bool {
+        let prev = self.sent_lights.get();
+        if prev.is_finite() && (prev - alpha).abs() < 0.001 {
+            return false;
+        }
+        self.sent_lights.set(alpha);
+        true
     }
 
     pub fn mark_bar_dirty(&self) {
@@ -378,22 +409,30 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     note_fullscreen_hook(window, rt);
     request_fullscreen(window, rt, fullscreen, armed, stable_fit);
     if fullscreen {
-        let shown = hover_target(window);
-        if shell_on() {
+        if shell_on() && rt.reading.get() && !flag("SPIKE_LIGHTS") {
             // The shell covers the screen, so AppKit's fullscreen title bar
-            // never receives the hover. Put the buttons on the content view
-            // while the pointer is at the top, and hide them otherwise.
-            place_fullscreen_lights(window, shown > 0.5);
-            rt.lights.set(shown);
+            // never receives the hover. The buttons stay on the same content
+            // coordinates and fade with the shared reading alpha.
+            let alpha = reading_chrome_alpha(window, rt);
+            place_fullscreen_lights(window, alpha);
+            rt.lights.set(alpha);
             clear_shell_chrome(window);
-            if rt.reading.get() {
-                place_contents_button(window, rt, if shown > 0.5 { 1.0 } else { 0.0 });
-            }
+            place_contents_button(window, rt, alpha);
         } else {
-            paint_lights(window, 1.0);
-            rt.lights.set(1.0);
-            place_contents(window, rt, shown);
-            place_title(window, rt, shown);
+            let shown = hover_target(window);
+            if shell_on() {
+                place_fullscreen_lights(window, if shown > 0.5 { 1.0 } else { 0.0 });
+                rt.lights.set(shown);
+                clear_shell_chrome(window);
+                if rt.reading.get() {
+                    place_contents_button(window, rt, if shown > 0.5 { 1.0 } else { 0.0 });
+                }
+            } else {
+                paint_lights(window, 1.0);
+                rt.lights.set(1.0);
+                place_contents(window, rt, shown);
+                place_title(window, rt, shown);
+            }
         }
         rt.full.set(true);
         write_json(window, rt, true);
@@ -463,9 +502,12 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
             }
         }
     }
-    // The installed app keeps the traffic lights and the toolbar on screen.
-    // The dev spike still fades them until the pointer is at the top.
-    let next = if shell_on() || flag("SPIKE_LIGHTS") || rt.product.get() {
+    // A shell reading window shares one alpha with the book title. The
+    // library, SPIKE_LIGHTS, and a product window that is not reading keep
+    // the lights on. The dev spike still fades toward the pointer.
+    let next = if shell_on() && rt.reading.get() && !flag("SPIKE_LIGHTS") {
+        reading_chrome_alpha(window, rt)
+    } else if shell_on() || flag("SPIKE_LIGHTS") || rt.product.get() {
         1.0
     } else {
         approach(rt.lights.get(), hover_target(window))
@@ -475,7 +517,7 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     if shell_on() {
         clear_shell_chrome(window);
         if rt.reading.get() {
-            place_contents_button(window, rt, 1.0);
+            place_contents_button(window, rt, next);
         } else if let Some(button) = rt.contents_button.borrow().clone() {
             button.setHidden(true);
         }
@@ -623,7 +665,7 @@ fn view_of(button: &NSButton) -> &NSView {
     view
 }
 
-fn place_fullscreen_lights(window: &NSWindow, show: bool) {
+fn place_fullscreen_lights(window: &NSWindow, alpha: f64) {
     let Some(content) = window.contentView() else {
         return;
     };
@@ -640,7 +682,7 @@ fn place_fullscreen_lights(window: &NSWindow, show: bool) {
             continue;
         };
         let view = view_of(&button);
-        if !show {
+        if alpha < 0.02 {
             unsafe {
                 let _: () = msg_send![&*button, setAlphaValue: 0.0_f64];
                 let _: () = msg_send![&*button, setHidden: true];
@@ -669,7 +711,7 @@ fn place_fullscreen_lights(window: &NSWindow, show: bool) {
         view.setFrame(NSRect::new(NSPoint::new(x, y), NSSize::new(14.0, 14.0)));
         unsafe {
             let _: () = msg_send![&*button, setHidden: false];
-            let _: () = msg_send![&*button, setAlphaValue: 1.0_f64];
+            let _: () = msg_send![&*button, setAlphaValue: alpha];
             let _: () = msg_send![&*button, setEnabled: true];
         }
     }
@@ -1268,6 +1310,29 @@ fn apply_frame(window: &NSWindow, screen: &NSScreen, frame: &Frame, animate: boo
         true,
         animate,
     );
+}
+
+fn reading_chrome_alpha(window: &NSWindow, rt: &Runtime) -> f64 {
+    let now = Instant::now();
+    let dt = rt
+        .chrome_tick
+        .get()
+        .map(|then| {
+            let ms = now.saturating_duration_since(then).as_millis();
+            u32::try_from(ms).unwrap_or(u32::MAX)
+        })
+        .unwrap_or(0);
+    rt.chrome_tick.set(Some(now));
+    let sample = crate::reading::ChromeSample {
+        generation: rt.chrome_gen.get(),
+        pointer_at_top: near_top(window),
+        focused: window.isKeyWindow(),
+        dt_ms: dt,
+        cut: rt.chrome_cut.replace(false),
+    };
+    let clock = crate::reading::step_chrome(rt.chrome_fade.get(), sample);
+    rt.chrome_fade.set(clock);
+    f64::from(clock.alpha)
 }
 
 fn hover_target(window: &NSWindow) -> f64 {

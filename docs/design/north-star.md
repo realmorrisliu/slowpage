@@ -161,6 +161,7 @@ Until S3, the spike centers the page in the area from the bar's right edge to th
 - 2026-11-11. The sidebar is 220 points of text rows. Morris rejected the icon rail.
 - 2026-11-17. Reading-form interactions follow `docs/design/reading-interactions.md`. An item merges on the necessary cloud checks and an independent review. A run that did not happen stays not run, and it is not a pass.
 - 2026-11-20. Morris chose that an EPUB turn blocked at the first or last page of the open chapter eases back to that same column. The ease is at most 24 CSS pixels and at most 6 percent of the column width, over the existing 160 ms turn. The page number and the stored sentence stay. A contents choice, an in-book link, and a return still change chapters. PDF paging is unchanged. Checklist item 3 is not done. The page script has no reduce-motion switch, and this choice does not add one.
+- 2026-11-20. On the shell reading window the traffic lights and the book title share one alpha. The pointer in the top 56 points shows them. Leaving that band holds them for 400 ms, then fades them by a 0.25 step. A key, Space, a trackpad swipe, and an edge click do not show them. Losing the window key hides them. Opening another book cuts the fade, and a resize drops the pending delay. The measured button frames and the fullscreen reparent coordinates stay. Checklist item 8 is not done. NSH stays at 0.5.1, and the AppKit toolbar stays off.
 
 ## PDF reading
 

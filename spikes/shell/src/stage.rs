@@ -97,6 +97,12 @@ define_class!(
                 };
                 chrome.reading.set(open && !crate::visit::on_library());
                 crate::chrome::sync(&window, &chrome, page);
+                if crate::chrome::shell_on()
+                    && chrome.reading.get()
+                    && chrome.lights_changed(chrome.lights.get())
+                {
+                    self.ivars().state.borrow().publish();
+                }
                 if open {
                     let target = unsafe { &*(std::ptr::from_ref(self).cast::<AnyObject>()) };
                     crate::chrome::bind_contents(&chrome, target);
@@ -945,6 +951,7 @@ impl State {
                 &replaced_href,
             );
         }
+        self.chrome.cut_chrome();
         self.publish();
         true
     }
@@ -1483,6 +1490,9 @@ impl State {
                 )
             }
         };
+        if crate::chrome::shell_on() && self.chrome.reading.get() {
+            title_opacity = self.chrome.lights.get() as f32;
+        }
         let anchor = self
             .anchor
             .as_ref()
@@ -1505,6 +1515,7 @@ impl State {
                 "html": html,
                 "anchor": anchor,
                 "title_opacity": title_opacity,
+                "chrome_shared": crate::chrome::shell_on() && self.chrome.reading.get(),
                 "footer_opacity": footer_opacity,
                 "bars_row": bars_row,
                 "trim": self.trim_id,
@@ -1959,6 +1970,7 @@ fn publish_shell_if_resized(state: &Rc<RefCell<State>>, width: f64, height: f64,
     });
     trace_resize(source, width, height, changed);
     if changed {
+        state.borrow().chrome.resize_chrome();
         state.borrow().publish();
     }
 }
