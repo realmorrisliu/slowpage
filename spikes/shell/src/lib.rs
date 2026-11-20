@@ -502,13 +502,17 @@ pub fn SpikeApp() -> impl IntoElement {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
         let stage = stage.clone();
-        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Escape, &stage)
+        move |_| {
+            apply_leave(&visit, &shell_form, visit::LeaveKey::Escape, &stage);
+        }
     });
     on_key_with("mod+[", leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
         let stage = stage.clone();
-        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Back, &stage)
+        move |_| {
+            apply_leave(&visit, &shell_form, visit::LeaveKey::Back, &stage);
+        }
     });
     on_key_with(IMMERSIVE_KEY, leave_keys, {
         let visit = visit.clone();
@@ -1214,7 +1218,7 @@ fn reading_menu(
 #[cfg(test)]
 mod launch_tests {
     use super::form;
-    use super::visit::{self, Surface, WheelOwner};
+    use super::visit::{self, PlaceFile, Surface, WheelOwner};
     use super::{apply_leave, launch_target, LaunchTarget};
     use nsh_core::element::reactive::signal;
     use nsh_core::prelude::element_ref;
