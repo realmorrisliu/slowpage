@@ -4523,6 +4523,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
     fn a_pending_fragment_keeps_the_origin_sentence() {
         let dir =
             std::env::temp_dir().join(format!("superreader-link-pending-{}", std::process::id()));
