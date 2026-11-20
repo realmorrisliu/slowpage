@@ -1483,7 +1483,8 @@ pub fn take_epub_wheel(phase: u64, momentum: u64, dx: f64, dy: f64) -> bool {
         .map(|(page, pages)| (page as u32, pages as u32))
         .unwrap_or((0, 0));
     let effect = SESSION.with(|session| {
-        session.borrow_mut().reader.swipe.offer(
+        crate::visit::offer_while_reading(
+            &mut session.borrow_mut().reader.swipe,
             crate::visit::WheelTick {
                 finger: crate::visit::finger_bits(phase),
                 momentum: momentum != 0,
@@ -1492,6 +1493,7 @@ pub fn take_epub_wheel(phase: u64, momentum: u64, dx: f64, dy: f64) -> bool {
             },
             page,
             pages,
+            crate::ease::current(),
         )
     });
     match effect {

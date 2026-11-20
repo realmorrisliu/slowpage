@@ -1486,6 +1486,7 @@ const SCRIPT: &str = r#"
     requestAnimationFrame(frame);
   }
   window.spikeFollowEnd = function (delta, token) {
+    if (window.__spikeEase) return "no";
     if (busy && !committing && flying === "restore") releaseFlying();
     if (busy) {
       // A key slide is not a commit. Drop the follow paint and let that slide
@@ -1758,6 +1759,8 @@ mod tests {
         assert_eq!(v["ease"]["transform"], "");
         assert_eq!(v["ease"]["scroll"], 0);
         assert_eq!(v["ease"]["turns"], 0);
+        assert_eq!(v["ease"]["end"], "no");
+        assert_eq!(v["ease"]["endScroll"], 0);
         assert_eq!(v["ease"]["keyScroll"], 400);
     }
 
@@ -3322,9 +3325,11 @@ window.__spikeEase = 1;
 fire('click', { button: 0, clientX: 20, clientY: 100, target: { closest(){ return null; } }, preventDefault(){} });
 window.spikeFollow(80);
 const easeHeld = { transform: body.style.transform, scroll: body.scrollLeft, turns: turns().length };
+const easeEnd = window.spikeFollowEnd(1, 123);
+const easeEndScroll = body.scrollLeft;
 press('ArrowRight', false);
 const easeKeyed = sample();
-const ease = { transform: easeHeld.transform, scroll: easeHeld.scroll, turns: easeHeld.turns, keyScroll: easeKeyed.scroll };
+const ease = { transform: easeHeld.transform, scroll: easeHeld.scroll, turns: easeHeld.turns, end: easeEnd, endScroll: easeEndScroll, keyScroll: easeKeyed.scroll };
 window.__spikeEase = 0;
 
 console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease }));

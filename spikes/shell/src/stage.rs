@@ -943,13 +943,7 @@ impl State {
         } else {
             (self.shell_w, self.shell_h)
         };
-        crate::ease::present(
-            width,
-            height,
-            0.0,
-            crate::form::margin_shown(),
-            crate::ease::current(),
-        )
+        crate::ease::present(width, height, 0.0, crate::ease::current())
     }
 
     fn sync_ease(&mut self, view: &StageView) {

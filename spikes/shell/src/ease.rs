@@ -8,25 +8,92 @@ pub const EASE_MS: u32 = crate::reading::SLIDE_MS as u32;
 const LANDED: f64 = 1.0 - 1e-6;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+struct Mix {
+    hidden: f64,
+    shown: f64,
+    immersive: f64,
+}
+
+impl Mix {
+    fn page(margin: bool) -> Self {
+        if margin {
+            Self {
+                hidden: 0.0,
+                shown: 1.0,
+                immersive: 0.0,
+            }
+        } else {
+            Self {
+                hidden: 1.0,
+                shown: 0.0,
+                immersive: 0.0,
+            }
+        }
+    }
+
+    fn full() -> Self {
+        Self {
+            hidden: 0.0,
+            shown: 0.0,
+            immersive: 1.0,
+        }
+    }
+
+    fn lerp(self, to: Self, u: f64) -> Self {
+        Self {
+            hidden: self.hidden + (to.hidden - self.hidden) * u,
+            shown: self.shown + (to.shown - self.shown) * u,
+            immersive: self.immersive + (to.immersive - self.immersive) * u,
+        }
+    }
+
+    fn close(self, other: Self) -> bool {
+        (self.hidden - other.hidden).abs() < 1e-9
+            && (self.shown - other.shown).abs() < 1e-9
+            && (self.immersive - other.immersive).abs() < 1e-9
+    }
+
+    fn travel(self, to: Self) -> f64 {
+        ((self.hidden - to.hidden).abs()
+            + (self.shown - to.shown).abs()
+            + (self.immersive - to.immersive).abs())
+            / 2.0
+    }
+}
+
+fn fit_of(mix: Mix) -> Option<bool> {
+    if mix.immersive >= 0.5 {
+        None
+    } else {
+        Some(mix.shown >= mix.hidden)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Trip {
     leg: u64,
-    origin: f64,
-    goal: f64,
+    origin: Mix,
+    goal: Mix,
     span_ms: u32,
     elapsed_ms: u32,
-    fit_immersive: bool,
+    /// The page box. `None` is the immersive frame. It changes when a leg lands.
+    fit: Option<bool>,
 }
 
 impl Trip {
-    fn at(immersive: bool) -> Self {
-        let end = if immersive { 1.0 } else { 0.0 };
+    fn at(immersive: bool, margin: bool) -> Self {
+        let pose = if immersive {
+            Mix::full()
+        } else {
+            Mix::page(margin)
+        };
         Self {
             leg: 0,
-            origin: end,
-            goal: end,
+            origin: pose,
+            goal: pose,
             span_ms: 0,
             elapsed_ms: 0,
-            fit_immersive: immersive,
+            fit: fit_of(pose),
         }
     }
 
@@ -38,33 +105,48 @@ impl Trip {
         self.span_ms > 0 && self.elapsed_ms < self.span_ms
     }
 
-    pub fn u(self) -> f64 {
+    fn eased(self) -> f64 {
         if self.span_ms == 0 {
-            return self.goal;
+            return 1.0;
         }
         let t = (f64::from(self.elapsed_ms) / f64::from(self.span_ms)).clamp(0.0, 1.0);
-        let eased = (1.0 - (std::f64::consts::PI * t).cos()) / 2.0;
-        self.origin + (self.goal - self.origin) * eased
+        (1.0 - (std::f64::consts::PI * t).cos()) / 2.0
     }
 
-    fn aim(mut self, immersive: bool) -> Self {
-        let goal = if immersive { 1.0 } else { 0.0 };
-        if (self.goal - goal).abs() < 1e-9 {
+    fn pose(self) -> Mix {
+        if self.span_ms == 0 {
+            self.goal
+        } else {
+            self.origin.lerp(self.goal, self.eased())
+        }
+    }
+
+    pub fn u(self) -> f64 {
+        self.pose().immersive
+    }
+
+    fn aim(mut self, immersive: bool, margin: bool) -> Self {
+        let desired = if immersive {
+            Mix::full()
+        } else {
+            Mix::page(margin)
+        };
+        if self.goal.close(desired) {
             return self;
         }
-        let from = self.u();
-        let distance = (goal - from).abs();
+        let from = self.pose();
+        let distance = from.travel(desired);
         if distance < 1e-6 {
-            self.origin = goal;
-            self.goal = goal;
+            self.origin = desired;
+            self.goal = desired;
             self.span_ms = 0;
             self.elapsed_ms = 0;
-            self.fit_immersive = immersive;
+            self.fit = fit_of(desired);
             return self;
         }
         self.leg = self.leg.wrapping_add(1);
         self.origin = from;
-        self.goal = goal;
+        self.goal = desired;
         self.span_ms = ((distance * f64::from(EASE_MS)).round() as u32).max(1);
         self.elapsed_ms = 0;
         self
@@ -75,11 +157,10 @@ impl Trip {
             return self;
         }
         if elapsed_ms >= self.span_ms {
-            let immersive = self.goal >= 0.5;
             self.origin = self.goal;
             self.span_ms = 0;
             self.elapsed_ms = 0;
-            self.fit_immersive = immersive;
+            self.fit = fit_of(self.goal);
             return self;
         }
         self.elapsed_ms = elapsed_ms;
@@ -89,11 +170,19 @@ impl Trip {
 
 static TRIP: Mutex<Trip> = Mutex::new(Trip {
     leg: 0,
-    origin: 0.0,
-    goal: 0.0,
+    origin: Mix {
+        hidden: 1.0,
+        shown: 0.0,
+        immersive: 0.0,
+    },
+    goal: Mix {
+        hidden: 1.0,
+        shown: 0.0,
+        immersive: 0.0,
+    },
     span_ms: 0,
     elapsed_ms: 0,
-    fit_immersive: false,
+    fit: Some(false),
 });
 
 fn lock() -> std::sync::MutexGuard<'static, Trip> {
@@ -104,19 +193,36 @@ pub fn current() -> Trip {
     *lock()
 }
 
-pub fn settle(immersive: bool) {
+pub fn settle(immersive: bool, margin: bool) {
     let mut trip = lock();
     let leg = trip.leg.wrapping_add(1);
     *trip = Trip {
         leg,
-        ..Trip::at(immersive)
+        ..Trip::at(immersive, margin)
     };
 }
 
-pub fn retarget(immersive: bool) -> Trip {
+pub fn retarget(immersive: bool, margin: bool) -> Trip {
     let mut trip = lock();
-    *trip = trip.aim(immersive);
+    *trip = trip.aim(immersive, margin);
     *trip
+}
+
+pub fn follow_margin(shown: bool) {
+    let trip = current();
+    if trip.moving() || trip.u() > 1e-3 {
+        return;
+    }
+    let pose = trip.pose();
+    let already = if shown {
+        pose.shown >= 1.0 - 1e-6
+    } else {
+        pose.hidden >= 1.0 - 1e-6
+    };
+    if already {
+        return;
+    }
+    settle(false, shown);
 }
 
 pub fn advance(elapsed_ms: u32) -> Trip {
@@ -145,43 +251,48 @@ pub struct Presented {
     pub panel_toggle: bool,
 }
 
-pub fn present(width: f64, height: f64, top: f64, margin_shown: bool, trip: Trip) -> Presented {
-    let start = reading_frame(width, height, top, 0.0, margin_shown);
+pub fn present(width: f64, height: f64, top: f64, trip: Trip) -> Presented {
+    let hidden = reading_frame(width, height, top, 0.0, false);
+    let shown = reading_frame(width, height, top, 0.0, true);
     let end = immersive_frame(width, height);
-    let u = trip.u().clamp(0.0, 1.0);
-    let card = mix_rect(start.card, end.card, u);
-    let margin = margin_shown.then(|| {
-        let from = start.margin.unwrap_or(Rect {
-            x: width,
-            y: 0.0,
-            w: 0.0,
-            h: height.max(1.0),
-        });
+    let pose = trip.pose();
+    let card = mix3(hidden.card, shown.card, end.card, pose);
+    let margin = shown.margin.map(|from| {
         mix_rect(
-            from,
             Rect {
                 x: width,
                 y: 0.0,
                 w: 0.0,
                 h: height.max(1.0),
             },
-            u,
+            from,
+            pose.shown.clamp(0.0, 1.0),
         )
     });
     let margin = margin.filter(|rect| rect.w > 0.5);
+    let page = match trip.fit {
+        None => end.card,
+        Some(true) => shown.card,
+        Some(false) => hidden.card,
+    };
     Presented {
         card,
-        radius: CARD_RADIUS * (1.0 - u),
-        shadow: 1.0 - u,
+        radius: CARD_RADIUS * (1.0 - pose.immersive),
+        shadow: 1.0 - pose.immersive,
         margin,
-        covers: start.covers && u < LANDED,
-        page: if trip.fit_immersive {
-            end.card
-        } else {
-            start.card
-        },
-        plate: u >= LANDED,
-        panel_toggle: u < LANDED,
+        covers: shown.covers && pose.shown > 1e-3 && pose.immersive < LANDED,
+        page,
+        plate: pose.immersive >= LANDED,
+        panel_toggle: pose.immersive < LANDED,
+    }
+}
+
+fn mix3(hidden: Rect, shown: Rect, immersive: Rect, pose: Mix) -> Rect {
+    Rect {
+        x: hidden.x * pose.hidden + shown.x * pose.shown + immersive.x * pose.immersive,
+        y: hidden.y * pose.hidden + shown.y * pose.shown + immersive.y * pose.immersive,
+        w: hidden.w * pose.hidden + shown.w * pose.shown + immersive.w * pose.immersive,
+        h: hidden.h * pose.hidden + shown.h * pose.shown + immersive.h * pose.immersive,
     }
 }
 
@@ -219,7 +330,7 @@ mod tests {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
-            settle(false);
+            settle(false, true);
         }
     }
 
@@ -233,8 +344,8 @@ mod tests {
     #[test]
     fn an_immersive_ease_refits_once_and_drops_the_flying_page() {
         let _reset = Reset;
-        settle(false);
-        let wide = present(1440.0, 900.0, 0.0, true, current());
+        settle(false, true);
+        let wide = present(1440.0, 900.0, 0.0, current());
         near(wide.card, 6.0, 6.0, 1188.0, 888.0);
         near(wide.page, 6.0, 6.0, 1188.0, 888.0);
         assert!((wide.radius - 12.0).abs() < 0.01);
@@ -243,19 +354,19 @@ mod tests {
         assert!(!wide.covers && !wide.plate && wide.panel_toggle);
         assert!(pointer_turns(current()));
 
-        let enter = retarget(true);
+        let enter = retarget(true, true);
         assert!(enter.moving());
         assert!(!pointer_turns(enter));
-        let at_start = present(1440.0, 900.0, 0.0, true, advance(0));
+        let at_start = present(1440.0, 900.0, 0.0, advance(0));
         near(at_start.page, 6.0, 6.0, 1188.0, 888.0);
-        let mid = present(1440.0, 900.0, 0.0, true, advance(80));
+        let mid = present(1440.0, 900.0, 0.0, advance(80));
         near(mid.card, 3.0, 3.0, 1314.0, 894.0);
         near(mid.page, 6.0, 6.0, 1188.0, 888.0);
         assert!((mid.radius - 6.0).abs() < 0.01);
         assert!((mid.shadow - 0.5).abs() < 0.01);
         near(mid.margin.unwrap(), 1320.0, 0.0, 120.0, 900.0);
         assert!(!mid.plate && mid.panel_toggle);
-        let landed = present(1440.0, 900.0, 0.0, true, advance(160));
+        let landed = present(1440.0, 900.0, 0.0, advance(160));
         near(landed.card, 0.0, 0.0, 1440.0, 900.0);
         near(landed.page, 0.0, 0.0, 1440.0, 900.0);
         assert!(landed.margin.is_none());
@@ -264,60 +375,88 @@ mod tests {
         assert!(landed.plate && !landed.panel_toggle);
         assert!(pointer_turns(current()));
 
-        let leaving = retarget(false);
+        let leaving = retarget(false, true);
         assert_eq!(leaving.span_ms, EASE_MS);
-        let leave_start = present(1440.0, 900.0, 0.0, true, advance(0));
+        let leave_start = present(1440.0, 900.0, 0.0, advance(0));
         assert!(leave_start.plate);
         near(leave_start.page, 0.0, 0.0, 1440.0, 900.0);
-        let leave_mid = present(1440.0, 900.0, 0.0, true, advance(80));
+        let leave_mid = present(1440.0, 900.0, 0.0, advance(80));
         near(leave_mid.card, 3.0, 3.0, 1314.0, 894.0);
         near(leave_mid.page, 0.0, 0.0, 1440.0, 900.0);
         assert!(!leave_mid.plate);
-        let back = present(1440.0, 900.0, 0.0, true, advance(160));
+        let back = present(1440.0, 900.0, 0.0, advance(160));
         near(back.card, 6.0, 6.0, 1188.0, 888.0);
         near(back.page, 6.0, 6.0, 1188.0, 888.0);
 
-        retarget(true);
+        retarget(true, true);
         advance(80);
-        let turned = retarget(false);
+        let turned = retarget(false, true);
         assert_eq!(turned.span_ms, 80);
-        let halfway_back = present(1440.0, 900.0, 0.0, true, advance(40));
+        let halfway_back = present(1440.0, 900.0, 0.0, advance(40));
         assert!((current().u() - 0.25).abs() < 0.01);
         near(halfway_back.page, 6.0, 6.0, 1188.0, 888.0);
         let leg = current().leg();
-        let again = retarget(false);
+        let again = retarget(false, true);
         assert_eq!(again.leg(), leg);
         assert_eq!(again.span_ms, 80);
         advance(80);
         assert!(!current().moving());
         assert!(!escape_stays(false, current()));
 
-        retarget(true);
+        retarget(true, true);
         advance(80);
         assert!(escape_stays(true, current()));
-        retarget(false);
+        retarget(false, true);
         assert!(escape_stays(false, current()));
         let leaving = current().leg();
-        assert_eq!(retarget(false).leg(), leaving);
+        assert_eq!(retarget(false, true).leg(), leaving);
         advance(80);
         assert!(!escape_stays(false, current()));
 
-        retarget(true);
+        retarget(true, true);
         advance(80);
-        let narrow = present(700.0, 800.0, 0.0, true, current());
+        let narrow = present(700.0, 800.0, 0.0, current());
         near(narrow.card, 3.0, 3.0, 694.0, 794.0);
         near(narrow.page, 6.0, 6.0, 688.0, 788.0);
         assert!(narrow.covers);
         near(narrow.margin.unwrap(), 580.0, 0.0, 120.0, 800.0);
-        let column = present(818.0, 800.0, 0.0, true, current());
-        let covered = present(817.0, 800.0, 0.0, true, current());
+        let column = present(818.0, 800.0, 0.0, current());
+        let covered = present(817.0, 800.0, 0.0, current());
         assert!(!column.covers && covered.covers);
         advance(160);
-        let full = present(1512.0, 982.0, 0.0, true, current());
+        let full = present(1512.0, 982.0, 0.0, current());
         near(full.card, 0.0, 0.0, 1512.0, 982.0);
-        settle(false);
-        let schematic = present(1512.0, 982.0, 0.0, true, current());
+        settle(false, true);
+        let schematic = present(1512.0, 982.0, 0.0, current());
         near(schematic.card, 6.0, 6.0, 1260.0, 970.0);
+
+        settle(false, false);
+        near(
+            present(1440.0, 900.0, 0.0, current()).card,
+            6.0,
+            6.0,
+            1428.0,
+            888.0,
+        );
+        retarget(true, false);
+        advance(80);
+        let hidden_mid = present(1440.0, 900.0, 0.0, current());
+        near(hidden_mid.card, 3.0, 3.0, 1434.0, 894.0);
+        near(hidden_mid.page, 6.0, 6.0, 1428.0, 888.0);
+        let turned_hidden = retarget(false, true);
+        assert_eq!(turned_hidden.span_ms, EASE_MS);
+        let held = present(1440.0, 900.0, 0.0, current());
+        near(held.card, 3.0, 3.0, 1434.0, 894.0);
+        near(held.page, 6.0, 6.0, 1428.0, 888.0);
+        assert!(held.margin.is_none());
+        advance(80);
+        let returning = present(1440.0, 900.0, 0.0, current());
+        near(returning.page, 6.0, 6.0, 1428.0, 888.0);
+        near(returning.card, 4.5, 4.5, 1311.0, 891.0);
+        advance(160);
+        let shown_again = present(1440.0, 900.0, 0.0, current());
+        near(shown_again.card, 6.0, 6.0, 1188.0, 888.0);
+        near(shown_again.page, 6.0, 6.0, 1188.0, 888.0);
 
         let seat = button_seat(1440.0, 0.0);
         near(seat, 1362.0, 10.0, 28.0, 28.0);
@@ -342,7 +481,7 @@ mod tests {
             dy: 0.0,
         };
         let mut swipe = crate::visit::Swipe::default();
-        retarget(true);
+        retarget(true, true);
         assert_eq!(
             crate::visit::offer_while_reading(&mut swipe, notch, 4, 75, current()),
             crate::visit::WheelMove::Swallow
@@ -385,10 +524,10 @@ mod tests {
         }
         assert!(refused.take_commit_post(flying));
         assert_eq!(stored.resume().page, 4);
-        let _ = present(700.0, 800.0, 0.0, true, current());
-        let _ = present(1512.0, 982.0, 0.0, true, current());
+        let _ = present(700.0, 800.0, 0.0, current());
+        let _ = present(1512.0, 982.0, 0.0, current());
         assert_eq!(stored.resume().page, 4);
-        retarget(false);
+        retarget(false, true);
         assert!(crate::visit::stop_for_ease(&mut swipe));
         assert!(matches!(
             crate::visit::glide_at(&glide, 160, 1),
@@ -400,9 +539,9 @@ mod tests {
         let mut reader = crate::visit::Reader::default();
         reader.swipe = swipe;
         assert!(!crate::visit::retire_restore(&mut reader));
-        settle(false);
+        settle(false, true);
         near(
-            present(1440.0, 900.0, 0.0, true, current()).page,
+            present(1440.0, 900.0, 0.0, current()).page,
             6.0,
             6.0,
             1188.0,

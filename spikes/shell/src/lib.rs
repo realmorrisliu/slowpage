@@ -1331,7 +1331,7 @@ mod launch_tests {
             fn drop(&mut self) {
                 form::publish_margin(self.margin);
                 form::publish_immersive(self.immersive);
-                crate::ease::settle(self.immersive);
+                crate::ease::settle(self.immersive, self.margin);
                 visit::publish_surface(if self.library {
                     Surface::Library
                 } else {
