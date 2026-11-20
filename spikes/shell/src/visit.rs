@@ -1330,7 +1330,7 @@ pub fn handle_page(
             go: None,
         };
     }
-    if reader.fragment.is_some() {
+    if reader.fragment.is_some() || foreign_document(reader, href) {
         return apply_idle(true);
     }
     if report.hold.is_some()
@@ -1769,6 +1769,18 @@ fn link_message<'a>(value: &'a serde_json::Value) -> (&'a str, u64, bool, Option
     )
 }
 
+fn link_ready(dest: &LinkDest, measured: bool, offset: Option<u32>) -> bool {
+    dest.fragment.is_empty() || !dest.same || (measured && offset.is_some())
+}
+
+fn foreign_document(reader: &Reader, href: &str) -> bool {
+    if href.is_empty() || reader.place.href.is_empty() {
+        return false;
+    }
+    let shown = spine_key(href);
+    shown != spine_key(&reader.place.href) && shown != spine_key(&reader.jump_href)
+}
+
 fn link_matches_pending(reader: &Reader, raw: &str, shown: &str, spine: &[String]) -> bool {
     let Some(pending) = reader.fragment.as_deref() else {
         return false;
@@ -1784,7 +1796,9 @@ fn link_matches_pending(reader: &Reader, raw: &str, shown: &str, spine: &[String
 /// until the target document measures it. The return place stays on the
 /// reader. The file receives the destination sentence only.
 /// While that measurement is still waiting, a page message is not a turn
-/// and does not write. `auto` is that measurement. A click is a new target.
+/// and does not write. A click retires it only when the click can move.
+/// `auto` is that measurement. A document that is neither the stored
+/// sentence nor the jump does not write.
 pub fn handle_link_message(
     reader: &mut Reader,
     value: &serde_json::Value,
@@ -1801,7 +1815,9 @@ pub fn handle_link_message(
         if link_matches_pending(reader, raw, shown, spine) {
             return finish_link(reader, raw, measured, offset, shown, spine, store);
         }
-        if auto || resolve_link(raw, shown, spine).is_none() {
+        let ready =
+            resolve_link(raw, shown, spine).is_some_and(|dest| link_ready(&dest, measured, offset));
+        if auto || !ready {
             return apply_idle(false);
         }
         reader.fragment = None;
@@ -1813,7 +1829,7 @@ pub fn handle_link_message(
     let Some(dest) = resolve_link(raw, shown, spine) else {
         return apply_idle(false);
     };
-    if dest.same && !dest.fragment.is_empty() && (!measured || offset.is_none()) {
+    if !link_ready(&dest, measured, offset) {
         return apply_idle(false);
     }
     let _ = reader.swipe.cancel_release();
