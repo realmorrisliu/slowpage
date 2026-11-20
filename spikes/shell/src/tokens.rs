@@ -247,6 +247,11 @@ pub struct LightBox {
     pub shown: bool,
 }
 
+/// A button counts as shown while it is drawn above half alpha.
+pub fn light_alpha_shown(alpha: f64) -> bool {
+    alpha > 0.5
+}
+
 /// The buttons are on screen only when each one is shown and sits in the title-bar band.
 /// A frame parked at the bottom of a fullscreen window is not that band.
 pub fn lights_shown(buttons: &[LightBox], window_w: f32, window_h: f32) -> bool {

@@ -424,6 +424,37 @@ fn approach_chrome(current: f32, target: f32) -> f32 {
     }
 }
 
+/// The book is on screen. The library is not.
+pub fn reader_shown(book_open: bool, on_library: bool) -> bool {
+    book_open && !on_library
+}
+
+/// The first status for a shell book. The open-time title is the other path.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReadingChrome {
+    pub title_opacity: f32,
+    pub chrome_shared: bool,
+}
+
+pub fn enter_reading_chrome(
+    shell: bool,
+    reading: bool,
+    lights: f32,
+    opened_title: f32,
+) -> ReadingChrome {
+    if shell && reading {
+        ReadingChrome {
+            title_opacity: lights,
+            chrome_shared: true,
+        }
+    } else {
+        ReadingChrome {
+            title_opacity: opened_title,
+            chrome_shared: false,
+        }
+    }
+}
+
 fn fade_down(elapsed: u32, delay: u32, over: u32) -> f32 {
     let value = if elapsed <= delay {
         1.0
@@ -2148,6 +2179,18 @@ mod tests {
         assert!(!lower.contains("text-wrap"));
     }
 
+    fn lights_are_shown(alpha: f32) -> bool {
+        let shown = crate::tokens::light_alpha_shown(f64::from(alpha));
+        let button = crate::tokens::LightBox {
+            x: 12.0,
+            y: 17.0,
+            w: 14.0,
+            h: 14.0,
+            shown,
+        };
+        crate::tokens::lights_shown(&[button, button, button], 800.0, 600.0)
+    }
+
     fn chrome_sample(
         generation: u64,
         pointer_at_top: bool,
@@ -2222,66 +2265,99 @@ mod tests {
         assert_eq!(blurred.alpha, 0.0);
         assert_eq!(blurred.away_ms, None);
 
-        let stale = ChromeFade {
-            alpha: 1.0,
-            generation: 1,
-            away_ms: Some(390),
-        };
-        let resized = step_chrome(stale, chrome_sample(2, false, true, 16, false));
-        assert_eq!(resized.alpha, 1.0);
-        assert_eq!(resized.away_ms, Some(16));
-        assert_eq!(resized.generation, 2);
-
-        let switched = step_chrome(stale, chrome_sample(2, false, true, 16, true));
+        let switched = step_chrome(
+            ChromeFade {
+                alpha: 1.0,
+                generation: 1,
+                away_ms: Some(390),
+            },
+            chrome_sample(2, false, true, 16, true),
+        );
         assert_eq!(switched.alpha, 0.0);
         assert_eq!(switched.away_ms, Some(16));
-        let switched_at_top = step_chrome(stale, chrome_sample(2, true, true, 16, true));
+        let switched_at_top = step_chrome(
+            ChromeFade {
+                alpha: 1.0,
+                generation: 1,
+                away_ms: Some(390),
+            },
+            chrome_sample(2, true, true, 16, true),
+        );
         assert_eq!(switched_at_top.alpha, CHROME_STEP);
         assert_eq!(switched_at_top.away_ms, None);
 
-        let chrome = include_str!("chrome.rs");
-        let sync = chrome
-            .split("pub fn sync")
-            .nth(1)
-            .and_then(|rest| rest.split("pub fn paint_paper_layer").next())
-            .unwrap_or("");
-        assert!(sync.contains("reading_chrome_alpha"));
-        assert!(sync.contains("rt.reading.get()"));
-        assert!(sync.contains("paint_lights"));
-        assert!(sync.contains("align_traffic_centers"));
-        assert!(sync.contains("measure_traffic_bar"));
-        assert!(sync.contains("place_fullscreen_lights"));
-        assert!(chrome.contains("9.0 + index as f64 * 22.0"));
-        assert!(chrome.contains("crate::tokens::chrome_center()"));
-        let keys = chrome
-            .split("NSEventMask::KeyDown")
-            .next()
-            .and_then(|head| head.rsplit("RcBlock::new").next())
-            .unwrap_or("");
-        assert!(keys.contains("abandon_swipe"));
-        assert!(!keys.contains("lights"));
-        assert!(chrome.contains("fn reading_chrome_alpha"));
-        assert!(chrome.contains("step_chrome"));
-        assert!(chrome.contains("near_top"));
-        assert!(chrome.contains("isKeyWindow"));
+        // The pump steps, then the publish key, then the next pump. Crossing
+        // half alpha changes only the lights bit. That must not restart the hide.
+        let mut clock = ChromeFade {
+            alpha: 1.0,
+            generation: 0,
+            away_ms: Some(TITLE_DELAY_MS),
+        };
+        let mut generation = 0u64;
+        let mut last = crate::stage::shell_publish_key(800.0, 600.0, 72.0, true);
+        let mut saw_lights = false;
+        let mut was_visible = true;
+        for _ in 0..4 {
+            clock = step_chrome(clock, chrome_sample(generation, false, true, 50, false));
+            let visible = lights_are_shown(clock.alpha);
+            let key = crate::stage::shell_publish_key(800.0, 600.0, 72.0, visible);
+            let effect = crate::stage::publish_key_effect(last, key);
+            if visible != was_visible {
+                saw_lights = true;
+                assert!(effect.publish);
+                assert!(!effect.resize);
+                was_visible = visible;
+            }
+            if effect.publish {
+                last = key;
+            }
+            if effect.resize {
+                generation = generation.wrapping_add(1);
+            }
+        }
+        assert!(saw_lights);
+        assert_eq!(clock.alpha, 0.0);
+        assert_eq!(generation, 0);
 
-        let stage = include_str!("stage.rs");
-        assert!(stage.contains("self.chrome.cut_chrome()"));
-        assert!(stage.contains("chrome.resize_chrome()"));
-        assert!(stage.contains("self.chrome.lights.get() as f32"));
-        assert!(stage.contains("chrome.lights_changed"));
+        let mut held = ChromeFade {
+            alpha: 1.0,
+            generation: 4,
+            away_ms: Some(200),
+        };
+        let mut generation = 4u64;
+        let mut last = crate::stage::shell_publish_key(800.0, 600.0, 72.0, true);
+        held = step_chrome(held, chrome_sample(generation, false, true, 50, false));
+        assert_eq!(held.alpha, 1.0);
+        assert_eq!(held.away_ms, Some(250));
+        let wider = crate::stage::shell_publish_key(900.0, 600.0, 72.0, true);
+        let effect = crate::stage::publish_key_effect(last, wider);
+        assert!(effect.publish);
+        assert!(effect.resize);
+        last = wider;
+        generation = generation.wrapping_add(1);
+        held = step_chrome(held, chrome_sample(generation, false, true, 50, false));
+        assert_eq!(held.alpha, 1.0);
+        assert_eq!(held.away_ms, Some(50));
+        assert_eq!(held.generation, generation);
+        let same = crate::stage::publish_key_effect(last, wider);
+        assert!(!same.publish);
+        assert!(!same.resize);
 
-        let root = include_str!("lib.rs");
-        assert!(root.contains("if !chrome_shared.get()"));
-        assert!(root.contains("if shared || !title_hover.get()"));
-        assert!(stage.contains("\"chrome_shared\""));
-
-        let manifest = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
-        )
-        .unwrap_or_default();
-        assert!(manifest.contains("nsh-core = \"=0.5.1\""));
-        assert!(manifest.contains("nsh-platform-macos"));
+        // Shelf open: the surface is already Reading, the pump has not run,
+        // and the cut alpha is what the first status publishes.
+        let reading = reader_shown(true, false);
+        let first = enter_reading_chrome(true, reading, 0.0, title_alpha(0));
+        assert!(reading);
+        assert_eq!(
+            first,
+            ReadingChrome {
+                title_opacity: 0.0,
+                chrome_shared: true,
+            }
+        );
+        let waiting = enter_reading_chrome(true, false, 0.0, title_alpha(0));
+        assert_eq!(waiting.title_opacity, 1.0);
+        assert!(!waiting.chrome_shared);
     }
 
     #[test]

@@ -1934,7 +1934,7 @@ fn light_box(window: &NSWindow, kind: NSWindowButton, window_h: f64) -> crate::t
         y: y as f32,
         w: rect.size.width as f32,
         h: rect.size.height as f32,
-        shown: !hidden && alpha > 0.5,
+        shown: !hidden && crate::tokens::light_alpha_shown(alpha),
     }
 }
 

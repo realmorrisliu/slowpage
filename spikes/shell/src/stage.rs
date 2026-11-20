@@ -95,7 +95,10 @@ define_class!(
                         state.web.is_some(),
                     )
                 };
-                chrome.reading.set(open && !crate::visit::on_library());
+                chrome.reading.set(crate::reading::reader_shown(
+                    open,
+                    crate::visit::on_library(),
+                ));
                 crate::chrome::sync(&window, &chrome, page);
                 if crate::chrome::shell_on()
                     && chrome.reading.get()
@@ -951,6 +954,10 @@ impl State {
                 &replaced_href,
             );
         }
+        self.chrome.reading.set(crate::reading::reader_shown(
+            true,
+            crate::visit::on_library(),
+        ));
         self.chrome.cut_chrome();
         self.publish();
         true
@@ -1490,9 +1497,13 @@ impl State {
                 )
             }
         };
-        if crate::chrome::shell_on() && self.chrome.reading.get() {
-            title_opacity = self.chrome.lights.get() as f32;
-        }
+        let entered = crate::reading::enter_reading_chrome(
+            crate::chrome::shell_on(),
+            self.chrome.reading.get(),
+            self.chrome.lights.get() as f32,
+            title_opacity,
+        );
+        title_opacity = entered.title_opacity;
         let anchor = self
             .anchor
             .as_ref()
@@ -1515,7 +1526,7 @@ impl State {
                 "html": html,
                 "anchor": anchor,
                 "title_opacity": title_opacity,
-                "chrome_shared": crate::chrome::shell_on() && self.chrome.reading.get(),
+                "chrome_shared": entered.chrome_shared,
                 "footer_opacity": footer_opacity,
                 "bars_row": bars_row,
                 "trim": self.trim_id,
@@ -1961,16 +1972,18 @@ fn publish_shell_if_resized(state: &Rc<RefCell<State>>, width: f64, height: f64,
         static LAST: std::cell::Cell<Option<(i32, i32, i32, i32)>> =
             const { std::cell::Cell::new(None) };
     }
-    let changed = LAST.with(|last| match key {
-        Some(key) if last.get() != Some(key) => {
-            last.set(Some(key));
-            true
+    let effect = LAST.with(|last| {
+        let effect = publish_key_effect(last.get(), key);
+        if effect.publish {
+            last.set(key);
         }
-        _ => false,
+        effect
     });
-    trace_resize(source, width, height, changed);
-    if changed {
+    trace_resize(source, width, height, effect.publish);
+    if effect.resize {
         state.borrow().chrome.resize_chrome();
+    }
+    if effect.publish {
         state.borrow().publish();
     }
 }
@@ -2000,7 +2013,32 @@ pub(crate) fn trace_resize(source: &str, width: f64, height: f64, published: boo
 /// The shell status event is skipped when this key is unchanged. Lights are
 /// part of it: exit restores the old window size before the buttons are
 /// visible again, and a size-only key then never publishes the shown lights.
-fn shell_publish_key(
+/// A lights-only change still publishes. It is this window's own alpha crossing
+/// half, not a new size, so it does not drop the hide that is already running.
+pub(crate) fn publish_key_effect(
+    previous: Option<(i32, i32, i32, i32)>,
+    next: Option<(i32, i32, i32, i32)>,
+) -> PublishEffect {
+    match (previous, next) {
+        (previous, Some(next)) if previous != Some(next) => PublishEffect {
+            publish: true,
+            resize: previous.map(|(width, height, bar, _)| (width, height, bar))
+                != Some((next.0, next.1, next.2)),
+        },
+        _ => PublishEffect {
+            publish: false,
+            resize: false,
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PublishEffect {
+    pub publish: bool,
+    pub resize: bool,
+}
+
+pub(crate) fn shell_publish_key(
     shell_w: f64,
     shell_h: f64,
     bar_w: f64,
