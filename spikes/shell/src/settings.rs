@@ -4365,9 +4365,10 @@ mod tests {
             "#missing",
         ] {
             let measured = raw != "#missing" && raw != "#";
+            let load = reader.restore_load;
             let applied = crate::visit::handle_link_message(
                 &mut reader,
-                &message(raw, reader.restore_load, Some(5), measured),
+                &message(raw, load, Some(5), measured),
                 chapter,
                 &spine,
                 &mut store,

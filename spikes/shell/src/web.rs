@@ -1193,15 +1193,15 @@ fn apply_link_message(
 }
 
 fn on_link(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
-    let (href, spine, inbox, title) = {
+    let (href, spine, inbox) = {
         let slot = slot.borrow();
         (
             slot.shown_href.clone(),
             slot.spine.clone(),
             slot.inbox.clone(),
-            slot.inbox.borrow().title.clone(),
         )
     };
+    let title = inbox.borrow().title.clone();
     let applied = apply_link_message(value, &href, &spine);
     if !applied.accepted {
         return;

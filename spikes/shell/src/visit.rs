@@ -1780,7 +1780,7 @@ pub fn handle_link_message(
         dest.href
     };
     let mark = link_mark(&href, offset);
-    let mut applied = handle_chapter(reader, 0, &[mark], spine, shown, store);
+    let applied = handle_chapter(reader, 0, &[mark], spine, shown, store);
     if matches!(applied.go, Some(ChapterMove::Stay)) {
         return applied;
     }
