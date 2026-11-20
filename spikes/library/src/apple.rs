@@ -8,8 +8,8 @@ use crate::disk::from_disk;
 use crate::sealed::Sealed;
 use crate::snapshot::snapshot;
 use crate::{
-    resolve_under_roots, sort_by_id, Availability, Book, BookId, Catalog, ImportStep,
-    LibrarySource, Notice, Scope, SourceName, Unreadable,
+    file_uri_path, resolve_under_roots, sort_by_id, Availability, Book, BookId, Catalog,
+    ImportStep, LibrarySource, Notice, Scope, SourceName, Unreadable,
 };
 
 pub(crate) struct AppleBooks {
@@ -98,7 +98,12 @@ struct Raw {
     path: Option<String>,
     store_id: Option<String>,
     content_type: i64,
+    state: Option<i64>,
 }
+
+const CLOUD: i64 = 3;
+const SERIES_ROW: i64 = 5;
+const CLOUD_SAMPLE: i64 = 6;
 
 /// One Apple Books row at a time. The sqlite snapshot is read in `open`.
 /// `step` classifies that row against disk.
@@ -125,8 +130,12 @@ impl Cursor {
         if !columns.iter().any(|name| name == "ZSTOREID") {
             return Err(Notice::Unreadable);
         }
-        let sql =
-            "SELECT ZASSETID, ZTITLE, ZAUTHOR, ZPATH, ZSTOREID, ZCONTENTTYPE FROM ZBKLIBRARYASSET";
+        let has_state = columns.iter().any(|name| name == "ZSTATE");
+        let sql = if has_state {
+            "SELECT ZASSETID, ZTITLE, ZAUTHOR, ZPATH, ZSTOREID, ZCONTENTTYPE, ZSTATE FROM ZBKLIBRARYASSET"
+        } else {
+            "SELECT ZASSETID, ZTITLE, ZAUTHOR, ZPATH, ZSTOREID, ZCONTENTTYPE FROM ZBKLIBRARYASSET"
+        };
         let mut stmt = conn.prepare(sql).map_err(|_| Notice::Unreadable)?;
         let rows = stmt
             .query_map([], |row| {
@@ -137,6 +146,7 @@ impl Cursor {
                     path: row.get::<_, Option<String>>(3)?,
                     store_id: row.get::<_, Option<String>>(4)?,
                     content_type: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                    state: if has_state { row.get(6)? } else { None },
                 })
             })
             .map_err(|_| Notice::Unreadable)?;
@@ -155,20 +165,23 @@ impl Cursor {
     }
 
     pub(crate) fn step(&mut self) -> ImportStep {
-        let Some(raw) = self.rows.get(self.index).cloned() else {
-            sort_by_id(&mut self.books);
-            return ImportStep::Finished(Catalog::from_parts(
-                std::mem::take(&mut self.books),
-                None,
-            ));
-        };
-        self.index += 1;
-        let book = self.classify(raw);
-        self.books.push(book.clone());
-        ImportStep::Book(book)
+        loop {
+            let Some(raw) = self.rows.get(self.index).cloned() else {
+                sort_by_id(&mut self.books);
+                return ImportStep::Finished(Catalog::from_parts(
+                    std::mem::take(&mut self.books),
+                    None,
+                ));
+            };
+            self.index += 1;
+            if let Some(book) = self.classify(raw) {
+                self.books.push(book.clone());
+                return ImportStep::Book(book);
+            }
+        }
     }
 
-    fn classify(&self, raw: Raw) -> Book {
+    fn classify(&self, raw: Raw) -> Option<Book> {
         let title = if raw.title.is_empty() {
             "Untitled".to_string()
         } else {
@@ -181,43 +194,52 @@ impl Cursor {
             .as_deref()
             .is_some_and(|value| !value.is_empty())
         {
-            return Book::new(
+            return Some(Book::new(
                 id,
                 SourceName::AppleBooks,
                 title,
                 author,
                 None,
                 Availability::Store,
-            );
+            ));
         }
         let Some(raw_path) = raw.path.filter(|value| !value.is_empty()) else {
-            return Book::new(
+            return self.book(
                 id,
-                SourceName::AppleBooks,
                 title,
                 author,
                 None,
                 Availability::Unreadable(Unreadable::Missing),
+                raw.state,
+            );
+        };
+        let Some(stored) = stored_path(&raw_path) else {
+            return self.book(
+                id,
+                title,
+                author,
+                None,
+                Availability::Unreadable(Unreadable::Missing),
+                raw.state,
             );
         };
         let resolved = if let Some(root) = &self.override_root {
-            let path = Path::new(&raw_path);
-            if path.is_absolute() {
-                path.to_path_buf()
+            if stored.is_absolute() {
+                stored
             } else {
-                root.join(raw_path)
+                root.join(stored)
             }
         } else {
-            match resolve_under_roots(Path::new(&raw_path), &self.book_roots) {
+            match locate_under_roots(&stored, &self.book_roots) {
                 Some(path) => path,
                 None => {
-                    return Book::new(
+                    return self.book(
                         id,
-                        SourceName::AppleBooks,
                         title,
                         author,
                         None,
                         Availability::Unreadable(Unreadable::Denied),
+                        raw.state,
                     );
                 }
             }
@@ -229,14 +251,117 @@ impl Cursor {
         };
         let availability = from_disk(&resolved, &roots, raw.content_type == 6);
         let cover = resolve_cover(&resolved, &self.support, &id);
-        Book::new(
+        self.book(id, title, author, cover, availability, raw.state)
+    }
+
+    fn book(
+        &self,
+        id: BookId,
+        title: String,
+        author: Option<String>,
+        cover: Option<crate::CoverFile>,
+        availability: Availability,
+        state: Option<i64>,
+    ) -> Option<Book> {
+        let availability = listed(state, availability)?;
+        let cover = if book_opens(&availability) {
+            cover
+        } else {
+            None
+        };
+        Some(Book::new(
             id,
             SourceName::AppleBooks,
             title,
             author,
             cover,
             availability,
-        )
+        ))
+    }
+}
+
+fn book_opens(availability: &Availability) -> bool {
+    matches!(
+        availability,
+        Availability::EpubFile(_) | Availability::EpubDir(_) | Availability::Pdf(_)
+    )
+}
+
+fn listed(state: Option<i64>, availability: Availability) -> Option<Availability> {
+    if book_opens(&availability) {
+        return Some(availability);
+    }
+    if state == Some(SERIES_ROW) {
+        return None;
+    }
+    if matches!(state, Some(CLOUD | CLOUD_SAMPLE))
+        && matches!(availability, Availability::Unreadable(Unreadable::Missing))
+    {
+        return Some(Availability::NotDownloaded);
+    }
+    Some(availability)
+}
+
+fn stored_path(raw: &str) -> Option<PathBuf> {
+    if raw.starts_with("file:") {
+        file_uri_path(raw)
+    } else {
+        Some(PathBuf::from(raw))
+    }
+}
+
+/// Absolute paths must sit under a root. A relative name prefers a real file
+/// over an iCloud placeholder, then the first root.
+fn locate_under_roots(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return resolve_under_roots(path, roots);
+    }
+    let mut first = None;
+    let mut placeholder = None;
+    for root in roots {
+        let joined = root.join(path);
+        if !joined.starts_with(root) {
+            continue;
+        }
+        if first.is_none() {
+            first = Some(joined.clone());
+        }
+        match placed(&joined) {
+            Place::File => return Some(joined),
+            Place::Placeholder if placeholder.is_none() => placeholder = Some(joined),
+            Place::Placeholder | Place::Absent => {}
+        }
+    }
+    placeholder.or(first)
+}
+
+enum Place {
+    File,
+    Placeholder,
+    Absent,
+}
+
+fn placed(path: &Path) -> Place {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Place::Absent;
+    };
+    if name.ends_with(".icloud") {
+        return if path.is_file() {
+            Place::Placeholder
+        } else {
+            Place::Absent
+        };
+    }
+    if path.exists() {
+        return Place::File;
+    }
+    if path
+        .parent()
+        .is_some_and(|parent| parent.join(format!(".{name}.icloud")).is_file())
+    {
+        Place::Placeholder
+    } else {
+        Place::Absent
     }
 }
 

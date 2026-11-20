@@ -343,6 +343,13 @@ pub fn footer_zh(page: u32, pages: u32) -> (String, String) {
     (format!("{page}/{pages}页"), format!("本章还剩{left}页"))
 }
 
+pub fn product_page_footer(page: u32, pages: u32) -> (String, String) {
+    if pages == 0 {
+        return (String::new(), String::new());
+    }
+    footer_zh(page, pages)
+}
+
 pub fn title_alpha(shown_ms: u32) -> f32 {
     fade_down(shown_ms, TITLE_DELAY_MS, TITLE_OVER_MS).clamp(0.0, 1.0)
 }
@@ -396,6 +403,8 @@ pub fn page_script(lang: &str) -> String {
         .replace("__FALLBACK__", &fallback)
         .replace("__PAGE__", &page)
         .replace("__MS__", &SLIDE_MS.to_string())
+        .replace("__EDGE__", &crate::visit::PAGE_EDGE.to_string())
+        .replace("__SLOP__", &crate::visit::CLICK_SLOP.to_string())
         .replace("__PAPER__", PAPER)
         .replace("__TOP__", &face.margin_top.to_string())
         .replace("__BOTTOM__", &face.margin_bottom.to_string())
@@ -443,13 +452,23 @@ const SCRIPT: &str = r#"
   window.spikeOwnsBox = true;
   const DURATION = __MS__;
   const PAPER = "__PAPER__";
-  const SWIPE = 48;
   const root = document.body;
   let busy = false;
   let queued = 0;
-  let acc = 0;
-  let armed = true;
+  let queuedToken = 0;
+  let queuedSource = "";
+  let flying = "";
+  let flyingDelta = 0;
+  let pageLoad = window.__spikeLoad | 0;
+  let pendingUser = false;
+  let commitToken = 0;
+  let holdGoal = 0;
+  let settled = 1;
   let shift = 0;
+  let followX = 0;
+  let followGen = 0;
+  let motion = 0;
+  let committing = false;
   let measured = false;
   let layoutReport = null;
   let justifyReady = false;
@@ -483,6 +502,7 @@ const SCRIPT: &str = r#"
   }
   function reflowPage() {
     fitColumns();
+    if (flying !== "restore") snapSettled();
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
   }
   function ensureFooter() {
@@ -651,7 +671,7 @@ const SCRIPT: &str = r#"
   function post(extra) {
     const box = column();
     const fill = columnFill();
-    const body = { page: box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf") };
+    const body = { page: box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
     body.fill_gap = fill.fill_gap;
     body.line_h = fill.line_h;
     body.content_bottom = fill.content_bottom;
@@ -763,28 +783,199 @@ const SCRIPT: &str = r#"
     }
     return "ok";
   };
-  window.spikeHold = function () {
+  function measureCaret() {
     const x = Math.max(24, Math.min(80, window.innerWidth * 0.2));
     const y = Math.max(48, Math.min(140, window.innerHeight * 0.18));
     const caret = document.caretRangeFromPoint(x, y) || document.caretRangeFromPoint(x, y + 40);
-    let offset = 0;
-    if (caret && caret.startContainer) {
-      const node = caret.startContainer.nodeType === 3
-        ? caret.startContainer
-        : (caret.startContainer.firstChild || null);
-      if (node && node.nodeType === 3) offset = offsetOf(node, caret.startOffset || 0);
+    if (!caret || !caret.startContainer) return null;
+    const node = caret.startContainer.nodeType === 3
+      ? caret.startContainer
+      : (caret.startContainer.firstChild || null);
+    if (!node || node.nodeType !== 3) return null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    const off = caret.startOffset || 0;
+    while (walker.nextNode()) {
+      if (walker.currentNode === node) return seen + off;
+      seen += walker.currentNode.textContent.length;
     }
-    window.spikeHeld = offset;
-    post({ hold: offset });
-    return offset;
+    return null;
+  }
+  function heldOffset() {
+    const hit = measureCaret();
+    return hit == null ? 0 : hit;
+  }
+  function charRect(node, index) {
+    const text = node.textContent || "";
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, Math.min(text.length, index + 1));
+    return range.getBoundingClientRect();
+  }
+  function liveRect(rect) {
+    return !!rect && rect.width > 0 && rect.height > 0;
+  }
+  function intersectsColumn(rect) {
+    const w = columnStride();
+    const h = window.innerHeight || 0;
+    return liveRect(rect) && rect.right > 0 && rect.bottom > 0 && rect.left < w && rect.top < h;
+  }
+  function beforeColumn(rect) {
+    return liveRect(rect) && (rect.right <= 0 || rect.bottom <= 0);
+  }
+  function afterColumn(rect) {
+    const w = columnStride();
+    const h = window.innerHeight || 0;
+    return liveRect(rect) && (rect.left >= w || rect.top >= h);
+  }
+  function firstVisibleIndex(node) {
+    const text = node.textContent || "";
+    const len = text.length;
+    let i = 0;
+    while (i < len) {
+      const rect = charRect(node, i);
+      if (liveRect(rect) && beforeColumn(rect)) {
+        let step = 1;
+        let next = i;
+        while (i + step < len) {
+          const ahead = charRect(node, i + step);
+          if (!liveRect(ahead) || !beforeColumn(ahead)) break;
+          next = i + step;
+          step *= 2;
+        }
+        i = next + 1;
+        continue;
+      }
+      if (liveRect(rect) && afterColumn(rect)) return null;
+      if (intersectsColumn(rect) && text.charAt(i).trim()) return i;
+      i++;
+    }
+    return null;
+  }
+  function columnTextOffset() {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.textContent || "";
+      const at = firstVisibleIndex(node);
+      if (at != null) return seen + at;
+      seen += text.length;
+    }
+    return null;
+  }
+  function inFooter(el) {
+    return !!(el && el.closest && el.closest('#spike-footer'));
+  }
+  function figureIdentity(el) {
+    if (!el || !el.tagName) return "";
+    const tag = String(el.tagName).toLowerCase();
+    if (tag !== "img" && tag !== "svg") return "";
+    if (inFooter(el)) return "";
+    if (el.id) return tag + '#' + el.id;
+    const list = document.querySelectorAll(tag);
+    let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      if (inFooter(item)) continue;
+      if (item === el) return tag + "@" + n;
+      n++;
+    }
+    return "";
+  }
+  function columnFigure() {
+    const nodes = document.querySelectorAll("img, svg");
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (inFooter(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (!intersectsColumn(rect)) continue;
+      const id = figureIdentity(el);
+      if (id) return id;
+    }
+    return "";
+  }
+  function findFigure(id) {
+    const nodes = document.querySelectorAll("img, svg");
+    for (let i = 0; i < nodes.length; i++) {
+      if (figureIdentity(nodes[i]) === id) return nodes[i];
+    }
+    return null;
+  }
+  function readAnchor() {
+    const caret = measureCaret();
+    if (caret != null) return { hold: caret };
+    const text = columnTextOffset();
+    if (text != null) return { hold: text };
+    const figure = columnFigure();
+    if (figure) return { figure: figure };
+    return { missed: true };
+  }
+  window.spikeHold = function (page, probe) {
+    const goal = page | 0;
+    const generation = probe | 0;
+    const saved = root.scrollLeft;
+    let read = { missed: true };
+    try {
+      if (goal > 0) seek((goal - 1) * columnStride());
+      read = readAnchor();
+    } finally {
+      seek(saved);
+    }
+    if (read.hold != null) {
+      holdGoal = 1;
+      window.spikeHeld = read.hold;
+      post({ hold: read.hold, measured: true, goal: goal, probe: generation });
+      return read.hold;
+    }
+    holdGoal = 0;
+    if (read.figure) {
+      post({ figure: read.figure, goal: goal, probe: generation });
+      return null;
+    }
+    post({ missed: true, goal: goal, probe: generation });
+    return null;
   };
-  window.spikeReveal = function (offset) {
-    const seekOffset = function () {
+  function snapSettled() {
+    const box = column();
+    const page = Math.max(1, Math.min(box.pages, settled));
+    seek(box.w * (page - 1));
+  }
+  function endFollow() {
+    if (flying === "restore" || (flying === "user" && !committing)) releaseFlying();
+    followGen++;
+    motion++;
+    followX = 0;
+    queued = 0;
+    queuedToken = 0;
+    queuedSource = "";
+    flying = "";
+    flyingDelta = 0;
+    busy = false;
+    committing = false;
+    root.style.transform = "none";
+  }
+  function releaseFlying() {
+    motion++;
+    const leaf = document.getElementById("spike-leaf");
+    if (leaf) leaf.remove();
+    document.documentElement.style.transform = "none";
+    if (flying === "restore" || flying === "user") snapSettled();
+    busy = false;
+    window.spikeBusy = false;
+    flying = "";
+    flyingDelta = 0;
+  }
+  function revealAt(offset, gen) {
+    if (gen !== followGen) return;
     requestAnimationFrame(function () {
+      if (gen !== followGen) return;
       requestAnimationFrame(function () {
+        if (gen !== followGen) return;
         const found = locate(offset);
         if (!found) {
-          post();
+          holdGoal = 0;
+          post({ pinned: offset, missed: true });
           return;
         }
         const prev = root.style.transform;
@@ -797,51 +988,147 @@ const SCRIPT: &str = r#"
         const w = columnStride();
         const index = Math.max(0, Math.floor((rect.left + 8) / w));
         root.style.transform = prev;
+        if (gen !== followGen) return;
         seek(index * w);
+        settled = column().page;
         measured = false;
-        post({ pinned: offset });
+        const landed = { pinned: offset };
+        if (holdGoal) landed.kind = "anchor";
+        holdGoal = 0;
+        post(landed);
       });
     });
-    };
-    if (window.spikeJustify) window.spikeJustify.whenVisibleCommitted().then(seekOffset);
-    else seekOffset();
+  }
+  window.spikeReveal = function (offset) {
+    endFollow();
+    const gen = followGen;
+    if (window.spikeJustify && window.spikeJustify.whenVisibleCommitted) {
+      window.spikeJustify.whenVisibleCommitted().then(function () {
+        if (gen !== followGen) return;
+        revealAt(offset, gen);
+      });
+    } else {
+      revealAt(offset, gen);
+    }
   };
-  function settle(frames) {
+  window.spikeAlign = function (id) {
+    endFollow();
+    const gen = followGen;
+    const run = function () {
+      if (gen !== followGen) return;
+      requestAnimationFrame(function () {
+        if (gen !== followGen) return;
+        requestAnimationFrame(function () {
+          if (gen !== followGen) return;
+          const el = findFigure(id);
+          if (!el) {
+            post({ missed: true, figure: id });
+            return;
+          }
+          const rect = el.getBoundingClientRect();
+          const w = columnStride();
+          const abs = rect.left + (root.scrollLeft || 0);
+          const index = Math.max(0, Math.floor((abs + 8) / w));
+          if (gen !== followGen) return;
+          seek(index * w);
+          settled = column().page;
+          post({ figure: id });
+        });
+      });
+    };
+    if (window.spikeJustify && window.spikeJustify.whenVisibleCommitted) {
+      window.spikeJustify.whenVisibleCommitted().then(function () {
+        if (gen !== followGen) return;
+        run();
+      });
+    } else {
+      run();
+    }
+  };
+  function settle(frames, token, source) {
     document.documentElement.style.transform = "none";
     const leaf = document.getElementById("spike-leaf");
     if (leaf) leaf.remove();
-    post({ frames: frames });
+    const extra = token ? { frames: frames, swipe: token } : { frames: frames };
+    if (token) source = "user";
+    if (source === "restore") extra.chase = true;
+    else if (!token) extra.kind = "turn";
+    if (source !== "restore") pendingUser = true;
+    settled = column().page;
+    post(extra);
     busy = false;
     window.spikeBusy = false;
     const next = queued;
+    const nextToken = queuedToken;
+    const nextSource = queuedSource;
     queued = 0;
-    if (next) begin(next);
+    queuedToken = 0;
+    queuedSource = "";
+    flying = "";
+    flyingDelta = 0;
+    if (next) begin(next, nextToken, nextSource);
   }
-  window.spikeTurn = function (delta) {
+  window.spikeTurn = function (delta, source, target, ack, load) {
+    // A commit glide is the turn that was already decided. Bumping the
+    // generation here kills the only callback that clears `busy` and runs
+    // the queued key, so the page stops accepting turns. A return glide has
+    // not committed, and a key cancels it. The key takes the one queue slot,
+    // so a swipe token waiting in that slot is retired. A restore never
+    // takes that slot: the reader's turn already owns it. A reader turn
+    // takes an unfinished restore's column instead of waiting for it.
+    if (source !== "restore") source = "user";
+    if (source === "restore" && (load | 0) !== pageLoad) return "no";
+    if (source === "restore" && pendingUser && (ack | 0) !== 1) return "no";
+    if ((ack | 0) === 1) pendingUser = false;
+    if (source === "restore" && !((target | 0) > column().page)) return "no";
+    if (source !== "restore" && busy && !committing && flying === "restore") releaseFlying();
+    if (!committing && source !== "restore") {
+      followGen++;
+      followX = 0;
+      root.style.transform = "none";
+    }
+    if (source !== "restore" && queuedToken) {
+      var dropped = queuedToken;
+      queuedToken = 0;
+      queuedSource = "";
+      post({ swipe: dropped, dropped: true });
+    }
     delta = delta < 0 ? -1 : 1;
     if (busy) {
+      if (source === "restore") return "no";
       queued = delta;
+      queuedSource = "user";
       return "queued";
     }
-    begin(delta);
+    begin(delta, 0, source);
     return "ok";
   };
-  function begin(delta) {
+  function begin(delta, token, source) {
+    if (source !== "restore") source = "user";
     const box = column();
     const target = box.page + delta;
     if (target < 1 || target > box.pages) {
-      post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
+      flying = "";
+      flyingDelta = 0;
+      if (source === "restore") post({ frames: [], chase: true });
+      else {
+        pendingUser = true;
+        post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
+      }
       return;
     }
+    flying = source;
+    flyingDelta = delta;
     window.spikeBusy = true;
     window.spikeCover = box.w * (target - 1);
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
     window.spikeCover = null;
     busy = true;
-    slide(box, delta);
+    slide(box, delta, token || 0, source);
   }
-  function slide(box, delta) {
+  function slide(box, delta, token, source) {
     seek(box.w * (box.page + delta - 1));
+    const live = motion;
     const leaf = document.createElement("div");
     leaf.id = "spike-leaf";
     leaf.style.cssText = "position:fixed;inset:0;z-index:5;pointer-events:none;background:" + PAPER + ";will-change:transform";
@@ -850,6 +1137,7 @@ const SCRIPT: &str = r#"
     let last = 0;
     const t0 = performance.now();
     function frame(t) {
+      if (live !== motion) return;
       if (last) frames.push(t - last);
       last = t;
       const u = Math.min(1, (t - t0) / DURATION);
@@ -859,7 +1147,8 @@ const SCRIPT: &str = r#"
         requestAnimationFrame(frame);
         return;
       }
-      settle(frames);
+      if (live !== motion) return;
+      settle(frames, token || 0, source);
     }
     requestAnimationFrame(frame);
   }
@@ -881,32 +1170,152 @@ const SCRIPT: &str = r#"
     const w = pageWidth();
     const pages = Math.max(1, Math.round(Math.max(root.scrollWidth, w) / w));
     seek((pages - 1) * w);
+    settled = column().page;
     post({ kind: "seek" });
   };
+  let edgeX = 0;
+  let edgeY = 0;
+  let edgeDrag = false;
+  window.addEventListener("mousedown", function (event) {
+    if (event.button !== 0) return;
+    edgeX = event.clientX;
+    edgeY = event.clientY;
+    edgeDrag = false;
+  }, true);
+  window.addEventListener("mousemove", function (event) {
+    if (event.buttons !== 1) return;
+    if (Math.abs(event.clientX - edgeX) >= __SLOP__ || Math.abs(event.clientY - edgeY) >= __SLOP__) edgeDrag = true;
+  }, true);
+  window.addEventListener("click", function (event) {
+    if (event.button !== 0) return;
+    const dragged = edgeDrag;
+    edgeDrag = false;
+    if (dragged) return;
+    const bar = document.getElementById('spike-footer');
+    if (bar) {
+      const box = bar.getBoundingClientRect();
+      if (event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom) return;
+    }
+    const w = window.innerWidth;
+    if (!(w > 0)) return;
+    const band = w * __EDGE__;
+    let delta = 0;
+    if (event.clientX < band) delta = -1;
+    else if (event.clientX > w - band) delta = 1;
+    else return;
+    event.preventDefault();
+    window.spikeTurn(delta);
+  }, true);
   window.addEventListener("keydown", function (event) {
     if (event.repeat) return;
-    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    var delta = 0;
+    if (event.key === "ArrowRight" || (event.key === " " && !event.shiftKey)) delta = 1;
+    else if (event.key === "ArrowLeft" || (event.key === " " && event.shiftKey)) delta = -1;
+    else return;
     event.preventDefault();
-    window.spikeTurn(event.key === "ArrowRight" ? 1 : -1);
+    window.spikeTurn(delta);
   }, true);
-  window.addEventListener("wheel", function (event) {
-    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
-    event.preventDefault();
-    if (busy) return;
-    acc += event.deltaX;
-    if (!armed) {
-      if (Math.abs(event.deltaX) < 1.5) {
-        armed = true;
-        acc = 0;
-      }
+  window.spikeFollowDrop = function (load) {
+    if ((load | 0) !== pageLoad) return;
+    if (committing || queuedToken) {
+      const token = commitToken;
+      const queued = queuedToken;
+      commitToken = 0;
+      endFollow();
+      if (token) post({ swipe: token, dropped: true });
+      if (queued) post({ swipe: queued, dropped: true });
       return;
     }
-    if (Math.abs(acc) < SWIPE) return;
-    const delta = acc > 0 ? 1 : -1;
-    acc = 0;
-    armed = false;
-    window.spikeTurn(delta);
-  }, { passive: false, capture: true });
+    endFollow();
+  };
+  window.spikeFollow = function (offset) {
+    if (busy) return;
+    followGen++;
+    const w = pageWidth();
+    const box = column();
+    let x = offset;
+    if (box.page <= 1 && x < 0) x = 0;
+    if (box.page >= box.pages && x > 0) x = 0;
+    if (w > 0 && x > w) x = w;
+    if (w > 0 && x < -w) x = -w;
+    followX = x;
+    root.style.transform = x ? "translate3d(" + (-x) + "px,0,0)" : "none";
+  };
+  function glide(from, to, done) {
+    const gen = followGen;
+    const t0 = performance.now();
+    function frame(t) {
+      if (gen !== followGen) return;
+      const u = Math.min(1, (t - t0) / DURATION);
+      const eased = (1 - Math.cos(Math.PI * u)) / 2;
+      const x = from + (to - from) * eased;
+      root.style.transform = "translate3d(" + (-x) + "px,0,0)";
+      if (u < 1) {
+        requestAnimationFrame(frame);
+        return;
+      }
+      if (gen === followGen) done();
+    }
+    requestAnimationFrame(frame);
+  }
+  window.spikeFollowEnd = function (delta, token) {
+    if (busy && !committing && flying === "restore") releaseFlying();
+    if (busy) {
+      // A key slide is not a commit. Drop the follow paint and let that slide
+      // finish. A commit glide is the turn already decided: cancelling its
+      // frame leaves `busy` set. A second lift queues one page and keeps that
+      // token for the queued page. A cancel does not.
+      if (!committing) {
+        followGen++;
+        followX = 0;
+        root.style.transform = "none";
+        return "no";
+      }
+      if (delta) {
+        queued = delta < 0 ? -1 : 1;
+        queuedToken = token || 0;
+        queuedSource = "user";
+        return "queued";
+      }
+      return "no";
+    }
+    const from = followX;
+    const w = pageWidth();
+    const box = column();
+    const blocked = !delta || (delta > 0 && box.page >= box.pages) || (delta < 0 && box.page <= 1);
+    if (blocked) {
+      glide(from, 0, function () {
+        followX = 0;
+        root.style.transform = "none";
+      });
+      return "no";
+    }
+    const step = delta > 0 ? 1 : -1;
+    committing = true;
+    commitToken = token || 0;
+    busy = true;
+    glide(from, step > 0 ? w : -w, function () {
+      commitToken = 0;
+      pendingUser = true;
+      committing = false;
+      followX = 0;
+      root.style.transform = "none";
+      seek(box.w * (box.page + step - 1));
+      settled = column().page;
+      post(token ? { swipe: token } : null);
+      busy = false;
+      const next = queued;
+      const nextToken = queuedToken;
+      const nextSource = queuedSource;
+      queued = 0;
+      queuedToken = 0;
+      queuedSource = "";
+      flying = "";
+      flyingDelta = 0;
+      if (next) begin(next, nextToken, nextSource);
+    });
+    return "glide";
+  };
   if (window.spikeJustify) {
     window.spikeJustify.install({
       onReport: function (report) {
@@ -938,9 +1347,275 @@ mod tests {
         let (left, right) = footer_zh(590, 1146);
         assert_eq!(left, "590/1146页");
         assert_eq!(right, "本章还剩556页");
+        let (left, right) = product_page_footer(2, 5);
+        assert_eq!(left, "2/5页");
+        assert_eq!(right, "本章还剩3页");
+        assert_eq!(product_page_footer(1, 0), (String::new(), String::new()));
         let (left, right) = footer_zh(2, 2);
         assert_eq!(left, "2/2页");
         assert_eq!(right, "本章还剩0页");
+    }
+
+    #[test]
+    fn space_and_shift_space_use_the_existing_page_turn() {
+        let script = page_script("zh");
+        assert!(script.contains("event.key === \" \""));
+        assert!(script.contains("event.shiftKey"));
+        assert!(script.contains("window.spikeTurn(delta)"));
+        assert!(script.contains("target > box.pages"));
+        assert!(script.contains("window.spikeFollow"));
+        assert!(script.contains("window.spikeFollowDrop"));
+        assert!(script.contains("window.spikeFollowEnd"));
+        assert!(script.contains("DURATION"));
+        assert!(!script.contains("addEventListener(\"wheel\""));
+    }
+
+    #[test]
+    fn a_key_during_the_release_still_turns() {
+        let script = page_script("en");
+        assert!(!script.contains("addEventListener(\"wheel\""));
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-release-glide.js");
+        let drive = dir.join("superreader-release-glide-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::RELEASE_GLIDE_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        let queued = serde_json::json!(["queued"]);
+        let turned = serde_json::json!(["ok"]);
+        assert_eq!(v["key"]["space"], queued);
+        assert_eq!(v["key"]["arrow"], queued);
+        assert_eq!(v["key"]["edge"], queued);
+        // 400 is the harness page width. The release seeks one page and the
+        // single queued turn seeks the next, so the column is 800.
+        assert_eq!(v["key"]["scroll"], 800);
+        assert_eq!(v["key"]["after"], turned);
+        assert_eq!(v["drop"]["droppedScroll"], 0);
+        assert_eq!(v["drop"]["after"], turned);
+        assert_eq!(v["drop"]["scroll"], 400);
+        assert_eq!(v["cancel"]["during"], turned);
+        assert_eq!(v["cancel"]["scroll"], 400);
+        assert_eq!(v["again"]["scroll"], 800);
+        assert_eq!(v["again"]["after"], turned);
+        assert_eq!(v["ignored"]["scroll"], 400);
+        assert_eq!(v["ignored"]["after"], turned);
+    }
+
+    #[test]
+    fn a_reveal_during_the_release_does_not_post() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-release-reveal.js");
+        let drive = dir.join("superreader-release-reveal-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::REVEAL_DURING_RELEASE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["reveal"]["scroll"], 0);
+        assert_eq!(v["reveal"]["unpinned"], serde_json::json!([]));
+        assert_eq!(v["reveal"]["pinned"], 800);
+        assert_eq!(v["drop"]["scroll"], 0);
+        assert_eq!(v["drop"]["posts"], 0);
+        assert_eq!(v["key"]["during"], serde_json::json!(["queued"]));
+        assert_eq!(v["key"]["scroll"], 800);
+        assert_eq!(v["key"]["after"], serde_json::json!(["ok"]));
+    }
+
+    #[test]
+    fn a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-commit-token.js");
+        let drive = dir.join("superreader-commit-token-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::COMMIT_TOKEN_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["space"]["during"], serde_json::json!(["queued"]));
+        assert_eq!(v["space"]["scroll"], 800);
+        assert_eq!(v["space"]["swipe"], 7);
+        assert_eq!(v["arrow"]["during"], serde_json::json!(["queued"]));
+        assert_eq!(v["arrow"]["scroll"], 800);
+        assert_eq!(v["other"]["scroll"], 400);
+        assert_eq!(v["other"]["swipe"], 7);
+        assert_eq!(v["late"]["swipe"], 7);
+        assert_eq!(v["late"]["page"], 2);
+        assert_eq!(v["reveal"]["scroll"], 0);
+        assert_eq!(v["reveal"]["unpinned"], serde_json::json!([]));
+        assert_eq!(v["reveal"]["pinned"], 800);
+    }
+
+    #[test]
+    fn a_second_commit_and_a_long_chapter_post_every_token() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join("superreader-commit-chain.js");
+        let drive = dir.join("superreader-commit-chain-drive.js");
+        std::fs::write(&page, script).unwrap();
+        std::fs::write(&drive, super::COMMIT_CHAIN_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        let down = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let issue = |swipe: &mut crate::visit::Swipe| {
+            assert_eq!(
+                swipe.offer(down, 4, 400),
+                crate::visit::WheelMove::Follow(80.0)
+            );
+            assert_eq!(swipe.offer(up, 4, 400), crate::visit::WheelMove::Commit(1));
+            swipe.commit_token().expect("token")
+        };
+
+        assert_eq!(v["second"]["first"], "glide");
+        assert_eq!(v["second"]["second"], "queued");
+        assert_eq!(v["second"]["swipes"], serde_json::json!([1, 2]));
+        let bodies = v["second"]["bodies"].as_array().expect("bodies");
+        let dir =
+            std::env::temp_dir().join(format!("superreader-node-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        crate::settings::record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let apply_bodies = |reader: &mut crate::visit::Reader, ordered: &[serde_json::Value]| {
+            let mut store = crate::settings::SettingsBook { file: &file, book };
+            for body in ordered {
+                crate::visit::handle_page(reader, body, "ch.xhtml", &mut store);
+            }
+        };
+        let mut paired = crate::visit::Reader::default();
+        paired.place.href = "ch.xhtml".to_string();
+        paired
+            .swipe
+            .note_answer(1, v["second"]["first"].as_str().unwrap());
+        paired
+            .swipe
+            .note_answer(2, v["second"]["second"].as_str().unwrap());
+        apply_bodies(&mut paired, bodies);
+        let last_page = bodies.last().unwrap()["page"].as_u64().unwrap() as u32;
+        assert_ne!(bodies[0]["page"].as_u64().unwrap() as u32, last_page);
+        assert_eq!(paired.place.page, last_page);
+        assert_eq!(crate::settings::resume_page(&file, book), last_page);
+        let mut rewind = crate::visit::Reader::default();
+        rewind.place.href = "ch.xhtml".to_string();
+        rewind
+            .swipe
+            .note_answer(1, v["second"]["first"].as_str().unwrap());
+        rewind
+            .swipe
+            .note_answer(2, v["second"]["second"].as_str().unwrap());
+        let mut reversed = bodies.clone();
+        reversed.reverse();
+        apply_bodies(&mut rewind, &reversed);
+        assert_eq!(rewind.place.page, last_page);
+        assert_eq!(crate::settings::resume_page(&file, book), last_page);
+
+        assert_eq!(v["key"]["dropped"], serde_json::json!([2]));
+        assert_eq!(v["key"]["swipes"], serde_json::json!([1, null]));
+        let mut keyed = crate::visit::Swipe::default();
+        let flying = issue(&mut keyed);
+        let queued = issue(&mut keyed);
+        keyed.note_answer(flying, "glide");
+        keyed.note_answer(queued, v["key"]["replaced"].as_str().unwrap());
+        keyed.retire(v["key"]["dropped"][0].as_u64().unwrap());
+        assert_eq!(
+            crate::visit::swipe_progress(&mut keyed, Some(queued), 3, 0),
+            None
+        );
+        assert_eq!(
+            crate::visit::swipe_progress(&mut keyed, Some(flying), 2, 0),
+            Some((2, 0))
+        );
+
+        assert_eq!(v["killed"]["before"], serde_json::json!([1]));
+        assert_eq!(v["killed"]["pinned"], 800);
+
+        let swipes = v["long"]["swipes"].as_array().expect("swipes");
+        let bodies = v["long"]["bodies"].as_array().expect("bodies");
+        assert_eq!(swipes.len(), 128);
+        assert_eq!(bodies.len(), 128);
+        assert_ne!(
+            bodies[0]["page"].as_u64().unwrap(),
+            bodies[127]["page"].as_u64().unwrap()
+        );
+        assert_eq!(v["long"]["answers"], "glide");
+        crate::settings::record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let mut chapter = crate::visit::Reader::default();
+        chapter.place.href = "ch.xhtml".to_string();
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        for body in bodies {
+            let token = body["swipe"].as_u64().unwrap();
+            chapter.swipe.note_answer(token, "glide");
+            let applied = crate::visit::handle_page(&mut chapter, body, "ch.xhtml", &mut store);
+            assert!(applied.accepted);
+            assert_eq!(chapter.place.page, body["page"].as_u64().unwrap() as u32);
+        }
+        let kept = chapter.place.page;
+        let older = bodies[0].clone();
+        let refused = crate::visit::handle_page(&mut chapter, &older, "ch.xhtml", &mut store);
+        assert!(!refused.accepted);
+        assert_eq!(chapter.place.page, kept);
+        assert_eq!(crate::settings::resume_page(&file, book), kept);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1144,3 +1819,450 @@ mod tests {
         assert!(!lower.contains("spread"));
     }
 }
+
+const RELEASE_GLIDE_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(){} } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+}
+const seen = [];
+function spy() {
+  const orig = window.spikeTurn;
+  window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+}
+function take() { const out = seen.slice(); seen.length = 0; return out; }
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+fire('keydown', { key: ' ', shiftKey: false, repeat: false, preventDefault(){} });
+const space = take();
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+const arrow = take();
+fire('click', { button: 0, clientX: 390, clientY: 100, preventDefault(){} });
+const edge = take();
+flush();
+flush();
+const key = { space, arrow, edge, scroll: body.scrollLeft };
+fire('keydown', { key: ' ', shiftKey: true, repeat: false, preventDefault(){} });
+key.after = take();
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollowDrop();
+flush();
+flush();
+const droppedScroll = body.scrollLeft;
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+const drop = { droppedScroll, after: take(), scroll: body.scrollLeft };
+
+boot(); spy();
+window.spikeFollow(-30);
+window.spikeFollowEnd(0);
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+flush();
+const cancel = { during: take(), scroll: body.scrollLeft };
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollow(60);
+window.spikeFollowEnd(1);
+flush();
+flush();
+const again = { scroll: body.scrollLeft };
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+again.after = take();
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollow(20);
+window.spikeFollowEnd(0);
+flush();
+flush();
+const ignored = { scroll: body.scrollLeft };
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+ignored.after = take();
+
+console.log(JSON.stringify({ key, drop, cancel, again, ignored }));
+"#;
+
+const REVEAL_DURING_RELEASE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  posts.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+  posts.length = 0;
+}
+const seen = [];
+function spy() {
+  const orig = window.spikeTurn;
+  window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+}
+function take() { const out = seen.slice(); seen.length = 0; return out; }
+
+boot();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeReveal(800);
+flush(); flush(); flush();
+const reveal = {
+  scroll: body.scrollLeft,
+  unpinned: posts.filter(function (p) { return p.pinned == null; }).map(function (p) { return p.page; }),
+  pinned: posts.length ? posts[posts.length - 1].pinned : null
+};
+
+boot();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+window.spikeFollowDrop();
+flush(); flush(); flush();
+const drop = { scroll: body.scrollLeft, posts: posts.length };
+
+boot(); spy();
+window.spikeFollow(80);
+window.spikeFollowEnd(1);
+fire('keydown', { key: ' ', shiftKey: false, repeat: false, preventDefault(){} });
+const during = take();
+flush(); flush();
+const key = { during, scroll: body.scrollLeft };
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+key.after = take();
+
+console.log(JSON.stringify({ reveal, drop, key }));
+"#;
+
+const COMMIT_TOKEN_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: '', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 1600,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return el(); },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+global.document = {
+  createElement: () => el(),
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  posts.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+  posts.length = 0;
+}
+const seen = [];
+function spy() {
+  const orig = window.spikeTurn;
+  window.spikeTurn = function (d) { const r = orig(d); seen.push(r); return r; };
+}
+function take() { const out = seen.slice(); seen.length = 0; return out; }
+function swipeOf() {
+  const named = posts.filter(function (p) { return p.swipe != null; });
+  return named.length ? named[named.length - 1].swipe : null;
+}
+
+function keyDuringSecondFinger(key, shift) {
+  boot(); spy();
+  window.spikeFollow(80);
+  window.spikeFollowEnd(1, 7);
+  window.spikeFollow(40);
+  fire('keydown', { key: key, shiftKey: !!shift, repeat: false, preventDefault(){} });
+  const during = take();
+  flush(); flush();
+  return { during, scroll: body.scrollLeft, swipe: swipeOf() };
+}
+
+const space = keyDuringSecondFinger(' ', false);
+const arrow = keyDuringSecondFinger('ArrowRight', false);
+const other = keyDuringSecondFinger('a', false);
+
+boot();
+window.spikeFollow(80);
+window.spikeFollowEnd(1, 7);
+flush(); flush(); flush();
+window.spikeFollowDrop();
+const latePost = posts.filter(function (p) { return p.swipe != null; }).pop() || {};
+const late = { swipe: latePost.swipe == null ? null : latePost.swipe, page: latePost.page == null ? null : latePost.page };
+
+boot();
+window.spikeFollow(80);
+window.spikeReveal(800);
+flush(); flush(); flush();
+const reveal = {
+  scroll: body.scrollLeft,
+  unpinned: posts.filter(function (p) { return p.pinned == null; }).map(function (p) { return p.page; }),
+  pinned: posts.length ? posts[posts.length - 1].pinned : null
+};
+
+console.log(JSON.stringify({ space, arrow, other, late, reveal }));
+"#;
+
+const COMMIT_CHAIN_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
+    textContent: 'word', innerHTML: '', innerText: 'word', lang: '',
+    scrollLeft: 0, scrollWidth: 80000,
+    appendChild(child){ if (child) child.parentNode = this; }, prepend(){}, remove(){},
+    querySelector(){ return null; }, querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left:0, right:0, top:0, bottom:0, width:10, height:10 }; },
+    closest(){ return null; }, parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+const rootEl = el();
+rootEl.scrollWidth = 80000;
+body.scrollWidth = 80000;
+global.document = {
+  createElement: () => el(), documentElement: rootEl, head: el(), body,
+  querySelectorAll: () => [], querySelector: () => null, getElementById: () => null,
+  createTreeWalker: () => ({ nextNode(){ return null; }, currentNode: { nodeValue: '' } }),
+  addEventListener(){}, caretRangeFromPoint(){ return null; },
+  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+const listeners = {};
+function listen(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+global.addEventListener = listen;
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function flush() {
+  global.__now += 1000;
+  const batch = raf.splice(0, raf.length);
+  for (const fn of batch) fn(global.__now);
+}
+function fire(type, event) {
+  for (const fn of listeners[type] || []) fn(event);
+}
+function boot() {
+  for (const k of Object.keys(listeners)) delete listeners[k];
+  raf.length = 0;
+  posts.length = 0;
+  body.scrollLeft = 0;
+  rootEl.scrollLeft = 0;
+  eval(script);
+  flush();
+  posts.length = 0;
+}
+function swipeOf(list) {
+  return list.map(function (p) { return p.swipe == null ? null : p.swipe; });
+}
+
+boot();
+const firstAnswer = window.spikeFollowEnd(1, 1);
+const secondAnswer = window.spikeFollowEnd(1, 2);
+flush(); flush(); flush();
+const second = { first: firstAnswer, second: secondAnswer, swipes: swipeOf(posts), pages: posts.map(function (p) { return p.page; }), bodies: posts.filter(function (p) { return p.swipe != null; }) };
+
+boot();
+const queuedAnswer = window.spikeFollowEnd(1, 1);
+const replaced = window.spikeFollowEnd(1, 2);
+fire('keydown', { key: ' ', shiftKey: false, repeat: false, preventDefault(){} });
+const dropped = posts.filter(function (p) { return p.dropped; }).map(function (p) { return p.swipe; });
+flush(); flush(); flush();
+const kept = posts.filter(function (p) { return !p.dropped; });
+const key = { queuedAnswer, replaced, dropped, swipes: swipeOf(kept), pages: kept.map(function (p) { return p.page; }) };
+
+boot();
+window.spikeFollowEnd(1, 1);
+window.spikeFollowEnd(1, 2);
+flush();
+window.spikeFollowDrop();
+flush(); flush();
+const beforeReveal = posts.slice();
+window.spikeReveal(800);
+flush(); flush(); flush();
+const killed = {
+  before: swipeOf(beforeReveal),
+  pages: beforeReveal.map(function (p) { return p.page; }),
+  pinned: posts.length ? posts[posts.length - 1].pinned : null
+};
+
+boot();
+const answers = [];
+for (let i = 1; i <= 128; i++) {
+  answers.push(window.spikeFollowEnd(1, i));
+  flush();
+  flush();
+}
+const swipes = posts.map(function (p) { return p.swipe; }).filter(function (s) { return s != null; });
+const long = { answers: answers[0], count: swipes.length, first: swipes[0], last: swipes[swipes.length - 1], swipes: swipes, bodies: posts.filter(function (p) { return p.swipe != null; }) };
+
+console.log(JSON.stringify({ second, key, killed, long }));
+"#;

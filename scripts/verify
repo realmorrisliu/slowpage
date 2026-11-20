@@ -99,7 +99,7 @@ PENDING = [
     (
         "alan-spawn",
         "highlight-comment-alan",
-        "Blocked until alan issue 1078 closes. The spike does not spawn alan.",
+        "Pending until SuperReader embeds alan_os_host::embed, after S3 and S4. The spike does not embed alan.",
     ),
     (
         "superreader-json",
@@ -364,9 +364,10 @@ MOCK_GRID = {
     "caption_h": 42.0,
 }
 SHELL_CLICK_GAP = (
-    "S3/S4 has not built the reading form. A click on 继续阅读 can write reader.json "
-    "while the window stays on the library. The reader-forcing launch is SPIKE_BOOK. "
-    "This gap stays until the reading form."
+    "A cover click leaves the library and shows the existing reader chrome. "
+    "Escape or Command-[ returns while editing is idle and immersive is off. "
+    "This window check has not been driven, so it stays pending. "
+    "The margin form still waits on the mockup."
 )
 
 
@@ -4583,7 +4584,7 @@ def admit_recorded_chinese(path, record):
     plain = epub_plain(Path(path))
     if chapter not in plain or len(plain) < minimum:
         return False, (
-            f"not executed: recorded fixture does not contain {chapter} "
+            f"fail: recorded fixture does not contain {chapter} "
             f"at {minimum} characters."
         )
     return True, f"sha256 {digest}, {len(plain)} characters, chapter {chapter}"
@@ -4709,8 +4710,17 @@ def state_admission_self_test():
     ok, detail = top_is_paper(_w, rows, corner_radius=10)
     assert not ok, detail
     record = {"sha256": "", "chapter": "范愛農", "min_chars": 1500}
-    admitted, detail = admit_recorded_chinese(Path("/tmp/does-not-exist.epub"), record)
-    assert not admitted and "sha256" in detail
+    admitted, detail, absent_sha_code, absent_sha_rows = score_chinese_record(
+        Path("/tmp/does-not-exist.epub"), record
+    )
+    assert not admitted and "sha256" in detail and "not executed" in detail
+    assert absent_sha_code == 0 and {row["status"] for row in absent_sha_rows} == {"pending"}
+    absent_file, absent_detail, absent_code, absent_rows = score_chinese_record(
+        Path("/tmp/does-not-exist.epub"),
+        {"sha256": "ab" * 32, "chapter": "范愛農", "min_chars": 1500},
+    )
+    assert not absent_file and "not on disk" in absent_detail and "not executed" in absent_detail
+    assert absent_code == 0 and {row["status"] for row in absent_rows} == {"pending"}
     chapter = "范愛農" + ("文" * 1500)
     xhtml = f"<html><body><p>{chapter}</p></body></html>".encode()
     import zipfile
@@ -4724,14 +4734,39 @@ def state_admission_self_test():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "zhaohua.epub"
         path.write_bytes(raw)
-        empty, _detail = admit_recorded_chinese(path, {"sha256": "", "chapter": "范愛農", "min_chars": 1500})
-        assert not empty
-        mismatched, _detail = admit_recorded_chinese(path, {"sha256": "0" * 64, "chapter": "范愛農", "min_chars": 1500})
-        assert not mismatched
-        matched, detail = admit_recorded_chinese(
+        empty, empty_detail, empty_code, empty_rows = score_chinese_record(
+            path, {"sha256": "", "chapter": "范愛農", "min_chars": 1500}
+        )
+        assert not empty and "not executed" in empty_detail and empty_code == 0
+        assert {row["status"] for row in empty_rows} == {"pending"}
+        mismatched, mismatch_detail, mismatch_code, mismatch_rows = score_chinese_record(
+            path, {"sha256": "0" * 64, "chapter": "范愛農", "min_chars": 1500}
+        )
+        assert not mismatched and "not executed" in mismatch_detail and mismatch_code == 0
+        assert {row["status"] for row in mismatch_rows} == {"pending"}
+        matched, detail, matched_code, matched_rows = score_chinese_record(
             path, {"sha256": digest, "chapter": "范愛農", "min_chars": 1500}
         )
-        assert matched, detail
+        assert matched and matched_code == 0, detail
+        assert matched_rows[0]["status"] == "pass"
+        missing_chapter, missing_detail, missing_code, missing_rows = score_chinese_record(
+            path, {"sha256": digest, "chapter": "不存在的章", "min_chars": 1500}
+        )
+        assert not missing_chapter and missing_detail.startswith("fail:"), missing_detail
+        assert "not executed" not in missing_detail
+        assert missing_code != 0 and {row["status"] for row in missing_rows} == {"fail"}
+        brief = BytesIO()
+        with zipfile.ZipFile(brief, "w") as book:
+            book.writestr("chapter.xhtml", "<html><body><p>范愛農</p></body></html>")
+        brief_raw = brief.getvalue()
+        brief_path = Path(tmp) / "brief.epub"
+        brief_path.write_bytes(brief_raw)
+        brief_digest = hashlib.sha256(brief_raw).hexdigest()
+        short, short_detail, short_code, short_rows = score_chinese_record(
+            brief_path, {"sha256": brief_digest, "chapter": "范愛農", "min_chars": 1500}
+        )
+        assert not short and short_detail.startswith("fail:"), short_detail
+        assert short_code != 0 and {row["status"] for row in short_rows} == {"fail"}
 
 
 def loadavg():
@@ -6323,7 +6358,8 @@ def page_shot(state, window_tool, ocr_tool, png):
 
 CHINESE_SOURCE = {"ok": False, "detail": "not checked"}
 # Rows that exist only to measure the Chinese book. A missing book marks these
-# not executed. Pride rows are not in this set.
+# not executed. A recorded file that lacks the named chapter, or is shorter
+# than the recorded length, fails them. Pride rows are not in this set.
 CHINESE_ROWS = {
     "trim-32kai-zhaohua",
     "justify-zhaohua-32kai",
@@ -6458,16 +6494,41 @@ def hold_chinese_rows(rows):
     if CHINESE_SOURCE["ok"]:
         return rows
     detail = CHINESE_SOURCE["detail"]
+    status = "fail" if str(detail).startswith("fail:") else "pending"
     present = set()
     for row in rows:
         if row["id"] not in CHINESE_ROWS:
             continue
         present.add(row["id"])
-        row["status"] = "pending"
+        row["status"] = status
         row["detail"] = detail
     for missing in sorted(CHINESE_ROWS - present):
-        rows.append(check(missing, "reading-view", "window", "pending", detail))
+        rows.append(check(missing, "reading-view", "window", status, detail))
     return rows
+
+
+def score_chinese_record(path, record):
+    """Production admission, then the summary exit that admission produces."""
+    import contextlib
+    import io
+
+    admitted, detail = admit_recorded_chinese(path, record)
+    saved = (CHINESE_SOURCE["ok"], CHINESE_SOURCE["detail"])
+    try:
+        CHINESE_SOURCE["ok"] = bool(admitted)
+        CHINESE_SOURCE["detail"] = detail
+        rows = hold_chinese_rows([
+            check("reading-plain-zh", "reading-view", "window", "pass", detail)
+        ])
+        out = Path(tempfile.mkdtemp(prefix="sr-chinese-score-"))
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = write_summary(out, rows, "", 0.0)
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
+        return admitted, detail, code, rows
+    finally:
+        CHINESE_SOURCE["ok"], CHINESE_SOURCE["detail"] = saved
 
 
 def default_trim_shots(out, window_tool, ocr_tool, proto):
@@ -8737,24 +8798,28 @@ def aqua_case(out, window_tool, ocr_tool, mouse, name, dark):
         placed, _ = icon_placement(body)
         this_hash = hashlib.sha256(png.read_bytes()).hexdigest() if png.exists() else ""
         blocked = []
-        if dark:
-            for prior in ("b-pride-hover.png", "b-pride.png", "aqua-light.png"):
-                other = out / prior
-                if other.is_file():
-                    blocked.append(hashlib.sha256(other.read_bytes()).hexdigest())
-        problems = appearance_problems("dark" if dark else "light", appearance, this_hash, blocked)
-        mode = "dark" if dark else "light"
+        if png.exists():
+            for sibling in out.glob("*.png"):
+                if sibling.is_file() and sibling.resolve() != png.resolve():
+                    blocked.append(hashlib.sha256(sibling.read_bytes()).hexdigest())
+        problems = appearance_problems("light", appearance, this_hash, blocked)
+        system = "system dark" if dark else "system light"
         if problems:
+            status = admission_status(problems)
+            detail = "; ".join(problems)
+            if status != "fail":
+                detail = "not executed: " + detail
+            detail = f"{system}; {detail}; {place}; {pixel_detail}"
             return check(
                 check_id,
                 "window-chrome",
                 "window",
-                "pending",
-                "not executed: " + "; ".join(problems),
+                status,
+                detail,
                 png.name if png.exists() else None,
             )
         ok = pixels_ok and placed
-        detail = f"{mode} appearance {appearance}; {place}; {pixel_detail}"
+        detail = f"{system}; window appearance {appearance}; {place}; {pixel_detail}"
         if dark and png.exists():
             shots = ROOT / "docs" / "verify" / "aqua"
             shots.mkdir(parents=True, exist_ok=True)
@@ -8967,13 +9032,23 @@ def run_chrome(out, window_tool, ocr_tool):
                         windowed,
                     )
                     if problems:
-                        detail = "not executed: " + "; ".join(problems)
+                        status = admission_status(problems)
+                        detail = "; ".join(problems)
+                        if status != "fail":
+                            detail = "not executed: " + detail
                         for check_id in (
                             "chrome-b-fullscreen-footer",
                             "chrome-b-fullscreen-page",
                             "chrome-b-fullscreen-paper",
                         ):
-                            rows.append(check(check_id, "window-chrome", "window", "pending", detail, f"{name}.png"))
+                            rows.append(check(
+                                check_id,
+                                "window-chrome",
+                                "window",
+                                status,
+                                detail,
+                                f"{name}.png",
+                            ))
                         continue
                     footer = footer_ok(lines, png)
                     rows.append(check(
@@ -9137,6 +9212,333 @@ def skipped(reason):
 
 
 LOCK_DIR = Path("/tmp/superreader-verify.lock")
+PRESCRIBED_LOAD = 8.0
+
+
+def title_has_book(book, title):
+    text = title or ""
+    if book == "pride":
+        return "Pride" in text
+    if book == "zhaohua":
+        return "朝花" in text
+    return bool(book) and book.lower() in text.lower()
+
+
+def admit_reader_fullscreen(chrome, capture, windowed):
+    """A fullscreen pass needs the flag, the same window, the native size, and the book.
+
+    The request that asked for fullscreen is not an argument. A copied windowed
+    frame is not an entered fullscreen.
+    """
+    problems = []
+    if not isinstance(chrome, dict) or chrome.get("fullscreen") is not True:
+        problems.append("fullscreen flag was not set")
+    try:
+        chrome_pid = int(chrome.get("pid")) if isinstance(chrome, dict) else None
+    except (TypeError, ValueError):
+        chrome_pid = None
+    try:
+        reader_pid = int(capture.get("pid"))
+    except (TypeError, ValueError):
+        reader_pid = None
+    if chrome_pid is None or chrome_pid != reader_pid:
+        problems.append("chrome pid is not the reader process")
+    window_id = capture.get("window_id")
+    reader_window = capture.get("reader_window_id")
+    if window_id is None or window_id != reader_window:
+        problems.append("capture window is not the reader window")
+    if not title_has_book(
+        capture.get("book") or "",
+        (chrome or {}).get("title") if isinstance(chrome, dict) else "",
+    ):
+        problems.append("loaded book is not the requested book")
+    try:
+        native_w = float(chrome.get("window_w") or 0) if isinstance(chrome, dict) else 0.0
+        native_h = float(chrome.get("window_h") or 0) if isinstance(chrome, dict) else 0.0
+        scale = float(capture.get("scale") or 0)
+        px_w = float(capture.get("px_w") or 0)
+        px_h = float(capture.get("px_h") or 0)
+    except (TypeError, ValueError):
+        native_w = native_h = scale = px_w = px_h = 0.0
+    if native_w < 2 or native_h < 2 or scale <= 0 or px_w < 2 or px_h < 2:
+        problems.append("native size was not recorded")
+    elif abs(px_w - native_w * scale) > 2 or abs(px_h - native_h * scale) > 2:
+        problems.append("capture size does not match the native window")
+    if (
+        isinstance(windowed, dict)
+        and abs(native_w - float(windowed.get("w") or 0)) < 2
+        and abs(native_h - float(windowed.get("h") or 0)) < 2
+    ):
+        problems.append("fullscreen window is still the windowed size")
+    if capture.get("same_bytes"):
+        problems.append("fullscreen capture matches the windowed frame")
+    return problems
+
+
+def fullscreen_evidence(body, pid, metrics, px_w, px_h, book, same_bytes, windowed):
+    """Build the admission record from the capture, not from fields the shell does not write.
+
+    chrome.json has the flag, pid, title, and point size. The window id and scale
+    come from the window tool. The pixel size comes from the PNG.
+    """
+    metrics = metrics if isinstance(metrics, dict) else {}
+    window = metrics.get("id")
+    return admit_reader_fullscreen(
+        body if isinstance(body, dict) else {},
+        {
+            "pid": pid,
+            "window_id": window,
+            "reader_window_id": window,
+            "book": book,
+            "scale": metrics.get("scale") or 0,
+            "px_w": px_w or 0,
+            "px_h": px_h or 0,
+            "same_bytes": same_bytes,
+        },
+        windowed if isinstance(windowed, dict) else {"w": 0, "h": 0},
+    )
+
+
+def appearance_problems(requested, appearance, this_bytes, blocked):
+    problems = []
+    name = str(appearance or "")
+    if requested == "dark":
+        if "Dark" not in name:
+            problems.append(f"appearance is {name or 'missing'}, not dark")
+    elif requested == "light":
+        if "Aqua" not in name or "Dark" in name:
+            problems.append(f"appearance is {name or 'missing'}, not light aqua")
+    else:
+        problems.append("appearance was not requested")
+    if this_bytes and this_bytes in set(blocked or ()):
+        problems.append("capture is the same file as another state")
+    return problems
+
+
+def reading_surface(names, webkit_page=None, pdf_ax_page=None):
+    """Open panel, empty shelf, or a book whose page is actually shown."""
+    text = "\n".join(str(name) for name in (names or []))
+    named_file = any(str(name).endswith((".epub", ".pdf")) for name in (names or []))
+    panel = ("打开" in text and "取消" in text) or (named_file and ("打开" in text or "Open" in text))
+    if panel:
+        return "open_panel"
+    if isinstance(webkit_page, int) and webkit_page > 0:
+        return "book_loaded"
+    if isinstance(pdf_ax_page, int) and pdf_ax_page > 0:
+        return "book_loaded"
+    return "empty_shelf"
+
+
+def admission_status(problems):
+    if not problems:
+        return "pass"
+    pending_marks = (
+        "was not set",
+        "was not recorded",
+        "still the windowed",
+        "matches the windowed",
+        "same file",
+        "missing",
+        "is not the reader",
+        "chrome pid",
+        "not executed",
+    )
+    if any(any(mark in item for mark in pending_marks) for item in problems):
+        return "pending"
+    return "fail"
+
+
+def show_fault(name, status, detail):
+    if isinstance(detail, (list, tuple)):
+        detail = "; ".join(str(item) for item in detail)
+    print(f"fault {name}: {status}: {detail}", flush=True)
+
+
+def harness_self_test():
+    copied = admit_reader_fullscreen(
+        {"fullscreen": False, "pid": 7, "window_w": 582, "window_h": 781, "title": "Pride and Prejudice"},
+        {
+            "pid": 7,
+            "window_id": 4,
+            "reader_window_id": 4,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 1164,
+            "px_h": 1562,
+            "same_bytes": True,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert admission_status(copied) == "pending", copied
+    assert "fullscreen flag was not set" in copied
+    assert "fullscreen capture matches the windowed frame" in copied
+    assert "fullscreen window is still the windowed size" in copied
+    show_fault("fullscreen-copied-frame", admission_status(copied), copied)
+    entered = admit_reader_fullscreen(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
+        {
+            "pid": 7,
+            "window_id": 9,
+            "reader_window_id": 9,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 3024,
+            "px_h": 1898,
+            "same_bytes": False,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert entered == [], entered
+    show_fault("fullscreen-entered", "pass", "flag, window, native size, and book")
+    from_capture = fullscreen_evidence(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "Pride and Prejudice"},
+        7,
+        {"id": 9, "w": 1512, "h": 949, "scale": 2},
+        3024,
+        1898,
+        "pride",
+        False,
+        {"w": 582, "h": 781},
+    )
+    assert from_capture == [], from_capture
+    show_fault("fullscreen-from-capture", "pass", "window id and pixels came from the capture")
+    copied_capture = fullscreen_evidence(
+        {"fullscreen": False, "pid": 7, "window_w": 582, "window_h": 781, "title": "Pride and Prejudice"},
+        7,
+        {"id": 4, "w": 582, "h": 781, "scale": 2},
+        1164,
+        1562,
+        "pride",
+        True,
+        {"w": 582, "h": 781},
+    )
+    assert admission_status(copied_capture) == "pending", copied_capture
+    show_fault("fullscreen-copied-capture", admission_status(copied_capture), copied_capture)
+    wrong_book = admit_reader_fullscreen(
+        {"fullscreen": True, "pid": 7, "window_w": 1512, "window_h": 949, "title": "全部书籍"},
+        {
+            "pid": 7,
+            "window_id": 9,
+            "reader_window_id": 9,
+            "book": "pride",
+            "scale": 2,
+            "px_w": 3024,
+            "px_h": 1898,
+            "same_bytes": False,
+        },
+        {"w": 582, "h": 781},
+    )
+    assert admission_status(wrong_book) == "fail", wrong_book
+    show_fault("fullscreen-wrong-book", admission_status(wrong_book), wrong_book)
+    dark_same = appearance_problems("dark", "NSAppearanceNameAqua", b"abc", [b"abc"])
+    assert admission_status(dark_same) != "pass"
+    assert any("not dark" in item for item in dark_same)
+    assert any("same file" in item for item in dark_same)
+    show_fault("dark-same-file", admission_status(dark_same), dark_same)
+    distinct = appearance_problems("dark", "NSAppearanceNameDarkAqua", b"abc", [b"def"])
+    assert distinct == []
+    show_fault("dark-distinct", "pass", "dark appearance and a different file")
+    stayed = appearance_problems("light", "NSAppearanceNameAqua", b"system-dark", [b"other"])
+    assert stayed == [], stayed
+    show_fault("aqua-under-system-dark", "pass", "window stayed light Aqua; SPIKE_APPEARANCE was not set")
+    became = appearance_problems("light", "NSAppearanceNameDarkAqua", b"x", [b"y"])
+    assert admission_status(became) == "fail", became
+    show_fault("aqua-under-system-dark-became-dark", admission_status(became), became)
+    panel = reading_surface(["打开", "取消", "pride-se.epub"], 1, None)
+    shelf = reading_surface(["全部书籍"], None, None)
+    loaded = reading_surface([], 2, None)
+    assert panel == "open_panel"
+    assert shelf == "empty_shelf"
+    assert loaded == "book_loaded"
+    show_fault("open-panel", "not-executed", panel)
+    show_fault("empty-shelf", "not-executed", shelf)
+    show_fault("book-loaded", "loaded", loaded)
+    old = os.environ.get("SR_VERIFY_MAX_LOAD")
+    os.environ["SR_VERIFY_MAX_LOAD"] = "999"
+    try:
+        assert load_ceiling() == PRESCRIBED_LOAD
+    finally:
+        if old is None:
+            os.environ.pop("SR_VERIFY_MAX_LOAD", None)
+        else:
+            os.environ["SR_VERIFY_MAX_LOAD"] = old
+    missing, detail, missing_code, missing_rows = score_chinese_record(
+        Path("/tmp/does-not-exist-harness.epub"), {"sha256": ""}
+    )
+    assert not missing and "sha256" in detail and "not executed" in detail
+    assert missing_code == 0 and {row["status"] for row in missing_rows} == {"pending"}
+    show_fault("sha-missing-record", "not-executed", detail)
+    absent, absent_detail, absent_code, absent_rows = score_chinese_record(
+        Path("/tmp/does-not-exist-harness.epub"), {"sha256": "ab" * 32}
+    )
+    assert not absent and "not on disk" in absent_detail and "not executed" in absent_detail
+    assert absent_code == 0 and {row["status"] for row in absent_rows} == {"pending"}
+    show_fault("sha-absent-file", "not-executed", absent_detail)
+    import hashlib
+    import zipfile
+    from io import BytesIO
+
+    chapter = "<html><body><p>范愛農" + ("文" * 1500) + "</p></body></html>"
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as book:
+        book.writestr("chapter.xhtml", chapter)
+    raw = buffer.getvalue()
+    digest = hashlib.sha256(raw).hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "book.epub"
+        path.write_bytes(raw)
+        bad, bad_detail, bad_code, bad_rows = score_chinese_record(
+            path, {"sha256": "0" * 64, "chapter": "范愛農"}
+        )
+        assert not bad and "not executed" in bad_detail
+        assert bad_code == 0 and {row["status"] for row in bad_rows} == {"pending"}
+        show_fault("sha-mismatch", "not-executed", bad_detail + "; fault-injection zip, not a loaded book")
+        matched, matched_detail, matched_code, matched_rows = score_chinese_record(
+            path, {"sha256": digest, "chapter": "范愛農", "min_chars": 1500}
+        )
+        assert matched and matched_code == 0, matched_detail
+        assert matched_rows[0]["status"] == "pass"
+        assert digest
+    stored = BytesIO()
+    with zipfile.ZipFile(stored, "w") as book:
+        info = zipfile.ZipInfo("chapter.xhtml")
+        info.compress_type = zipfile.ZIP_STORED
+        book.writestr(info, chapter)
+    stored_raw = stored.getvalue()
+    stored_digest = hashlib.sha256(stored_raw).hexdigest()
+    brief = BytesIO()
+    with zipfile.ZipFile(brief, "w") as book:
+        info = zipfile.ZipInfo("chapter.xhtml")
+        info.compress_type = zipfile.ZIP_STORED
+        book.writestr(info, "<html><body><p>范愛農</p></body></html>")
+    brief_raw = brief.getvalue()
+    brief_digest = hashlib.sha256(brief_raw).hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "stored.epub"
+        path.write_bytes(stored_raw)
+        short, short_detail, short_code, short_rows = score_chinese_record(
+            path, {"sha256": stored_digest, "chapter": "不存在的章", "min_chars": 1500}
+        )
+        assert not short and short_detail.startswith("fail:"), short_detail
+        assert "not executed" not in short_detail
+        assert short_code != 0 and {row["status"] for row in short_rows} == {"fail"}
+        show_fault(
+            "sha-chapter-mismatch",
+            "fail",
+            short_detail + "; fault-injection zip, not a loaded book",
+        )
+        brief_path = Path(tmp) / "brief.epub"
+        brief_path.write_bytes(brief_raw)
+        tiny, tiny_detail, tiny_code, tiny_rows = score_chinese_record(
+            brief_path, {"sha256": brief_digest, "chapter": "范愛農", "min_chars": 1500}
+        )
+        assert not tiny and tiny_detail.startswith("fail:"), tiny_detail
+        assert tiny_code != 0 and {row["status"] for row in tiny_rows} == {"fail"}
+        show_fault(
+            "sha-chapter-short",
+            "fail",
+            tiny_detail + "; fault-injection zip, not a loaded book",
+        )
 
 
 def hold_verify_lock():
@@ -9180,9 +9582,8 @@ def hold_verify_lock():
         try:
             LOCK_DIR.mkdir()
         except FileExistsError:
-            print("waiting for verify lock", flush=True)
-            time.sleep(30)
-            continue
+            print("not started: verify lock is held. No process was killed.", flush=True)
+            raise SystemExit(75)
         break
     (LOCK_DIR / "pid").write_text(f"{os.getpid()}\n")
     branch = subprocess.run(
@@ -9204,13 +9605,13 @@ def hold_verify_lock():
         )
         release()
         raise SystemExit(75)
+    held = subprocess.run(["pgrep", "-fl", "/spike-shell$"], capture_output=True, text=True)
+    if held.returncode == 0:
+        print("not started: spike-shell is already running. No process was killed.", flush=True)
+        print(held.stdout or "", flush=True)
+        release()
+        raise SystemExit(75)
     print(f"verify starting: 1m loadavg={load:.2f}", flush=True)
-    while True:
-        held = subprocess.run(["pgrep", "-fl", "/spike-shell$"], capture_output=True, text=True)
-        if held.returncode != 0:
-            break
-        print("waiting for spike-shell to exit", flush=True)
-        time.sleep(30)
     return load
 
 
@@ -10400,6 +10801,7 @@ def main():
     parser = argparse.ArgumentParser(description="Score the SuperReader spike.")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--harness", action="store_true")
     parser.add_argument("--prebuilt-self-test", action="store_true")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument(
@@ -10408,6 +10810,10 @@ def main():
         help="preflight launches only the shell form: 1440, minimum, fullscreen enter/settle/exit, accessibility titles, and the shelf wheel",
     )
     args = parser.parse_args()
+    if args.harness:
+        harness_self_test()
+        print("harness self-test passed")
+        return 0
     gate_provided_binaries()
     if args.prebuilt_self_test:
         provided_binary_self_test()

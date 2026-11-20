@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use nsh_platform_macos::objc2::rc::Retained;
 use nsh_platform_macos::objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
 use nsh_platform_macos::objc2::{
-    define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly,
+    define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
@@ -94,6 +94,7 @@ pub struct Runtime {
     style_mask: Cell<usize>,
     pub bar_gen: Cell<u32>,
     pub immersive: Cell<bool>,
+    pub reading: Cell<bool>,
     bar_fullscreen_sent: Cell<bool>,
     pub laying_out: Cell<bool>,
     traffic: RefCell<Option<TrafficLights>>,
@@ -144,6 +145,7 @@ impl Default for Runtime {
             style_mask: Cell::new(usize::MAX),
             bar_gen: Cell::new(0),
             immersive: Cell::new(false),
+            reading: Cell::new(false),
             bar_fullscreen_sent: Cell::new(false),
             laying_out: Cell::new(false),
             traffic: RefCell::new(None),
@@ -327,7 +329,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     // first style.
     keep_fullscreen_primary(window);
     style_window(window, rt);
-    if shell_on() {
+    // The shelf and the EPUB page share this monitor. A direct file open
+    // never engages the shelf, and the page script no longer handles the wheel.
+    if crate::visit::arms_page_wheel(shell_on()) {
         install_shelf_wheel();
     }
     window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
@@ -382,6 +386,9 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
             place_fullscreen_lights(window, shown > 0.5);
             rt.lights.set(shown);
             clear_shell_chrome(window);
+            if rt.reading.get() {
+                place_contents_button(window, rt, if shown > 0.5 { 1.0 } else { 0.0 });
+            }
         } else {
             paint_lights(window, 1.0);
             rt.lights.set(1.0);
@@ -467,6 +474,11 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     paint_lights(window, next);
     if shell_on() {
         clear_shell_chrome(window);
+        if rt.reading.get() {
+            place_contents_button(window, rt, 1.0);
+        } else if let Some(button) = rt.contents_button.borrow().clone() {
+            button.setHidden(true);
+        }
     } else {
         place_contents(window, rt, next);
         place_title(window, rt, next);
@@ -1145,8 +1157,28 @@ fn install_shelf_wheel() {
     }
     let block = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
         let e = unsafe { event.as_ref() };
-        if !shell_on() {
-            return event.as_ptr();
+        let phase = e.phase().0 as u64;
+        let momentum = e.momentumPhase().0 as u64;
+        let precise = e.hasPreciseScrollingDeltas();
+        let scroll_x = e.scrollingDeltaX();
+        let scroll_y = e.scrollingDeltaY();
+        let line_x = e.deltaX();
+        let line_y = e.deltaY();
+        let scrolls_shelf = crate::visit::wheel_scrolls_shelf(shell_on());
+        let page_took = if scrolls_shelf {
+            false
+        } else {
+            crate::web::take_epub_wheel(
+                phase,
+                momentum,
+                crate::visit::wheel_points(precise, scroll_x, line_x),
+                crate::visit::wheel_points(precise, scroll_y, line_y),
+            )
+        };
+        match crate::visit::wheel_owner(scrolls_shelf, page_took) {
+            crate::visit::WheelOwner::Page => return std::ptr::null_mut(),
+            crate::visit::WheelOwner::Through => return event.as_ptr(),
+            crate::visit::WheelOwner::Shelf => {}
         }
         let Some(mtm) = MainThreadMarker::new() else {
             return event.as_ptr();
@@ -1181,6 +1213,14 @@ fn install_shelf_wheel() {
         NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::ScrollWheel, &block)
     };
     std::mem::forget(monitor);
+    let keys = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        crate::web::abandon_swipe();
+        event.as_ptr()
+    });
+    let keys = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &keys)
+    };
+    std::mem::forget(keys);
 }
 
 fn expose_window(window: &NSWindow) {
@@ -1377,6 +1417,16 @@ fn place_contents_button(window: &NSWindow, rt: &Runtime, alpha: f64) {
     button.setHidden(alpha < 0.02);
     button.setEnabled(alpha >= 0.9);
     content.addSubview(&button);
+}
+
+pub fn bind_contents(rt: &Runtime, target: &AnyObject) {
+    let Some(button) = rt.contents_button.borrow().clone() else {
+        return;
+    };
+    unsafe {
+        let _: () = msg_send![&*button, setTarget: target];
+        let _: () = msg_send![&*button, setAction: sel!(showContents:)];
+    }
 }
 
 /// The book title's frame in the content view. Width leaves the traffic lights

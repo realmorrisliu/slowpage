@@ -2,6 +2,10 @@
 
 SuperReader is in pre-alpha. Issues and PRs are welcome; expect churn in the spike shell and in `scripts/verify`.
 
+## Agents
+
+Agent operating rules have one entry, [AGENTS.md](AGENTS.md). This file stays the build and pull-request guide.
+
 ## Build and test
 
 Use **`just`** from the repository root ([`docs/tooling.md`](docs/tooling.md)):

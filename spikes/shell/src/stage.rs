@@ -1,16 +1,17 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::rc::Rc;
 use std::time::Instant;
 
-use nsh_platform_macos::objc2::rc::Retained;
-use nsh_platform_macos::objc2::runtime::AnyObject;
+use nsh_platform_macos::objc2::rc::{Allocated, Retained};
+use nsh_platform_macos::objc2::runtime::{AnyClass, AnyObject};
 use nsh_platform_macos::objc2::{
     define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use nsh_platform_macos::objc2_app_kit::{NSEvent, NSResponder, NSView, NSWindow, NSWindowButton};
 use nsh_platform_macos::objc2_foundation::{
-    NSArray, NSObjectProtocol, NSPoint, NSRect, NSRunLoopCommonModes, NSSize,
+    NSArray, NSObjectProtocol, NSPoint, NSRect, NSRunLoopCommonModes, NSSize, NSString,
 };
 use nsh_platform_macos::{ComponentContext, Components, NativeComponent};
 use objc2_core_graphics::CGContext;
@@ -43,6 +44,32 @@ define_class!(
             let _: () = unsafe { msg_send![self, setNeedsDisplay: true] };
         }
 
+        #[unsafe(method(showContents:))]
+        fn show_contents(&self, _sender: Option<&AnyObject>) {
+            let titles = {
+                let state = self.ivars().state.borrow();
+                let Some(web) = state.web.as_ref() else {
+                    return;
+                };
+                let marks = crate::visit::contents_marks(&web.book_title, &web.spine());
+                if marks.is_empty() && !crate::web::reader_has_back() {
+                    return;
+                }
+                marks.into_iter().map(|mark| mark.title).collect::<Vec<_>>()
+            };
+            pop_chapters(self, &titles, crate::web::reader_has_back());
+        }
+
+        #[unsafe(method(pickChapter:))]
+        fn pick_chapter(&self, sender: Option<&AnyObject>) {
+            let Some(sender) = sender else {
+                return;
+            };
+            let tag: isize = unsafe { msg_send![sender, tag] };
+            self.ivars().state.borrow_mut().apply_chapter(tag);
+            let _: () = unsafe { msg_send![self, setNeedsDisplay: true] };
+        }
+
         #[unsafe(method(pumpLights))]
         fn pump_lights(&self) {
             let window: Option<Retained<NSWindow>> = unsafe { msg_send![self, window] };
@@ -55,7 +82,7 @@ define_class!(
                         state.open_requested(self, &path);
                     }
                 }
-                let (chrome, page, before) = {
+                let (chrome, page, before, open) = {
                     let state = self.ivars().state.borrow();
                     (
                         state.chrome.clone(),
@@ -65,9 +92,15 @@ define_class!(
                             state.chrome.bar_gen.get(),
                             state.chrome.bar_dirty.get(),
                         ),
+                        state.web.is_some(),
                     )
                 };
+                chrome.reading.set(open && !crate::visit::on_library());
                 crate::chrome::sync(&window, &chrome, page);
+                if open {
+                    let target = unsafe { &*(std::ptr::from_ref(self).cast::<AnyObject>()) };
+                    crate::chrome::bind_contents(&chrome, target);
+                }
                 let after = (chrome.bar_w.get(), chrome.bar_gen.get(), chrome.bar_dirty.get());
                 if before != after {
                     let _: () = unsafe { msg_send![self, setNeedsDisplay: true] };
@@ -156,7 +189,7 @@ define_class!(
 
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
-            if crate::chrome::shell_on() {
+            if crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on()) {
                 // Covers forward a wheel here. The shelf is the NSH scroll
                 // above this stage, so move that instead of the PDF offset.
                 let mut dy: f64 = unsafe { msg_send![event, scrollingDeltaY] };
@@ -211,10 +244,22 @@ define_class!(
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
             let point = point_in(self, event);
+            let bounds: NSRect = unsafe { msg_send![self, bounds] };
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
-                state.finish_drag(start, point);
+                let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
+                let edge = if click && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
+                {
+                    state.page_edge_at(point.0, point.1, bounds.size.width, bounds.size.height)
+                } else {
+                    crate::visit::PageEdge::None
+                };
+                match edge {
+                    crate::visit::PageEdge::Back => state.command("page", &json!(-1)),
+                    crate::visit::PageEdge::Forward => state.command("page", &json!(1)),
+                    crate::visit::PageEdge::None => state.finish_drag(start, point),
+                }
             }
             drop(state);
             unsafe { msg_send![self, setNeedsDisplay: true] }
@@ -253,7 +298,8 @@ struct State {
     book_kind: &'static str,
     book_path: String,
     product: bool,
-    saved_page: u32,
+    pdf_saved_page: u32,
+    pdf_saved_offset: u32,
     page_total: Option<u32>,
     epub_page: usize,
     anchor: Option<Anchor>,
@@ -270,8 +316,9 @@ struct State {
     shell_h: f64,
     placed: Option<(i32, i32, i32, i32, String)>,
     placed_zoom: f64,
+    placed_stage_w: f64,
+    placed_stage_h: f64,
     await_hold: bool,
-    hold_ready: bool,
     settled: bool,
     hold_since: Option<Instant>,
     shown_at: Option<Instant>,
@@ -280,7 +327,6 @@ struct State {
     play_at: Option<Instant>,
     turn_pending: bool,
     seen_frames: usize,
-    goto: Option<usize>,
     title_settled: bool,
     chrome: Rc<crate::chrome::Runtime>,
 }
@@ -363,6 +409,7 @@ impl State {
 
     fn draw(&mut self, view: &StageView) {
         self.poll_web();
+        self.bind_swipe();
         self.note_probe(view);
         let bounds: NSRect = unsafe { msg_send![view, bounds] };
         self.paint_shell(bounds);
@@ -372,18 +419,11 @@ impl State {
         if self.mode == Mode::WebKit {
             self.stage_w = bounds.size.width;
             self.stage_h = bounds.size.height;
-            self.place_page();
+            let pump = self.place_page();
             let playing = std::env::var("SPIKE_PLAY").as_deref() == Ok("1")
                 && self.play_count < 3
                 && !self.turn_pending;
-            let need_page = self.goto.is_some_and(|target| {
-                self.web
-                    .as_ref()
-                    .and_then(|web| web.inbox.borrow().pages)
-                    .map(|(page, _)| page < target)
-                    .unwrap_or(true)
-            });
-            if self.chrome_moving() || playing || need_page {
+            if self.chrome_moving() || playing || pump {
                 let _: () = unsafe {
                     msg_send![
                         view,
@@ -572,10 +612,11 @@ impl State {
                 self.publish();
             }
             "page" => {
+                crate::web::abandon_swipe();
                 let delta = args.as_i64().unwrap_or(0);
                 if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
-                        web.turn(delta as i32);
+                        web.turn(delta as i32, crate::visit::TurnSource::User);
                     }
                 } else if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
                     self.turn_pdf(delta);
@@ -588,6 +629,51 @@ impl State {
             }
             _ => {}
         }
+    }
+
+    fn apply_chapter(&mut self, tag: isize) {
+        let Some(web) = self.web.as_ref() else {
+            return;
+        };
+        let spine = web.spine();
+        let marks = crate::visit::contents_marks(&web.book_title, &spine);
+        let href = web.href();
+        let decided = crate::web::turn_chapter(tag, &marks, &spine, &href);
+        if !decided.accepted {
+            return;
+        }
+        crate::web::cancel_swipe();
+        let go = decided
+            .go
+            .clone()
+            .unwrap_or(crate::visit::ChapterMove::Stay);
+        let moved = match &go {
+            crate::visit::ChapterMove::Stay => true,
+            crate::visit::ChapterMove::Reveal { offset } => {
+                let mut inbox = web.inbox.borrow_mut();
+                inbox.pinned = None;
+                inbox.pin_missed = false;
+                drop(inbox);
+                web.reveal(*offset);
+                true
+            }
+            crate::visit::ChapterMove::Chapter { index, .. } => web.show_chapter(*index).is_some(),
+            crate::visit::ChapterMove::Page { page } => {
+                if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+                    if let Some(pdf) = self.pdf.as_ref() {
+                        let sizes = pdf.sizes.clone();
+                        self.offset = page_offset(&sizes, *page, self.scale);
+                        self.note_page();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+        };
+        let _ = (moved, go);
     }
 
     fn select_phrase(&mut self, phrase: &str) {
@@ -761,11 +847,7 @@ impl State {
             return;
         }
         let current = self.current_page();
-        let next = if delta < 0 {
-            current.saturating_sub(1)
-        } else {
-            (current + 1).min(count - 1)
-        };
+        let next = crate::visit::step_index(current, count, delta);
         let sizes = pdf.sizes.clone();
         self.offset = page_offset(&sizes, next as u32 + 1, self.scale);
         self.note_page();
@@ -785,13 +867,16 @@ impl State {
             }
             crate::books::BookKind::Epub => spike_library::OpenKind::EpubFile,
         };
-        let page = page.max(1);
+        let mut page = page.max(1);
         self.page_total = None;
+        crate::web::set_book(&book.path);
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
         self.dismiss_web();
         self.pdf = None;
         self.anchor = None;
         self.book_path = book.path.clone();
+        let mut replaced_href = String::new();
+        let mut offset = 0u32;
         let opened = if plan.pdf {
             let engine = match std::env::var("SPIKE_ENGINE").as_deref() {
                 Ok("hayro") => PdfEngine::Hayro,
@@ -801,27 +886,48 @@ impl State {
             self.load_pdf_at(engine, &book.path, plan.page)
         } else if plan.web {
             self.mode = Mode::WebKit;
-            self.goto = if plan.page > 1 {
-                Some(plan.page as usize)
-            } else {
-                None
-            };
+            let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
+            let mut href = crate::settings::resume_href(&crate::settings::path(), &book.path);
+            let mut caret = crate::settings::resume_caret(&crate::settings::path(), &book.path);
+            offset = sentence;
             self.epub_page = 0;
             self.web_pages = 1;
             self.shown_at = None;
             self.placed = None;
-            self.open_web(view);
+            self.open_web(view, &href);
+            if let Some(web) = &self.web {
+                let open = crate::visit::opened_place(&web.spine(), &href, page, sentence);
+                if open.page != page || open.offset != sentence {
+                    page = open.page;
+                    offset = open.offset;
+                    if offset == 0 {
+                        caret = false;
+                    }
+                    let shown = web.href();
+                    if !shown.is_empty() {
+                        href = shown.clone();
+                        replaced_href = shown;
+                    }
+                }
+            }
+            if self.web.is_some() {
+                crate::web::open_reader(page, offset, &href, caret);
+            }
             self.web.is_some()
         } else {
             false
         };
         if !opened {
+            crate::web::set_book("");
             self.mode = Mode::Empty;
             self.book_path.clear();
             self.publish();
             return false;
         }
-        self.saved_page = page;
+        if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            self.pdf_saved_page = page;
+            self.pdf_saved_offset = 0;
+        }
         let _ = crate::settings::record_open(
             &crate::settings::path(),
             &book.path,
@@ -829,6 +935,16 @@ impl State {
             self.page_total,
             opened_at_ms(),
         );
+        if !replaced_href.is_empty() {
+            let _ = crate::settings::record_progress(
+                &crate::settings::path(),
+                &book.path,
+                page,
+                self.page_total,
+                offset,
+                &replaced_href,
+            );
+        }
         self.publish();
         true
     }
@@ -839,8 +955,18 @@ impl State {
     }
 
     fn dismiss_web(&mut self) {
+        crate::web::cancel_swipe();
+        crate::web::show_swipe_target(None);
         if let Some(web) = self.web.take() {
             web.dismiss();
+        }
+    }
+
+    fn bind_swipe(&self) {
+        if self.mode == Mode::WebKit {
+            crate::web::show_swipe_target(self.web.clone());
+        } else {
+            crate::web::show_swipe_target(None);
         }
     }
 
@@ -848,16 +974,21 @@ impl State {
         let Some(page) = self.settled_page() else {
             return;
         };
-        if self.book_path.is_empty() || page == self.saved_page {
+        if self.book_path.is_empty() || page == self.pdf_saved_page {
             return;
         }
-        self.saved_page = page;
         let path = self.book_path.clone();
+        let (page, offset) =
+            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, 0);
+        self.pdf_saved_page = page;
+        self.pdf_saved_offset = offset;
         let _ = crate::settings::record_progress(
             &crate::settings::path(),
             &path,
             page,
             self.page_total,
+            offset,
+            "",
         );
     }
 
@@ -866,7 +997,7 @@ impl State {
             Mode::Pdfium | Mode::Hayro => Some(self.current_page() as u32 + 1),
             Mode::WebKit => {
                 let shown = self.epub_page as u32 + 1;
-                if self.goto.is_some_and(|target| (shown as usize) < target) {
+                if crate::web::reader_walk().is_some_and(|target| shown < target) {
                     None
                 } else {
                     Some(shown)
@@ -890,7 +1021,6 @@ impl State {
     }
 
     fn poll_web(&mut self) {
-        self.finish_hold();
         let Some(web) = &self.web else {
             return;
         };
@@ -917,17 +1047,8 @@ impl State {
             (inbox.reload && !inbox.did_reload, changed)
         };
         if !self.book_path.is_empty() && self.mode == Mode::WebKit {
-            let shown = self.epub_page as u32 + 1;
-            let still_turning = self.goto.is_some_and(|target| (shown as usize) < target);
-            if !still_turning && shown != self.saved_page {
-                let path = self.book_path.clone();
-                self.saved_page = shown;
-                let _ = crate::settings::record_progress(
-                    &crate::settings::path(),
-                    &path,
-                    shown,
-                    self.page_total,
-                );
+            if let Some(offset) = crate::web::take_reader_reveal() {
+                web.reveal(offset);
             }
         }
         if changed || self.chrome_moving() {
@@ -953,24 +1074,25 @@ impl State {
             if ready && !already {
                 web.inbox.borrow_mut().scripted_turn = true;
                 self.turn_pending = true;
-                web.turn(1);
+                web.turn(1, crate::visit::TurnSource::Restore);
             }
         }
-        if let Some(target) = self.goto {
-            let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
-            if count > 1 && page < target && !self.turn_pending {
-                self.turn_pending = true;
-                self.play_at = Some(Instant::now());
-                web.turn(1);
-            }
-            if self.turn_pending
-                && self
-                    .play_at
-                    .map(|at| at.elapsed().as_millis() > 700)
-                    .unwrap_or(false)
-            {
-                self.turn_pending = false;
-            }
+        if crate::web::take_turn_declined(&web.inbox) {
+            self.turn_pending = false;
+        }
+        let (page, count) = web.inbox.borrow().pages.unwrap_or((1, 1));
+        if crate::web::poll_reader_walk(page as u32, count as u32, self.turn_pending) {
+            self.turn_pending = true;
+            self.play_at = Some(Instant::now());
+            web.turn(1, crate::visit::TurnSource::Restore);
+        }
+        if self.turn_pending
+            && self
+                .play_at
+                .map(|at| at.elapsed().as_millis() > 700)
+                .unwrap_or(false)
+        {
+            self.turn_pending = false;
         }
         if std::env::var("SPIKE_PLAY").as_deref() == Ok("1") {
             let ready = web
@@ -991,7 +1113,7 @@ impl State {
                 self.play_count += 1;
                 self.play_at = Some(Instant::now());
                 self.turn_pending = true;
-                web.turn(1);
+                web.turn(1, crate::visit::TurnSource::Restore);
             }
         }
         let frame_count = web.inbox.borrow().frame_ms.len();
@@ -1004,40 +1126,10 @@ impl State {
         crate::web::write_inbox(&inbox, &href);
     }
 
-    fn finish_hold(&mut self) {
-        if !self.await_hold {
-            return;
-        }
-        let offset = self.web.as_ref().and_then(|web| web.inbox.borrow().hold);
-        let timed_out = self
-            .hold_since
-            .map(|at| at.elapsed().as_millis() > 700)
-            .unwrap_or(false);
-        if offset.is_none() && !timed_out {
-            return;
-        }
-        if let Some(web) = &self.web {
-            web.inbox.borrow_mut().hold = None;
-        }
-        self.await_hold = false;
-        let offset = offset.unwrap_or(0);
-        self.hold_ready = true;
-        self.place_page();
-        if let Some(web) = &self.web {
-            web.reveal(offset);
-            if let (Some(start), Some(end)) = (
-                self.anchor.as_ref().and_then(anchor_start),
-                self.anchor.as_ref().and_then(anchor_end),
-            ) {
-                web.repaint(start, end);
-            }
-        }
-    }
-
-    fn open_web(&mut self, parent: &StageView) {
+    fn open_web(&mut self, parent: &StageView, href: &str) {
         let path = self.epub_path();
         let parent: &AnyObject = unsafe { &*(parent as *const StageView).cast() };
-        match crate::web::WebChapter::open(parent, &path) {
+        match crate::web::WebChapter::open(parent, &path, href) {
             Ok(chapter) => {
                 self.declared = chapter.declared;
                 self.placed = None;
@@ -1110,9 +1202,9 @@ impl State {
         }
     }
 
-    fn place_page(&mut self) {
-        if self.await_hold || self.stage_w < 1.0 || self.stage_h < 1.0 {
-            return;
+    fn place_page(&mut self) -> bool {
+        if self.web.is_none() || ((self.stage_w < 1.0 || self.stage_h < 1.0) && !self.await_hold) {
+            return false;
         }
         let item = crate::reading::trim(&self.trim_id);
         let (rw, rh, source) = crate::reading::page_ratio(self.declared, item);
@@ -1138,48 +1230,157 @@ impl State {
             h.round() as i32,
             self.trim_id.clone(),
         );
-        if self.web.is_none() {
-            return;
-        }
-        if self.placed.as_ref() == Some(&key) && (self.placed_zoom - zoom).abs() < 0.01 {
-            return;
-        }
-        let reflowable = self.declared.is_none();
-        if self.settled && reflowable && !self.hold_ready {
-            self.await_hold = true;
-            self.hold_since = Some(Instant::now());
-            if let Some(web) = &self.web {
-                web.hold();
+        let (hold, hold_probe, missed, shown, pages, pages_known, figure, figure_lost) = {
+            let inbox = self.web.as_ref().unwrap().inbox.borrow();
+            let figure = inbox.figure.clone();
+            let figure_lost = inbox.figure_lost;
+            match inbox.pages {
+                Some((page, count)) => (
+                    inbox.hold,
+                    inbox.hold_probe,
+                    inbox.hold_missed,
+                    page as u32,
+                    count as u32,
+                    true,
+                    figure,
+                    figure_lost,
+                ),
+                None => (
+                    inbox.hold,
+                    inbox.hold_probe,
+                    inbox.hold_missed,
+                    0,
+                    0,
+                    false,
+                    figure,
+                    figure_lost,
+                ),
             }
-            return;
-        }
-        self.hold_ready = false;
-        self.settled = true;
-        self.placed = Some(key);
-        let Some(web) = &self.web else {
-            return;
         };
-        self.placed_zoom = zoom;
-        web.place_at(x, y, w, h, zoom);
-        web.set_page_target(layout_target(w, zoom));
-        {
-            let mut inbox = web.inbox.borrow_mut();
-            inbox.page_w = w;
-            inbox.page_h = h;
-            inbox.page_x = x;
-            inbox.bar_w = self.chrome.bar_w.get();
-            inbox.stage_w = self.stage_w;
-            inbox.trim = self.trim_id.clone();
-            inbox.page_source = source.to_string();
+        let (saw_figure, lost_figure) = crate::visit::figure_flags(&figure, figure_lost);
+        if let Some(id) = crate::visit::found_figure(figure, figure_lost) {
+            crate::web::note_figure(Some(id));
         }
-        let href = web.href();
-        crate::web::write_inbox(&web.inbox.borrow(), &href);
+        let timed_out = self.await_hold
+            && self
+                .hold_since
+                .map(|at| at.elapsed().as_millis() > 700)
+                .unwrap_or(false);
+        let mut tick = crate::visit::FrameTick::new(
+            self.placed.as_ref() == Some(&key),
+            (self.placed_zoom - zoom).abs() < 0.01,
+            self.placed_stage_w.round() as i32 == self.stage_w.round() as i32
+                && self.placed_stage_h.round() as i32 == self.stage_h.round() as i32,
+            self.declared.is_none(),
+            self.settled,
+            self.await_hold,
+        );
+        tick.hold = hold;
+        tick.hold_probe = hold_probe;
+        tick.missed = missed;
+        tick.timed_out = timed_out;
+        tick.shown = shown;
+        tick.pages = pages;
+        tick.pages_known = pages_known;
+        tick.figure = saw_figure;
+        tick.figure_lost = lost_figure;
+        let plan = crate::web::layout_frame(tick);
+        let resolved = self.await_hold && !matches!(plan.draw, crate::visit::Draw::Rest);
+        let spent = crate::visit::spent_figure_loss(lost_figure, plan.draw)
+            || crate::visit::spent_figure_find(saw_figure, plan.draw);
+        if resolved || spent {
+            if let Some(web) = &self.web {
+                let mut inbox = web.inbox.borrow_mut();
+                if resolved {
+                    inbox.hold = None;
+                    inbox.hold_probe = 0;
+                    inbox.hold_missed = false;
+                }
+                inbox.clear_figure();
+            }
+            if resolved {
+                self.await_hold = false;
+                self.hold_since = None;
+            }
+        }
+        if plan.cancel {
+            crate::web::cancel_placed_page();
+            self.placed_stage_w = self.stage_w;
+            self.placed_stage_h = self.stage_h;
+        }
+        match plan.draw {
+            crate::visit::Draw::Rest => {}
+            crate::visit::Draw::Align => {
+                self.settled = true;
+                self.placed = Some(key);
+                self.placed_zoom = zoom;
+                self.placed_stage_w = self.stage_w;
+                self.placed_stage_h = self.stage_h;
+                if let Some(web) = &self.web {
+                    web.place_at(x, y, w, h, zoom);
+                    web.set_page_target(layout_target(w, zoom));
+                    if let Some(id) = crate::web::reader_figure() {
+                        web.align(&id);
+                    }
+                }
+            }
+            crate::visit::Draw::Measure { page, probe } => {
+                self.await_hold = true;
+                self.hold_since = Some(Instant::now());
+                if let Some(web) = &self.web {
+                    {
+                        let mut inbox = web.inbox.borrow_mut();
+                        inbox.hold = None;
+                        inbox.hold_probe = 0;
+                        inbox.hold_missed = false;
+                        inbox.clear_figure();
+                    }
+                    web.measure(page, probe);
+                }
+            }
+            crate::visit::Draw::Move { reveal } => {
+                self.settled = true;
+                self.placed = Some(key);
+                self.placed_zoom = zoom;
+                self.placed_stage_w = self.stage_w;
+                self.placed_stage_h = self.stage_h;
+                let Some(web) = &self.web else {
+                    return plan.pump;
+                };
+                web.place_at(x, y, w, h, zoom);
+                web.set_page_target(layout_target(w, zoom));
+                {
+                    let mut inbox = web.inbox.borrow_mut();
+                    inbox.page_w = w;
+                    inbox.page_h = h;
+                    inbox.page_x = x;
+                    inbox.bar_w = self.chrome.bar_w.get();
+                    inbox.stage_w = self.stage_w;
+                    inbox.trim = self.trim_id.clone();
+                    inbox.page_source = source.to_string();
+                }
+                let href = web.href();
+                crate::web::write_inbox(&web.inbox.borrow(), &href);
+                if let Some(offset) = reveal {
+                    web.reveal(offset);
+                    if let (Some(start), Some(end)) = (
+                        self.anchor.as_ref().and_then(anchor_start),
+                        self.anchor.as_ref().and_then(anchor_end),
+                    ) {
+                        web.repaint(start, end);
+                    }
+                }
+            }
+        }
+        plan.pump
     }
 
     fn publish(&self) {
         let mut title_opacity = 1.0_f32;
         let mut footer_opacity = 1.0_f32;
         let mut bars_row = false;
+        let mut shown_page = 0_u32;
+        let mut shown_pages = 0_u32;
         let (title, variant, left, right, show_text, html) = match self.mode {
             Mode::Empty => {
                 bars_row = true;
@@ -1195,6 +1396,8 @@ impl State {
             Mode::Pdfium | Mode::Hayro => {
                 let pages = self.pdf.as_ref().map(|p| p.sizes.len()).unwrap_or(0);
                 let current = self.current_page().saturating_add(1);
+                shown_page = current as u32;
+                shown_pages = pages as u32;
                 let left_pages = pages.saturating_sub(current);
                 let title = if self.book_path.is_empty() || self.book_path.ends_with("gpt3.pdf") {
                     "Language Models are Few-Shot Learners".to_string()
@@ -1222,21 +1425,21 @@ impl State {
                         self.scale.name()
                     )
                 };
-                let left = if self.product {
-                    String::new()
+                let (left, right) = if self.product {
+                    crate::reading::product_page_footer(current as u32, pages as u32)
                 } else {
-                    format!("{current}/{pages}")
-                };
-                let right = if self.product {
-                    String::new()
-                } else {
-                    format!("{left_pages} pages left")
+                    (
+                        format!("{current}/{pages}"),
+                        format!("{left_pages} pages left"),
+                    )
                 };
                 (title, variant, left, right, false, String::new())
             }
             Mode::WebKit => {
                 let pages = self.web_pages.max(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 let path = self.epub_path();
                 let title = self
                     .web
@@ -1268,6 +1471,8 @@ impl State {
                     .map(|c| (c.plain.chars().count() / 1200).max(1))
                     .unwrap_or(1);
                 let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
                 (
                     title,
                     label.to_string(),
@@ -1303,6 +1508,8 @@ impl State {
                 "footer_opacity": footer_opacity,
                 "bars_row": bars_row,
                 "trim": self.trim_id,
+                "page": shown_page,
+                "pages": shown_pages,
                 "empty": self.mode == Mode::Empty,
                 "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
                 "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
@@ -1341,6 +1548,44 @@ fn pdf_origin_of(product: bool) -> (f64, f64) {
 impl State {
     fn pdf_origin(&self) -> (f64, f64) {
         pdf_origin_of(self.product)
+    }
+
+    fn page_edge_at(&self, x: f64, y: f64, stage_w: f64, stage_h: f64) -> crate::visit::PageEdge {
+        if !matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            return crate::visit::PageEdge::None;
+        }
+        let Some(pdf) = self.pdf.as_ref() else {
+            return crate::visit::PageEdge::None;
+        };
+        if pdf.sizes.is_empty() {
+            return crate::visit::PageEdge::None;
+        }
+        if self.product {
+            let index = self.current_page().min(pdf.sizes.len() - 1);
+            let (pw, ph) = pdf.sizes[index];
+            let (box_w, box_h, left, top) = crate::chrome::content_box(stage_w, stage_h);
+            let (rx, ry, rw, rh) = spike_report::fitted_pdf_page(
+                left,
+                top,
+                box_w,
+                box_h,
+                f64::from(pw),
+                f64::from(ph),
+            );
+            return crate::visit::page_edge(x, y, rx, ry, rw, rh);
+        }
+        let display = self.scale.display() as f64;
+        let (origin_x, origin_y) = self.pdf_origin();
+        let mut top = origin_y - self.offset;
+        for (pw, ph) in &pdf.sizes {
+            let height = f64::from(*ph) * display;
+            let width = f64::from(*pw) * display;
+            if y >= top && y <= top + height {
+                return crate::visit::page_edge(x, y, origin_x, top, width, height);
+            }
+            top += height + 16.0;
+        }
+        crate::visit::PageEdge::None
     }
 }
 
@@ -1408,7 +1653,8 @@ impl Stage {
             book_kind: "pride",
             book_path: String::new(),
             product: false,
-            saved_page: 0,
+            pdf_saved_page: 0,
+            pdf_saved_offset: 0,
             page_total: None,
             epub_page: 0,
             anchor: None,
@@ -1423,8 +1669,9 @@ impl Stage {
             shell_h: 0.0,
             placed: None,
             placed_zoom: 1.0,
+            placed_stage_w: 0.0,
+            placed_stage_h: 0.0,
             await_hold: false,
-            hold_ready: false,
             settled: false,
             hold_since: None,
             shown_at: None,
@@ -1433,9 +1680,6 @@ impl Stage {
             play_at: None,
             turn_pending: false,
             seen_frames: 0,
-            goto: std::env::var("SPIKE_AT")
-                .ok()
-                .and_then(|raw| raw.parse().ok()),
             title_settled: false,
             chrome: Rc::new(crate::chrome::Runtime::default()),
         }));
@@ -1471,14 +1715,18 @@ impl Stage {
             .as_deref()
             .map(|path| crate::settings::resume_page(&crate::settings::path(), path));
         let shelf = crate::launches_full();
-        match crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored) {
+        let target =
+            crate::launch_target(explicit.is_some(), crate::reader_forcing_launch(), stored);
+        if target.engages_shell() {
+            crate::chrome::engage_shell();
+        }
+        match target {
             crate::LaunchTarget::File { page } if product => {
                 if let Some(path) = explicit {
                     state.borrow_mut().open_at(&view, &path, page);
                 }
             }
             crate::LaunchTarget::Shelf => {
-                crate::chrome::engage_shell();
                 state.borrow_mut().mode = Mode::Empty;
                 state.borrow_mut().publish();
             }
@@ -1502,10 +1750,21 @@ impl Stage {
                 state.borrow_mut().drag_two_lines();
             }
             if std::env::var("SPIKE_MODE").as_deref() == Ok("webkit") {
-                state.borrow_mut().mode = Mode::WebKit;
-                state.borrow_mut().book_kind = book_kind_from_env();
-                state.borrow_mut().open_web(&view);
-                state.borrow_mut().publish();
+                let mut state = state.borrow_mut();
+                state.mode = Mode::WebKit;
+                state.book_kind = book_kind_from_env();
+                let path = state.epub_path();
+                crate::web::set_book(&path);
+                crate::web::cancel_swipe();
+                state.open_web(&view, "");
+                if let Some(web) = state.web.as_ref() {
+                    let href = web.href();
+                    crate::web::open_reader(1, 0, &href, false);
+                    if let Ok(page) = std::env::var("SPIKE_AT").unwrap_or_default().parse::<u32>() {
+                        crate::web::prime_walk(page);
+                    }
+                }
+                state.publish();
             }
             if std::env::var("SPIKE_MODE").as_deref() == Ok("text") {
                 state.borrow_mut().mode = Mode::Text;
@@ -1556,6 +1815,57 @@ impl NativeComponent for Stage {
             self.state.borrow_mut().command(name, args);
         }
         unsafe { msg_send![&*self.view, setNeedsDisplay: true] }
+    }
+}
+
+fn add_chapter_item(menu: &AnyObject, target: &AnyObject, title: &str, tag: isize) {
+    let Some(item_cls) = AnyClass::get(c"NSMenuItem") else {
+        return;
+    };
+    unsafe {
+        let alloc: Allocated<AnyObject> = msg_send![item_cls, alloc];
+        let item: Retained<AnyObject> = msg_send![
+            alloc,
+            initWithTitle: &*NSString::from_str(title),
+            action: sel!(pickChapter:),
+            keyEquivalent: &*NSString::from_str("")
+        ];
+        let _: () = msg_send![&*item, setTarget: target];
+        let _: () = msg_send![&*item, setTag: tag];
+        let _: () = msg_send![menu, addItem: &*item];
+    }
+}
+
+fn pop_chapters(view: &StageView, titles: &[String], back: bool) {
+    let Some(menu_cls) = AnyClass::get(c"NSMenu") else {
+        return;
+    };
+    let Some(app_cls) = AnyClass::get(c"NSApplication") else {
+        return;
+    };
+    let target = unsafe { &*std::ptr::from_ref(view).cast::<AnyObject>() };
+    unsafe {
+        let menu: Retained<AnyObject> = msg_send![menu_cls, new];
+        if back {
+            add_chapter_item(&menu, target, "返回", -1);
+        }
+        for (index, title) in titles.iter().enumerate() {
+            add_chapter_item(&menu, target, title, index as isize);
+        }
+        let app: *mut AnyObject = msg_send![app_cls, sharedApplication];
+        if app.is_null() {
+            return;
+        }
+        let event: *mut AnyObject = msg_send![app, currentEvent];
+        if event.is_null() {
+            return;
+        }
+        let _: () = msg_send![
+            menu_cls,
+            popUpContextMenu: &*menu,
+            withEvent: event,
+            forView: target
+        ];
     }
 }
 
@@ -1624,12 +1934,7 @@ fn schedule_shell_pump(view: &StageView, delay: f64) {
 
 /// One shared key, so a layout callback and the pump do not publish the same
 /// size twice. The layout callback is what AppKit delivers during a drag.
-fn publish_shell_if_resized(
-    state: &Rc<RefCell<State>>,
-    width: f64,
-    height: f64,
-    source: &str,
-) {
+fn publish_shell_if_resized(state: &Rc<RefCell<State>>, width: f64, height: f64, source: &str) {
     let key = {
         let mut state = state.borrow_mut();
         state.shell_w = width;
@@ -1670,7 +1975,11 @@ pub(crate) fn trace_resize(source: &str, width: f64, height: f64, published: boo
         elapsed.as_secs_f64()
     );
     let path = std::path::Path::new("/tmp/superreader-spike/resize-trace.jsonl");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         use std::io::Write;
         let _ = file.write_all(line.as_bytes());
     }
@@ -1730,10 +2039,7 @@ mod tests {
             pump.contains("NSRunLoopCommonModes") || pump.contains("schedule_shell_pump"),
             "the lights pump has to be scheduled in the tracking run-loop mode"
         );
-        let schedule = source
-            .split("fn schedule_shell_pump")
-            .nth(1)
-            .unwrap_or("");
+        let schedule = source.split("fn schedule_shell_pump").nth(1).unwrap_or("");
         assert!(
             schedule.contains("NSRunLoopCommonModes"),
             "schedule_shell_pump must use common modes, not afterDelay alone"

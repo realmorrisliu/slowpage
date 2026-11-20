@@ -1,0 +1,114 @@
+#!/bin/sh
+# Offline checks for the gates that previously reported a pass they had not earned.
+# Does not launch the app and does not compile.
+set -eu
+cd "$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+
+run_lock() {
+  # shellcheck disable=SC2086
+  SR_VERIFY_LOCK_SELF_TEST=1 SR_VERIFY_MAX_LOAD="$1" SR_VERIFY_LOCK_TEST_LOAD="$2" \
+    bash scripts/verify-lock.sh >/tmp/harness-lock.out 2>/tmp/harness-lock.err
+}
+
+expect_lock() {
+  requested=$1
+  load=$2
+  want=$3
+  set +e
+  run_lock "$requested" "$load"
+  code=$?
+  set -e
+  if [ "$code" -ne "$want" ]; then
+    echo "lock gate: SR_VERIFY_MAX_LOAD=$requested load=$load exited $code, want $want" >&2
+    cat /tmp/harness-lock.out >&2 || true
+    exit 1
+  fi
+  echo "lock SR_VERIFY_MAX_LOAD=$requested load=$load exit $code"
+  cat /tmp/harness-lock.out
+}
+
+expect_lock 999 51.23 75
+expect_lock 999 1 0
+expect_lock 4 5 75
+expect_lock 4 3.9 0
+
+shared_before=0
+if [ -d /tmp/superreader-verify.lock ]; then
+  shared_before=1
+fi
+
+expect_case() {
+  name=$1
+  want=$2
+  set +e
+  SR_VERIFY_LOCK_SELF_TEST=1 SR_VERIFY_LOCK_TEST_CASE="$name" \
+    bash scripts/verify-lock.sh >/tmp/harness-lock.out 2>/tmp/harness-lock.err
+  code=$?
+  set -e
+  if [ "$code" -ne "$want" ]; then
+    echo "lock gate: case $name exited $code, want $want" >&2
+    cat /tmp/harness-lock.out >&2 || true
+    exit 1
+  fi
+  echo "lock case $name exit $code"
+  cat /tmp/harness-lock.out
+}
+
+expect_case held 75
+expect_case shell 75
+
+shared_after=0
+if [ -d /tmp/superreader-verify.lock ]; then
+  shared_after=1
+fi
+if [ "$shared_before" -eq 0 ] && [ "$shared_after" -eq 1 ]; then
+  echo "harness-check created /tmp/superreader-verify.lock" >&2
+  exit 1
+fi
+
+python3 scripts/verify --harness >/tmp/harness-fault.out
+cat /tmp/harness-fault.out
+for name in \
+  fullscreen-copied-frame \
+  fullscreen-entered \
+  fullscreen-from-capture \
+  fullscreen-copied-capture \
+  fullscreen-wrong-book \
+  dark-same-file \
+  dark-distinct \
+  aqua-under-system-dark \
+  aqua-under-system-dark-became-dark \
+  open-panel \
+  empty-shelf \
+  sha-missing-record \
+  sha-absent-file \
+  sha-mismatch \
+  sha-chapter-mismatch
+do
+  if ! grep -q "fault ${name}:" /tmp/harness-fault.out; then
+    echo "missing fault line: ${name}" >&2
+    exit 1
+  fi
+done
+
+if grep -n "waiting for load" scripts/verify-lock.sh scripts/verify >/dev/null; then
+  echo "a load wait loop is still present" >&2
+  exit 1
+fi
+
+if ! grep -n "scripts/harness-check" .github/workflows/ci.yml >/dev/null; then
+  echo "CI does not run scripts/harness-check" >&2
+  exit 1
+fi
+
+python3 - << 'PY'
+import pathlib, sys
+workflow = pathlib.Path(".github/workflows/ci.yml").read_text()
+rust = "\n".join(path.read_text(errors="replace") for path in pathlib.Path("spikes").rglob("*.rs"))
+if "cargo test -p spike-shell" in workflow and "fn a_stored_page_does_not_open_the_shelf_launch" not in rust:
+    print("CI runs spike-shell tests that are not in this tree", file=sys.stderr)
+    sys.exit(1)
+print("ci does not claim spike-shell tests that this tree does not contain")
+PY
+
+echo "harness-check passed"
