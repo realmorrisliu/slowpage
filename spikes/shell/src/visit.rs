@@ -4687,4 +4687,196 @@ mod tests {
         assert_eq!(store.resume().page, 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn a_new_book_drops_the_flying_token_and_saves_its_own_page() {
+        let dir = std::env::temp_dir().join(format!("superreader-pdf-book-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let first_book = "/books/field.pdf";
+        let second_book = "/books/other.pdf";
+        crate::settings::record_open(&file, first_book, 4, Some(75), 1).unwrap();
+        crate::settings::record_open(&file, second_book, 2, Some(40), 2).unwrap();
+        let width = 400.0;
+        let notch = |swipe: &mut Swipe, page: u32| {
+            swipe.offer(
+                WheelTick {
+                    finger: Finger::None,
+                    momentum: false,
+                    dx: 48.0,
+                    dy: 0.0,
+                },
+                page,
+                75,
+            )
+        };
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+
+        let mut swipe = Swipe::default();
+        let mut book = 1u64;
+        assert_eq!(notch(&mut swipe, 4), WheelMove::Commit(1));
+        let old = swipe.commit_token().unwrap();
+        let old_glide = match pdf_wheel(
+            WheelMove::Commit(1),
+            old,
+            book,
+            4,
+            75,
+            width,
+            0.0,
+            false,
+            false,
+        ) {
+            PdfWheel::Begin(glide) => glide,
+            other => panic!("the first book did not take the flying slot: {other:?}"),
+        };
+        let kept = crate::settings::SettingsBook {
+            file: &file,
+            book: first_book,
+        };
+        assert_eq!(kept.resume().page, 4);
+
+        assert!(swipe.cancel_release());
+        book = book.wrapping_add(1);
+        assert_eq!(glide_at(&old_glide, 160, book), GlideAt::Dropped);
+        assert!(!swipe.take_commit_post(old));
+        assert_eq!(kept.resume().page, 4);
+
+        assert_eq!(notch(&mut swipe, 2), WheelMove::Commit(1));
+        let second = swipe.commit_token().unwrap();
+        assert_ne!(second, old);
+        let mut glide = match pdf_wheel(
+            WheelMove::Commit(1),
+            second,
+            book,
+            2,
+            40,
+            width,
+            0.0,
+            false,
+            false,
+        ) {
+            PdfWheel::Begin(glide) => glide,
+            other => panic!("the new book queued behind the old token: {other:?}"),
+        };
+        assert_eq!(notch(&mut swipe, 2), WheelMove::Commit(1));
+        let third = swipe.commit_token().unwrap();
+        assert_eq!(
+            pdf_wheel(
+                WheelMove::Commit(1),
+                third,
+                book,
+                2,
+                40,
+                width,
+                0.0,
+                true,
+                false
+            ),
+            PdfWheel::Busy { queued: 1 }
+        );
+        assert_ne!(third, second);
+        glide.queued = 1;
+        match glide_at(&glide, 80, book) {
+            GlideAt::Moving { page, .. } => assert_eq!(page, 1),
+            other => panic!("the new glide left its page early: {other:?}"),
+        }
+        let opened = crate::settings::SettingsBook {
+            file: &file,
+            book: second_book,
+        };
+        assert_eq!(opened.resume().page, 2);
+        assert!(!swipe.take_commit_post(old));
+        assert_eq!(opened.resume().page, 2);
+
+        let GlideAt::Landed {
+            write,
+            token,
+            queued,
+            page,
+        } = glide_at(&glide, 160, book)
+        else {
+            panic!("the new book's first glide did not land");
+        };
+        assert_eq!((page, write, queued, token), (2, Some(2), 1, second));
+        assert!(swipe.take_commit_post(second));
+        assert_eq!(swipe.commit_token(), Some(third));
+        let (written, offset) = landed_progress(2, 0, page as u32 + 1).unwrap();
+        assert_eq!((written, offset), (3, 0));
+        crate::settings::record_progress(&file, second_book, written, Some(40), offset, "")
+            .unwrap();
+        assert_eq!(opened.resume().page, 3);
+        assert_eq!(kept.resume().page, 4);
+        assert!(!swipe.take_commit_post(old));
+        assert_eq!(opened.resume().page, 3);
+
+        swipe.note_answer(third, "glide");
+        let mut queued_slide = begin_slide(book, 40, 2, 1).unwrap();
+        assert_eq!(
+            pdf_turn(&queued_slide, 80, book),
+            PdfTurn::Moving { page: 2 }
+        );
+        assert_eq!(opened.resume().page, 3);
+        assert_eq!(notch(&mut swipe, 3), WheelMove::Commit(1));
+        let fourth = swipe.commit_token().unwrap();
+        assert_ne!(fourth, third);
+        queue_slide(&mut queued_slide, 1);
+        let PdfTurn::Landed { page, queued } = pdf_turn(&queued_slide, 160, book) else {
+            panic!("the queued page did not land");
+        };
+        assert_eq!((page, queued), (3, 1));
+        assert!(swipe.take_commit_post(third));
+        let (written, offset) = landed_progress(3, 0, page as u32 + 1).unwrap();
+        assert_eq!((written, offset), (4, 0));
+        crate::settings::record_progress(&file, second_book, written, Some(40), offset, "")
+            .unwrap();
+        assert_eq!(opened.resume().page, 4);
+        assert!(!swipe.take_commit_post(old));
+        assert_eq!(swipe.commit_token(), Some(fourth));
+        assert_eq!(opened.resume().page, 4);
+        assert_eq!(kept.resume().page, 4);
+
+        let mut held = Swipe::default();
+        assert_eq!(held.offer(down(80.0), 4, 40), WheelMove::Follow(80.0));
+        assert!(held.cancel_release());
+        assert_eq!(held.offer(up, 4, 40), WheelMove::Pass);
+        assert_eq!(notch(&mut held, 4), WheelMove::Commit(1));
+        let fresh = held.commit_token().unwrap();
+        assert!(matches!(
+            pdf_wheel(
+                WheelMove::Commit(1),
+                fresh,
+                3,
+                4,
+                40,
+                width,
+                0.0,
+                false,
+                false
+            ),
+            PdfWheel::Begin(_)
+        ));
+        assert!(held.take_commit_post(fresh));
+        crate::settings::record_progress(&file, second_book, 5, Some(40), 0, "").unwrap();
+        assert_eq!(opened.resume().page, 5);
+        let again = crate::settings::SettingsBook {
+            file: &file,
+            book: second_book,
+        };
+        assert_eq!(again.resume().page, 5);
+        assert_eq!(kept.resume().page, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

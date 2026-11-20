@@ -797,6 +797,7 @@ impl State {
             return;
         }
         crate::web::cancel_swipe();
+        let _ = self.pdf_swipe.cancel_release();
         let go = decided
             .go
             .clone()
@@ -1301,7 +1302,7 @@ impl State {
         self.pdf_drag = 0.0;
         self.pdf_glide = None;
         self.pdf_card = (0.0, 0.0);
-        let _ = self.pdf_swipe.abandon();
+        let _ = self.pdf_swipe.cancel_release();
         self.page_total = None;
         crate::web::set_book(&book.path);
         let plan = spike_library::OpenSurfaces::closed().open(kind, page);
