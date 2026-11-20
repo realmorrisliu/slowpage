@@ -1067,6 +1067,18 @@ impl WebChapter {
         Some(href)
     }
 
+    pub fn set_ease(&self, moving: bool) {
+        let (web, _, href) = self.shown();
+        let flag = if moving { 1 } else { 0 };
+        eval(
+            &web,
+            &format!("window.__spikeEase={flag}"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
     pub fn set_page_target(&self, width: f64) {
         if !(width > 1.0) {
             return;

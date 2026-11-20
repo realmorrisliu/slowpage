@@ -2014,7 +2014,29 @@ pub fn stop_walk(reader: &mut Reader) {
 /// The page dropped its gesture, or a new chapter document replaced it.
 /// Empty swipe slots still count: a restore slide is not one of those slots.
 pub fn retire_restore(reader: &mut Reader) -> bool {
-    reader.swipe.cancel_release()
+    stop_for_ease(&mut reader.swipe)
+}
+
+pub fn stop_for_ease(swipe: &mut Swipe) -> bool {
+    swipe.cancel_release()
+}
+
+pub fn accept_landed(swipe: &mut Swipe, token: u64) -> bool {
+    token == 0 || swipe.take_commit_post(token)
+}
+
+pub fn offer_while_reading(
+    swipe: &mut Swipe,
+    tick: WheelTick,
+    page: u32,
+    pages: u32,
+    trip: crate::ease::Trip,
+) -> WheelMove {
+    if !crate::ease::pointer_turns(trip) {
+        WheelMove::Swallow
+    } else {
+        swipe.offer(tick, page, pages)
+    }
 }
 
 pub fn reset_restore_epoch(reader: &mut Reader) {

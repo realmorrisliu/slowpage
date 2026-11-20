@@ -1391,6 +1391,7 @@ const SCRIPT: &str = r#"
   }
   window.addEventListener("click", function (event) {
     if (event.button !== 0) return;
+    if (window.__spikeEase) return;
     const dragged = edgeDrag;
     edgeDrag = false;
     if (dragged) return;
@@ -1432,6 +1433,7 @@ const SCRIPT: &str = r#"
     endFollow();
   };
   window.spikeFollow = function (offset) {
+    if (window.__spikeEase) return;
     if (busy) return;
     followGen++;
     const w = pageWidth();
@@ -1753,6 +1755,10 @@ mod tests {
         assert_eq!(v["restore"]["transformNow"], "none");
         assert_eq!(v["restore"]["clean"], true);
         assert_eq!(v["restore"]["scroll"], 400);
+        assert_eq!(v["ease"]["transform"], "");
+        assert_eq!(v["ease"]["scroll"], 0);
+        assert_eq!(v["ease"]["turns"], 0);
+        assert_eq!(v["ease"]["keyScroll"], 400);
     }
 
     #[test]
@@ -3124,6 +3130,7 @@ function boot() {
   rootEl.style.transform = '';
   footer.style.transform = '';
   window.__spikeLoad = 1;
+  window.__spikeEase = 0;
   eval(script);
   step(0);
   posts.length = 0;
@@ -3310,5 +3317,15 @@ const restore = {
   scroll: body.scrollLeft,
 };
 
-console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore }));
+boot(); spy();
+window.__spikeEase = 1;
+fire('click', { button: 0, clientX: 20, clientY: 100, target: { closest(){ return null; } }, preventDefault(){} });
+window.spikeFollow(80);
+const easeHeld = { transform: body.style.transform, scroll: body.scrollLeft, turns: turns().length };
+press('ArrowRight', false);
+const easeKeyed = sample();
+const ease = { transform: easeHeld.transform, scroll: easeHeld.scroll, turns: easeHeld.turns, keyScroll: easeKeyed.scroll };
+window.__spikeEase = 0;
+
+console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease }));
 "#;
