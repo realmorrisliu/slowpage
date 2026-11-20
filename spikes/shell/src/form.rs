@@ -277,6 +277,24 @@ pub fn reading_frame(width: f64, height: f64, top: f64, sidebar: f64, shown: boo
     }
 }
 
+/// The fitted page a click can reach. A covering margin removes the part it
+/// covers. A column leaves the fitted page, because the card already sits
+/// beside the margin.
+pub fn visible_page_span(page_x: f64, page_w: f64, frame: &ReadingFrame) -> (f64, f64) {
+    if !frame.covers {
+        return (page_x, page_w);
+    }
+    let Some(margin) = frame.margin else {
+        return (page_x, page_w);
+    };
+    let page_right = page_x + page_w;
+    if page_right <= margin.x || page_x >= margin.x + margin.w {
+        return (page_x, page_w);
+    }
+    let right = page_right.min(margin.x);
+    (page_x, (right - page_x).max(0.0))
+}
+
 pub fn show_reading(form: &Signal<Form>) {
     let margin = if margin_shown() {
         Presence::Shown
@@ -3607,6 +3625,74 @@ mod tests {
         assert!((wide_hidden.card.w - wide_shown.card.w - MARGIN_W).abs() < 0.1);
         assert!(!margin_is_column(817.0));
         assert!(margin_is_column(818.0));
+    }
+
+    #[test]
+    fn a_covered_page_turns_on_the_visible_edge() {
+        let frame = reading_frame(578.0, 900.0, 0.0, 0.0, true);
+        assert!(frame.covers);
+        let (x, y, w, h) = spike_report::fitted_pdf_page(
+            frame.card.x,
+            frame.card.y,
+            frame.card.w,
+            frame.card.h,
+            612.0,
+            792.0,
+        );
+        let (visible_x, visible_w) = visible_page_span(x, w, &frame);
+        let margin = frame.margin.expect("cover");
+        assert!(visible_w < w);
+        let covered = x + w - w * crate::visit::PAGE_EDGE / 2.0;
+        let mid_y = y + h / 2.0;
+        assert!(covered >= margin.x);
+        assert_eq!(
+            crate::visit::page_edge(covered, mid_y, x, y, w, h),
+            crate::visit::PageEdge::Forward
+        );
+        assert_eq!(
+            crate::visit::page_edge(covered, mid_y, visible_x, y, visible_w, h),
+            crate::visit::PageEdge::None
+        );
+        let forward = visible_x + visible_w - 1.0;
+        assert!(forward < margin.x);
+        assert_eq!(
+            crate::visit::page_edge(forward, mid_y, visible_x, y, visible_w, h),
+            crate::visit::PageEdge::Forward
+        );
+        assert_eq!(
+            crate::visit::page_edge(visible_x + 1.0, mid_y, visible_x, y, visible_w, h),
+            crate::visit::PageEdge::Back
+        );
+        assert_eq!(
+            crate::visit::page_edge(
+                visible_x + visible_w / 2.0,
+                mid_y,
+                visible_x,
+                y,
+                visible_w,
+                h
+            ),
+            crate::visit::PageEdge::None
+        );
+
+        let column = reading_frame(818.0, 900.0, 0.0, 0.0, true);
+        assert!(!column.covers);
+        let (cx, cy, cw, ch) = spike_report::fitted_pdf_page(
+            column.card.x,
+            column.card.y,
+            column.card.w,
+            column.card.h,
+            612.0,
+            792.0,
+        );
+        assert_eq!(visible_page_span(cx, cw, &column), (cx, cw));
+        let column_margin = column.margin.expect("column");
+        let right = cx + cw - 1.0;
+        assert!(right < column_margin.x);
+        assert_eq!(
+            crate::visit::page_edge(right, cy + ch / 2.0, cx, cy, cw, ch),
+            crate::visit::PageEdge::Forward
+        );
     }
 
     #[test]

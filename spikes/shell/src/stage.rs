@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use nsh_platform_macos::objc2::rc::{Allocated, Retained};
-use nsh_platform_macos::objc2::runtime::{AnyClass, AnyObject};
+use nsh_platform_macos::objc2::runtime::{AnyClass, AnyObject, Sel};
 use nsh_platform_macos::objc2::{
     define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly,
 };
@@ -462,14 +462,7 @@ impl State {
                 && self.play_count < 3
                 && !self.turn_pending;
             if self.chrome_moving() || playing || pump {
-                let _: () = unsafe {
-                    msg_send![
-                        view,
-                        performSelector: sel!(pumpChrome),
-                        withObject: std::ptr::null::<objc2::runtime::AnyObject>(),
-                        afterDelay: 0.016_f64
-                    ]
-                };
+                schedule_chrome_pump(view, 0.016);
             }
             return;
         }
@@ -493,14 +486,7 @@ impl State {
             let pump = self.finish_pdf_motion();
             self.draw_card_pdf(&ctx, bounds);
             if pump {
-                let _: () = unsafe {
-                    msg_send![
-                        view,
-                        performSelector: sel!(pumpChrome),
-                        withObject: std::ptr::null::<objc2::runtime::AnyObject>(),
-                        afterDelay: 0.016_f64
-                    ]
-                };
+                schedule_chrome_pump(view, 0.016);
             }
             return;
         }
@@ -1018,13 +1004,13 @@ impl State {
             .elapsed()
             .as_millis()
             .min(u128::from(u32::MAX)) as u32;
-        match crate::visit::slide_at(&motion.slide, elapsed, self.book_gen, 1.0) {
-            crate::visit::SlideAt::Dropped => false,
-            crate::visit::SlideAt::Moving { .. } => {
+        match crate::visit::pdf_turn(&motion.slide, elapsed, self.book_gen) {
+            crate::visit::PdfTurn::Dropped => false,
+            crate::visit::PdfTurn::Moving { .. } => {
                 self.pdf_motion = Some(motion);
                 true
             }
-            crate::visit::SlideAt::Landed { page, queued } => {
+            crate::visit::PdfTurn::Landed { page, queued } => {
                 if let Some(pdf) = self.pdf.as_ref() {
                     let sizes = pdf.sizes.clone();
                     self.offset = page_offset(&sizes, page as u32 + 1, self.scale);
@@ -1238,15 +1224,18 @@ impl State {
     }
 
     fn note_page(&mut self) {
-        let Some(page) = self.settled_page() else {
+        let Some(shown) = self.settled_page() else {
             return;
         };
-        if self.book_path.is_empty() || page == self.pdf_saved_page {
+        if self.book_path.is_empty() {
             return;
         }
+        let Some((page, offset)) =
+            crate::visit::landed_progress(self.pdf_saved_page, self.pdf_saved_offset, shown)
+        else {
+            return;
+        };
         let path = self.book_path.clone();
-        let (page, offset) =
-            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, 0);
         self.pdf_saved_page = page;
         self.pdf_saved_offset = offset;
         let _ = crate::settings::record_progress(
@@ -1841,7 +1830,7 @@ impl State {
         if self.fits_card() {
             let index = self.current_page().min(pdf.sizes.len() - 1);
             let (pw, ph) = pdf.sizes[index];
-            let card = if stage_w > 1.0 {
+            let frame = if stage_w > 1.0 {
                 crate::form::reading_frame(
                     stage_w,
                     stage_h,
@@ -1849,11 +1838,11 @@ impl State {
                     0.0,
                     crate::chrome::shell_on() && crate::form::margin_shown(),
                 )
-                .card
             } else {
-                self.card_frame().card
+                self.card_frame()
             };
-            let (rx, ry, rw, rh) = spike_report::fitted_pdf_page(
+            let card = frame.card;
+            let (rx, ry, mut rw, rh) = spike_report::fitted_pdf_page(
                 card.x,
                 card.y,
                 card.w,
@@ -1861,6 +1850,8 @@ impl State {
                 f64::from(pw),
                 f64::from(ph),
             );
+            let (rx, spanned) = crate::form::visible_page_span(rx, rw, &frame);
+            rw = spanned;
             return crate::visit::page_edge(x, y, rx, ry, rw, rh);
         }
         let display = self.scale.display() as f64;
@@ -2224,19 +2215,27 @@ fn layout_target(placed_width: f64, zoom: f64) -> f64 {
 }
 
 /// `performSelector:afterDelay:` waits in the default mode only. Common modes
-/// include the tracking mode a window resize runs in, so the pump still sees
-/// the content view while the mouse is down.
-fn schedule_shell_pump(view: &StageView, delay: f64) {
+/// include the tracking mode a window drag runs in, so a pump still fires
+/// while the mouse is down.
+fn schedule_on_common_modes(view: &StageView, selector: Sel, delay: f64) {
     let modes = NSArray::from_slice(&[unsafe { NSRunLoopCommonModes }]);
     let _: () = unsafe {
         msg_send![
             view,
-            performSelector: sel!(pumpLights),
+            performSelector: selector,
             withObject: std::ptr::null::<AnyObject>(),
             afterDelay: delay,
             inModes: &*modes,
         ]
     };
+}
+
+fn schedule_shell_pump(view: &StageView, delay: f64) {
+    schedule_on_common_modes(view, sel!(pumpLights), delay);
+}
+
+fn schedule_chrome_pump(view: &StageView, delay: f64) {
+    schedule_on_common_modes(view, sel!(pumpChrome), delay);
 }
 
 /// One shared key, so a layout callback and the pump do not publish the same
@@ -2374,10 +2373,42 @@ mod tests {
             pump.contains("NSRunLoopCommonModes") || pump.contains("schedule_shell_pump"),
             "the lights pump has to be scheduled in the tracking run-loop mode"
         );
-        let schedule = source.split("fn schedule_shell_pump").nth(1).unwrap_or("");
+        let schedule = source
+            .split("fn schedule_on_common_modes")
+            .nth(1)
+            .unwrap_or("");
         assert!(
             schedule.contains("NSRunLoopCommonModes"),
-            "schedule_shell_pump must use common modes, not afterDelay alone"
+            "a pump must use common modes, not afterDelay alone"
+        );
+        let draw = source
+            .split("fn draw(")
+            .nth(1)
+            .and_then(|rest| rest.split("fn scroll(").next())
+            .unwrap_or("");
+        assert!(
+            draw.contains("schedule_chrome_pump"),
+            "the PDF slide pump has to run while a window drag is tracking"
+        );
+        assert!(
+            !draw.contains("sel!(pumpChrome)"),
+            "pumpChrome must not wait in the default run-loop mode"
+        );
+        let finish = source
+            .split("fn finish_pdf_motion")
+            .nth(1)
+            .and_then(|rest| rest.split("fn start_pdf_slide").next())
+            .unwrap_or("");
+        assert!(finish.contains("pdf_turn"));
+        assert!(finish.contains("note_page"));
+        let edge = source
+            .split("fn page_edge_at")
+            .nth(1)
+            .and_then(|rest| rest.split("fn locate").next())
+            .unwrap_or("");
+        assert!(
+            edge.contains("visible_page_span"),
+            "a click uses the page that remains beside the cover"
         );
     }
 

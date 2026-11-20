@@ -2683,6 +2683,31 @@ pub fn queue_slide(slide: &mut Slide, delta: i32) {
     slide.queued = if delta < 0 { -1 } else { 1 };
 }
 
+/// What the PDF pump does with one slide. Moving keeps the departing page.
+/// Landed is the page to write. A changed book writes nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PdfTurn {
+    Moving { page: usize },
+    Landed { page: usize, queued: i32 },
+    Dropped,
+}
+
+pub fn pdf_turn(slide: &Slide, elapsed_ms: u32, live_book: u64) -> PdfTurn {
+    match slide_at(slide, elapsed_ms, live_book, 0.0) {
+        SlideAt::Moving { page, .. } => PdfTurn::Moving { page },
+        SlideAt::Landed { page, queued } => PdfTurn::Landed { page, queued },
+        SlideAt::Dropped => PdfTurn::Dropped,
+    }
+}
+
+/// The page a landed turn writes. The page already stored, and page 0, write nothing.
+pub fn landed_progress(saved_page: u32, saved_offset: u32, shown: u32) -> Option<(u32, u32)> {
+    if shown == 0 || shown == saved_page {
+        return None;
+    }
+    Some(next_sentence(saved_page, saved_offset, shown, 0))
+}
+
 pub fn slide_at(slide: &Slide, elapsed_ms: u32, live_book: u64, width: f64) -> SlideAt {
     if slide.book != live_book {
         return SlideAt::Dropped;
@@ -4055,5 +4080,50 @@ mod tests {
         assert_eq!(again.from, 1);
         assert_eq!(again.to, 0);
         assert!(!again.forward);
+    }
+
+    #[test]
+    fn a_pdf_turn_writes_the_landed_page_and_drops_a_changed_book() {
+        let dir = std::env::temp_dir().join(format!("superreader-pdf-turn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = "/books/field.pdf";
+        crate::settings::record_open(&file, book, 1, Some(75), 1).unwrap();
+
+        let mut slide = begin_slide(3, 75, 0, 1).unwrap();
+        assert_eq!(pdf_turn(&slide, 80, 3), PdfTurn::Moving { page: 0 });
+        assert!(landed_progress(1, 0, 1).is_none());
+        assert_eq!(crate::settings::resume_page(&file, book), 1);
+
+        queue_slide(&mut slide, 1);
+        queue_slide(&mut slide, -1);
+        let PdfTurn::Landed { page, queued } = pdf_turn(&slide, 160, 3) else {
+            panic!("the turn did not land");
+        };
+        assert_eq!((page, queued), (1, -1));
+        let (written, offset) = landed_progress(1, 0, page as u32 + 1).unwrap();
+        assert_eq!((written, offset), (2, 0));
+        crate::settings::record_progress(&file, book, written, Some(75), offset, "").unwrap();
+        let store = crate::settings::SettingsBook { file: &file, book };
+        assert_eq!(store.resume().page, 2);
+        assert_eq!(crate::settings::resume_page(&file, book), 2);
+
+        let back = begin_slide(3, 75, page, queued).unwrap();
+        assert_eq!(pdf_turn(&back, 80, 4), PdfTurn::Dropped);
+        assert!(landed_progress(2, 0, 2).is_none());
+        assert_eq!(store.resume().page, 2);
+
+        let hidden = crate::form::reading_frame(817.0, 800.0, 0.0, 0.0, false);
+        let covered = crate::form::reading_frame(817.0, 800.0, 0.0, 0.0, true);
+        assert_eq!(hidden.card, covered.card);
+        assert!(covered.covers);
+        let column = crate::form::reading_frame(818.0, 800.0, 0.0, 0.0, true);
+        assert!(!column.covers);
+        assert!((hidden.card.w - column.card.w - crate::form::MARGIN_W).abs() < 0.1);
+        let returned = crate::form::reading_frame(817.0, 800.0, 0.0, 0.0, true);
+        assert_eq!(returned.card, hidden.card);
+        assert!(returned.covers);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

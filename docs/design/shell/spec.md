@@ -108,7 +108,8 @@ Approved on 2026-11-20 at 16:03 Asia/Shanghai. Mochi conveyed Morris's choice af
 - 818 points is the 578 point window minimum plus the 240 point margin. Crossing that width keeps the margin shown or hidden. At and above 818, a shown margin is the 240 point column and the page fits the card beside it. Below 818, showing or hiding the margin does not move or resize the page. A hidden margin has no column and no cover.
 - Hidden, the control is at the top right of the window. Shown, the control is the header of the margin, at that same top right. The window does not show a second control.
 - The control stays at full opacity when the lights and the book title fade. Those two keep their one alpha.
-- During the 160 ms slide the footer stays on the departing page. It changes when the slide ends. A slide that is cancelled, or a book that changes, does not write that turn onto the book now open.
+- During the 160 ms slide the footer stays on the departing page. It changes when the slide ends. A slide that is cancelled, or a book that changes, does not write that turn onto the book now open. A trackpad lift starts that slide. Checklist item 3's finger-following animation stays open.
+- A click in the left or right quarter of the page that is still visible turns one page. A click on the cover stays on the page.
 - Escape stays on the path in Commands. The margin does not take it.
 
 The 2026-11-10 list above stays that date's record. Lining a card up with its line, and scrolling a card to that line, stay in that list.
