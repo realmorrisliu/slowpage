@@ -2178,7 +2178,7 @@ pub fn reading_margin(
     let mut live_for_page = live_now.clone();
     live_for_page.moving = live_for_page.moving || trip.moving();
     let page_hold = spike_library::margin::reconcile(&hold.get(), &live_for_page);
-    let loaded = load_margin(&page_hold.book, page_hold.page);
+    let loaded = load_margin(&page_hold.book, page_hold.page, &page_hold.spine);
     let (notes, error) = match loaded {
         Ok(notes) => (notes, String::new()),
         Err(err) => (Vec::new(), err),
@@ -2462,13 +2462,14 @@ fn margin_note_input(
 pub(crate) fn load_margin(
     book: &str,
     page: u32,
+    spine: &str,
 ) -> Result<Vec<spike_library::margin::StoredNote>, String> {
     if book.is_empty() || page == 0 {
         return Ok(Vec::new());
     }
     let path = crate::settings::support_dir().join("annotations.sqlite");
     let notes = spike_library::margin::Notes::open(&path)?;
-    notes.list(book, page)
+    notes.list(book, page, spine)
 }
 
 fn margin_card(
@@ -4586,6 +4587,7 @@ mod tests {
         assert!(crate::visit::margin_pdf_index(0, 0, 0, true).is_none());
         let live = spike_library::margin::LivePage {
             book: "a.pdf".into(),
+            spine: String::new(),
             page: crate::visit::margin_page_number(shown),
             page_w: 400.0,
             page_h: 500.0,
@@ -4743,7 +4745,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
         std::fs::write(dir.join("annotations.sqlite"), b"not a database").unwrap();
-        let err = load_margin("/books/a.pdf", 2).expect_err("a bad file is not an empty margin");
+        let err =
+            load_margin("/books/a.pdf", 2, "").expect_err("a bad file is not an empty margin");
         assert!(!err.is_empty());
         let _ = std::fs::remove_file(dir.join("annotations.sqlite"));
         let notes = spike_library::margin::Notes::open(&dir.join("annotations.sqlite")).unwrap();
@@ -4767,9 +4770,9 @@ mod tests {
             })
             .unwrap();
         drop(notes);
-        let loaded = load_margin("/books/a.pdf", 2).unwrap();
+        let loaded = load_margin("/books/a.pdf", 2, "").unwrap();
         assert_eq!(loaded.len(), 1);
-        assert!(load_margin("", 2).unwrap().is_empty());
+        assert!(load_margin("", 2, "").unwrap().is_empty());
         drop(restore);
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -4837,7 +4840,7 @@ mod tests {
         let saved = commit_margin(&failed, "别丢", &live);
         assert!(saved.body.is_empty());
         assert!(saved.notice.is_empty());
-        let loaded = load_margin(&passage.book, 4).unwrap();
+        let loaded = load_margin(&passage.book, 4, &passage.spine).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].body, "别丢");
         assert_eq!(loaded[0].passage, "ink");
@@ -4854,8 +4857,11 @@ mod tests {
         assert!((cards[0].line.text_right - 70.0).abs() < 0.01);
         let echo = commit_margin(&saved, "别丢", &live);
         assert!(echo.body.is_empty());
-        assert_eq!(load_margin(&passage.book, 4).unwrap().len(), 1);
-        assert!(load_margin("/books/b.epub", 4).unwrap().is_empty());
+        assert_eq!(
+            load_margin(&passage.book, 4, &passage.spine).unwrap().len(),
+            1
+        );
+        assert!(load_margin("/books/b.epub", 4, "").unwrap().is_empty());
         let switched = serde_json::json!({
             "book_gen": passage.gen + 1,
             "passage": serde_json::Value::Null,
@@ -4887,8 +4893,8 @@ mod tests {
         );
         assert_eq!(stale.body, "摘录");
         assert_eq!(stale.notice, spike_library::margin::NOTICE_STALE);
-        assert!(load_margin("/books/b.epub", 4).unwrap().is_empty());
-        assert_eq!(load_margin("/books/a.pdf", 4).unwrap().len(), 1);
+        assert!(load_margin("/books/b.epub", 4, "").unwrap().is_empty());
+        assert_eq!(load_margin("/books/a.pdf", 4, "").unwrap().len(), 1);
         drop(restore);
         let _ = std::fs::remove_dir_all(dir);
     }

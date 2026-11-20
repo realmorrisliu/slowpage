@@ -303,17 +303,28 @@ define_class!(
                 if !self.ivars().reports.get() {
                     return;
                 }
-                if value["kind"] == "link" {
+                let route = crate::visit::script_route(&value);
+                if route == crate::visit::ScriptRoute::Link {
                     if let Some(hook) = self.ivars().hook.borrow().clone() {
                         hook(&value);
                     }
                     return;
                 }
-                let place_message = value.get("page").is_some()
-                    || value.get("swipe").is_some()
-                    || value.get("frames").is_some()
-                    || value["kind"] == "turn";
-                if place_message {
+                if route == crate::visit::ScriptRoute::Selection {
+                    let href = self.ivars().href.borrow().clone();
+                    let wrote = {
+                        let mut inbox = self.ivars().inbox.borrow_mut();
+                        record_epub_selection(&mut inbox, &href, &value)
+                    };
+                    if wrote {
+                        write_inbox(&self.ivars().inbox.borrow(), &href);
+                    }
+                    return;
+                }
+                if route != crate::visit::ScriptRoute::Place {
+                    return;
+                }
+                {
                     let href = self.ivars().href.borrow().clone();
                     let report = crate::visit::page_report(&value);
                     let applied = handle_script(&value, &href);
@@ -450,25 +461,6 @@ define_class!(
                     }
                     return;
                 }
-                let start = value["start"].as_u64().unwrap_or(0) as u32;
-                let end = value["end"].as_u64().unwrap_or(0) as u32;
-                let selected = value["text"].as_str().unwrap_or("").to_string();
-                if !selected.trim().is_empty() {
-                    let mut inbox = self.ivars().inbox.borrow_mut();
-                    inbox.anchor = Some(Anchor::Epub {
-                        spine_href: self.ivars().href.borrow().clone(),
-                        start,
-                        end,
-                        text: selected,
-                    });
-                    note_selection(&mut inbox, &value);
-                    if std::env::var("SPIKE_RELOAD").as_deref() == Ok("1") && !inbox.did_reload {
-                        inbox.reload = true;
-                    }
-                    drop(inbox);
-                    let href = self.ivars().href.borrow().clone();
-                    write_inbox(&self.ivars().inbox.borrow(), &href);
-                }
             }
         }
 
@@ -562,6 +554,26 @@ define_class!(
         }
     }
 );
+
+fn record_epub_selection(inbox: &mut Inbox, href: &str, value: &serde_json::Value) -> bool {
+    let start = value["start"].as_u64().unwrap_or(0) as u32;
+    let end = value["end"].as_u64().unwrap_or(0) as u32;
+    let selected = value["text"].as_str().unwrap_or("").to_string();
+    if selected.trim().is_empty() {
+        return false;
+    }
+    inbox.anchor = Some(Anchor::Epub {
+        spine_href: href.to_string(),
+        start,
+        end,
+        text: selected,
+    });
+    note_selection(inbox, value);
+    if std::env::var("SPIKE_RELOAD").as_deref() == Ok("1") && !inbox.did_reload {
+        inbox.reload = true;
+    }
+    true
+}
 
 fn note_selection(inbox: &mut Inbox, value: &serde_json::Value) {
     inbox.selection_token = inbox.selection_token.wrapping_add(1);

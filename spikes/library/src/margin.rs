@@ -329,6 +329,7 @@ fn horizontal(from: f64, to: f64, y: f64, fade: bool) -> Option<Segment> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LivePage {
     pub book: String,
+    pub spine: String,
     pub page: u32,
     pub page_w: f64,
     pub page_h: f64,
@@ -339,6 +340,7 @@ impl Default for LivePage {
     fn default() -> Self {
         Self {
             book: String::new(),
+            spine: String::new(),
             page: 0,
             page_w: 0.0,
             page_h: 0.0,
@@ -350,6 +352,7 @@ impl Default for LivePage {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hold {
     pub book: String,
+    pub spine: String,
     pub page: u32,
     pub moving: bool,
     pub scroll: f64,
@@ -363,6 +366,7 @@ impl Hold {
     pub fn new() -> Self {
         Self {
             book: String::new(),
+            spine: String::new(),
             page: 0,
             moving: false,
             scroll: 0.0,
@@ -383,9 +387,10 @@ impl Default for Hold {
 /// While a page turn or an immersive trip is moving, keep the departing page.
 /// Landing takes the arrived page and returns the scroll to the lines.
 pub fn reconcile(hold: &Hold, live: &LivePage) -> Hold {
-    if hold.book != live.book {
+    if hold.book != live.book || hold.spine != live.spine {
         return Hold {
             book: live.book.clone(),
+            spine: live.spine.clone(),
             page: live.page,
             moving: live.moving,
             ..Hold::new()
@@ -401,6 +406,7 @@ pub fn reconcile(hold: &Hold, live: &LivePage) -> Hold {
     if hold.moving || hold.page != live.page {
         return Hold {
             book: live.book.clone(),
+            spine: live.spine.clone(),
             page: live.page,
             moving: false,
             ..Hold::new()
@@ -668,16 +674,16 @@ impl Notes {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn list(&self, book: &str, page: u32) -> Result<Vec<StoredNote>, String> {
+    pub fn list(&self, book: &str, page: u32, spine: &str) -> Result<Vec<StoredNote>, String> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, page, spine, start_at, end_at, passage, body, author, quads, text_right
-                 FROM notes WHERE book = ?1 AND page = ?2 ORDER BY id",
+                 FROM notes WHERE book = ?1 AND page = ?2 AND spine = ?3 ORDER BY id",
             )
             .map_err(|err| err.to_string())?;
         let rows = stmt
-            .query_map(params![book, page], |row| {
+            .query_map(params![book, page, spine], |row| {
                 Ok(StoredNote {
                     id: row.get(0)?,
                     page: row.get(1)?,
@@ -1233,6 +1239,7 @@ mod tests {
         };
         let moving = LivePage {
             book: "a.epub".into(),
+            spine: String::new(),
             page: 4,
             page_w: 600.0,
             page_h: 800.0,
@@ -1266,6 +1273,7 @@ mod tests {
             &hold,
             &LivePage {
                 book: "b.pdf".into(),
+                spine: String::new(),
                 page: 1,
                 page_w: 100.0,
                 page_h: 100.0,
@@ -1275,6 +1283,71 @@ mod tests {
         assert_eq!(next.book, "b.pdf");
         assert_eq!(next.page, 1);
         assert_eq!(next.selected, None);
+    }
+
+    #[test]
+    fn the_same_column_in_another_chapter_stays_on_its_spine() {
+        let path = std::env::temp_dir().join(format!("margin-spine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        let live = LiveBook {
+            book: "/books/a.epub".into(),
+            gen: 3,
+        };
+        let mut one = sample_selection();
+        one.book = live.book.clone();
+        one.gen = live.gen;
+        one.page = 1;
+        one.spine = "ch1.xhtml".into();
+        one.text = "甲".into();
+        one.start = 0;
+        one.end = 1;
+        let mut two = one.clone();
+        two.spine = "ch2.xhtml".into();
+        two.text = "乙".into();
+        let first = passage_from(one).unwrap();
+        let second = passage_from(two).unwrap();
+        let saved = on_return(ReturnKind::Key, &field_of(first, "一"), "一", &live, &file);
+        assert!(saved.body.is_empty());
+        let saved = on_return(ReturnKind::Key, &field_of(second, "二"), "二", &live, &file);
+        assert!(saved.body.is_empty());
+        let notes = Notes::open(&file).unwrap();
+        let chapter = notes.list(&live.book, 1, "ch1.xhtml").unwrap();
+        assert_eq!(chapter.len(), 1);
+        assert_eq!(chapter[0].body, "一");
+        assert_eq!(chapter[0].passage, "甲");
+        let other = notes.list(&live.book, 1, "ch2.xhtml").unwrap();
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].body, "二");
+        drop(notes);
+        let reopened = Notes::open(&file).unwrap();
+        assert_eq!(
+            reopened.list(&live.book, 1, "ch1.xhtml").unwrap()[0].body,
+            "一"
+        );
+        let hold = Hold {
+            book: live.book.clone(),
+            spine: "ch1.xhtml".into(),
+            page: 1,
+            selected: Some(chapter[0].id),
+            ..Hold::new()
+        };
+        let next = reconcile(
+            &hold,
+            &LivePage {
+                book: live.book,
+                spine: "ch2.xhtml".into(),
+                page: 1,
+                page_w: 400.0,
+                page_h: 600.0,
+                moving: false,
+            },
+        );
+        assert_eq!(next.spine, "ch2.xhtml");
+        assert_eq!(next.page, 1);
+        assert_eq!(next.selected, None);
+        let _ = std::fs::remove_dir_all(&path);
     }
 
     #[test]
@@ -1319,13 +1392,14 @@ mod tests {
                     text_right: 0.0,
                 })
                 .unwrap();
-            assert!(notes.list("a.epub", 1).unwrap().is_empty());
-            assert_eq!(notes.list("a.epub", 2).unwrap().len(), 1);
-            assert_eq!(notes.list("b.epub", 2).unwrap()[0].body, "other book");
+            assert!(notes.list("a.epub", 1, "chapter.xhtml").unwrap().is_empty());
+            assert_eq!(notes.list("a.epub", 2, "chapter.xhtml").unwrap().len(), 1);
+            assert!(notes.list("a.epub", 2, "other.xhtml").unwrap().is_empty());
+            assert_eq!(notes.list("b.epub", 2, "").unwrap()[0].body, "other book");
             id
         };
         let notes = Notes::open(&path).unwrap();
-        let stored = notes.list("a.epub", 2).unwrap();
+        let stored = notes.list("a.epub", 2, "chapter.xhtml").unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].id, id);
         assert_eq!(stored[0].replies, vec!["a stored reply".to_string()]);
@@ -1518,7 +1592,7 @@ mod tests {
             .unwrap();
         drop(notes);
         let notes = Notes::open(&file).unwrap();
-        let stored = notes.list("book", 1).unwrap();
+        let stored = notes.list("book", 1, "").unwrap();
         let cards = cards_from(
             &stored,
             Fit {
@@ -1670,22 +1744,29 @@ mod tests {
         let again = on_return(ReturnKind::Key, &saved, "  一句  ", &live, &file);
         assert!(again.body.is_empty());
         let notes = Notes::open(&file).unwrap();
-        let stored = notes.list(&passage.book, passage.page).unwrap();
+        let stored = notes
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].body, "一句");
         assert_eq!(stored[0].passage, "你😀");
         assert_eq!(stored[0].start, 0);
         assert_eq!(stored[0].end, 2);
         assert!((stored[0].text_right - 80.0).abs() < 0.01);
-        assert!(notes.list(&passage.book, 5).unwrap().is_empty());
         assert!(notes
-            .list("/books/b.epub", passage.page)
+            .list(&passage.book, 5, &passage.spine)
+            .unwrap()
+            .is_empty());
+        assert!(notes
+            .list("/books/b.epub", passage.page, &passage.spine)
             .unwrap()
             .is_empty());
         drop(notes);
         let reopened = Notes::open(&file).unwrap();
         let cards = cards_from(
-            &reopened.list(&passage.book, passage.page).unwrap(),
+            &reopened
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap(),
             Fit {
                 origin_x: 0.0,
                 origin_y: 0.0,
@@ -1699,7 +1780,13 @@ mod tests {
         assert!(typed.fingerprint.is_none());
         let second = on_return(ReturnKind::Key, &typed, "一句", &live, &file);
         assert!(second.body.is_empty());
-        assert_eq!(reopened.list(&passage.book, passage.page).unwrap().len(), 2);
+        assert_eq!(
+            reopened
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap()
+                .len(),
+            2
+        );
         let _ = std::fs::remove_dir_all(path);
     }
 
@@ -1774,7 +1861,7 @@ mod tests {
         assert!(blurred.notice.is_empty());
         assert!(Notes::open(&file)
             .unwrap()
-            .list(&live.book, passage.page)
+            .list(&live.book, passage.page, &passage.spine)
             .unwrap()
             .is_empty());
         let _ = std::fs::remove_dir_all(path);

@@ -857,6 +857,10 @@ pub fn SpikeApp() -> impl IntoElement {
                                         .as_str()
                                         .unwrap_or("")
                                         .to_string(),
+                                    spine: event.data["margin_spine"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
                                     page: event.data["margin_page"].as_u64().unwrap_or(0) as u32,
                                     page_w: event.data["margin_pw"].as_f64().unwrap_or(0.0),
                                     page_h: event.data["margin_ph"].as_f64().unwrap_or(0.0),

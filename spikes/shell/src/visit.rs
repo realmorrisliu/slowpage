@@ -1286,6 +1286,34 @@ pub fn release_command(delta: i32, token: u64) -> String {
     )
 }
 
+/// Where one script message goes. A selection names its column, so `page` on
+/// that message is not a column report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptRoute {
+    Breaks,
+    Link,
+    Selection,
+    Place,
+}
+
+pub fn script_route(value: &serde_json::Value) -> ScriptRoute {
+    if value["kind"] == "breaks" {
+        ScriptRoute::Breaks
+    } else if value["kind"] == "link" {
+        ScriptRoute::Link
+    } else if value["kind"] == "selection" {
+        ScriptRoute::Selection
+    } else if value.get("page").is_some()
+        || value.get("swipe").is_some()
+        || value.get("frames").is_some()
+        || value["kind"] == "turn"
+    {
+        ScriptRoute::Place
+    } else {
+        ScriptRoute::Selection
+    }
+}
+
 /// The script message, parsed once. Absent fields stay absent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageReport {
@@ -3120,6 +3148,26 @@ mod tests {
 
     fn scrolled(offset: f32) -> Visit {
         note_scroll(&Visit::shelf(), offset)
+    }
+
+    #[test]
+    fn a_selection_with_a_page_is_not_a_column_report() {
+        let selection = serde_json::json!({
+            "kind": "selection",
+            "start": 1,
+            "end": 4,
+            "scalar_start": 1,
+            "scalar_end": 4,
+            "text": "the",
+            "rects": [{ "x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0 }],
+            "text_right": 8.0,
+            "page": 2
+        });
+        assert_eq!(script_route(&selection), ScriptRoute::Selection);
+        let report = serde_json::json!({ "kind": "box", "page": 2, "pages": 9 });
+        assert_eq!(script_route(&report), ScriptRoute::Place);
+        let bare = serde_json::json!({ "start": 1, "end": 4, "text": "the" });
+        assert_eq!(script_route(&bare), ScriptRoute::Selection);
     }
 
     #[test]

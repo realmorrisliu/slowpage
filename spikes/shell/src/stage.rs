@@ -2048,7 +2048,8 @@ impl State {
         self.chrome
             .note_chrome_status(f64::from(title_opacity), entered.chrome_shared);
         crate::chrome::append_chrome_status(&self.chrome);
-        let (margin_book, margin_page, margin_moving, margin_pw, margin_ph) = self.margin_frame();
+        let (margin_book, margin_spine, margin_page, margin_moving, margin_pw, margin_ph) =
+            self.margin_frame();
         let anchor = self
             .anchor
             .as_ref()
@@ -2076,6 +2077,7 @@ impl State {
             "page": shown_page,
             "pages": shown_pages,
             "margin_book": margin_book,
+            "margin_spine": margin_spine,
             "margin_page": margin_page,
             "margin_moving": margin_moving,
             "margin_pw": margin_pw,
@@ -2196,19 +2198,19 @@ impl State {
         });
     }
 
-    fn margin_frame(&self) -> (String, u32, bool, f64, f64) {
+    fn margin_frame(&self) -> (String, String, u32, bool, f64, f64) {
         let book = self.book_path.clone();
         match self.mode {
             Mode::Pdfium | Mode::Hayro => {
                 let count = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0);
                 if count == 0 {
-                    return (book, 0, false, 0.0, 0.0);
+                    return (book, String::new(), 0, false, 0.0, 0.0);
                 }
                 let index = self.current_page().min(count - 1);
                 let (from, incoming, _) = self.pdf_shift(index);
                 let moving = incoming.is_some();
                 let Some(shown) = crate::visit::margin_pdf_index(count, index, from, moving) else {
-                    return (book, 0, false, 0.0, 0.0);
+                    return (book, String::new(), 0, false, 0.0, 0.0);
                 };
                 let (pw, ph) = self
                     .pdf
@@ -2218,6 +2220,7 @@ impl State {
                     .unwrap_or((0.0, 0.0));
                 (
                     book,
+                    String::new(),
                     crate::visit::margin_page_number(shown),
                     moving,
                     f64::from(pw),
@@ -2225,6 +2228,7 @@ impl State {
                 )
             }
             Mode::WebKit => {
+                let spine = self.web.as_ref().map(|web| web.href()).unwrap_or_default();
                 let (moving, page_w, page_h) = self
                     .web
                     .as_ref()
@@ -2236,13 +2240,14 @@ impl State {
                 let (page_w, page_h) = spike_library::margin::epub_page_size(page_w, page_h);
                 (
                     book,
+                    spine,
                     (self.epub_page as u32).saturating_add(1),
                     moving,
                     page_w,
                     page_h,
                 )
             }
-            _ => (book, 0, false, 0.0, 0.0),
+            _ => (book, String::new(), 0, false, 0.0, 0.0),
         }
     }
 
