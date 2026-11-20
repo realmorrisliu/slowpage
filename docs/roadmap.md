@@ -16,7 +16,7 @@ Each slice below is a thin cut of that one form.
 
 - S1. The gray base, the 220 point version B sidebar, the white card, and the library chat panel are in the library form. The bare shelf window is gone. The GUI is not verified.
 - S2. The cover grid and **继续阅读** are in that card. The GUI is not verified.
-- S3. The reading form, using the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits until Morris approves a mockup of the exact gap, the horizontal position, the margin width, and the toggle placement. The margin's contents are the 2026-11-10 hard requirement in `docs/design/north-star.md`. Interaction detail for S3, S4, and every slice after them is `docs/design/reading-interactions.md`. One checklist item, or a small group, is one pull request. It merges on the necessary cloud checks and an independent review.
+- S3. The reading form, using the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits on the items the annotation margin section of `docs/design/shell/spec.md` still marks unset. The margin's contents are the 2026-11-10 hard requirement in `docs/design/north-star.md`. Interaction detail for S3, S4, and every slice after them is `docs/design/reading-interactions.md`. One checklist item, or a small group, is one pull request. It merges on the necessary cloud checks and an independent review.
 
 The checklist document records the rule. It does not build an item, the margin mockup, or S4, and it does not start the alan embed. The document merges on the necessary cloud checks and an independent review. A green run does not pass the ten items. Not executed, and not a blocker for this document: the ten items, their `nsh test` runs, their Mac recordings, the real Apple Books round, and the shell GUI, performance, image, and animation checks. `deny.toml` still ignores RUSTSEC-2026-0543 (chrono 0.4.45 via nsh-base 0.5.1 and pdfium-render 0.9.5). That ignore is not a clearance. The spikes bump to rbook 0.7.13, sha2 0.11.1, resvg 0.50.0, and rusqlite 0.43.0 leaves chrono 0.4.45 in the lock. Those four crates declare rust-version 1.89 or older, and the toolchain is 1.98.1.
 
@@ -120,7 +120,7 @@ Verify:
 
 ## Comments
 
-The reading form shows a highlight, a note, and an agent response in the annotation margin. `docs/design/shell/spec.md` is that decision. The exact gap, the horizontal position, the margin width, and the toggle placement wait for one mockup Morris approves. S3 waits on that mockup. A highlight can carry the reader's note. `@alan` in that note runs the handoff below.
+The reading form shows a highlight, a note, and an agent response in the annotation margin. `docs/design/shell/spec.md` is that decision. Which margin facts are approved is the annotation margin section of `docs/design/shell/spec.md`. S3 waits on the items that section still marks unset. A highlight can carry the reader's note. `@alan` in that note runs the handoff below.
 
 ## @alan
 

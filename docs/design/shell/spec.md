@@ -94,13 +94,22 @@ Picked on 2026-11-10, in pull request 14.
 - The card-to-line connector has three states. At rest there is no connector. On hover the connector is faded. When the card is selected the connector is full.
 - In a narrow window the margin becomes a drawer. Its cards stay aligned to their lines. When a card cannot stay at its line, the drawer scrolls that card to its line height.
 
-These three layout facts are unset. S3 does not start until Morris approves a mockup that settles them.
+Approved on 2026-11-20 at 15:49 Asia/Shanghai. Mochi conveyed Morris's choice after Morris looked at three design drafts. This paragraph records that conveyance.
+
+- A wide window shows the annotation margin at 240 points. The chat panel's 320 points stay unused for this margin.
+- A narrow window uses the drawer in the 2026-11-10 pick above.
+- The control that shows or hides the margin sits at the top right. It is the existing panel toggle. It does not open the chat panel, and it does not enter immersive reading.
+
+That choice approves these three items. S3, S4, and checklist item 10 stay open.
+
+Still unset:
 
 - The exact gap and the horizontal position that line a card up with its line.
-- The margin's width. Do not reuse the chat panel's 320 points for it.
-- Where the control that shows or hides the margin sits.
+- Which width counts as narrow, and whether an open drawer covers the page or narrows the card.
+- Whether the top-right control fades with the book title.
+- When notes and the footer change during the 160 ms slide.
 
-Until that mockup, a shell change does not invent the gap, the horizontal position, the margin width, or the toggle placement. The control that shows or hides the margin does not open the chat panel. The 2026-11-10 picks above are not that mockup. Pull request 29's connector is not that approval.
+A shell change does not invent an unset item. The 2026-11-10 picks above are not this approval. Pull request 29's connector is not this approval.
 
 ## Commands
 
@@ -122,7 +131,7 @@ The sidebar toggle is absent in immersive reading. Its menu item does not leave 
 
 The panel toggle in Full hides or shows the chat panel.
 
-The panel toggle in Page and panel hides or shows the annotation margin. It does not show the chat panel, and it does not enter immersive reading. The inset stays 6 points. Where that control sits is part of the unset margin layout.
+The panel toggle in Page and panel hides or shows the annotation margin. It does not show the chat panel, and it does not enter immersive reading. The inset stays 6 points. The top-right seat is the 2026-11-20 approval in the annotation margin section.
 
 The panel toggle is absent in immersive reading.
 
@@ -187,6 +196,6 @@ Each slice is a thin cut of this form. The order is fixed.
 
 1. S1 builds the gray base, the 220 point sidebar, the white card, and the chat panel frame, including empty states. It replaces the bare shelf window and removes the three paths above.
 2. S2 fills the card with the cover grid and **继续阅读**, from `Catalog`.
-3. S3 builds Page and panel with the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits for the margin mockup named above. The interaction checks are in `docs/design/reading-interactions.md`.
+3. S3 builds Page and panel with the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits on the items the annotation margin section still marks unset. The interaction checks are in `docs/design/reading-interactions.md`.
 4. S4 builds immersive reading.
 5. S5 polishes motion. Night mode and a theme switch stay out, under the 2026-11-03 rule. Light and dark join S5 only if a later decision revises that rule.

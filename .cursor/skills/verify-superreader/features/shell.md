@@ -23,7 +23,7 @@ Reading interactions, recorded 2026-11-17. The rule is `docs/design/reading-inte
 - Reopening a book returns to the stored sentence, not only the stored page. The window proof stays pending.
 - Choosing a chapter from the contents control lands on that chapter. **返回** restores the sentence the reader left. Reopening the book loads that same spine item before the sentence. The library hides that control. The window proof stays pending.
 - `shell-reading-hides-sidebar` is S3. Opening a book hides the sidebar and keeps the page in the card. The right region is the annotation margin.
-- `shell-reading-margin` is S3, and it has no pixel bar yet. The exact gap, the horizontal position, the margin width, and the toggle placement wait for Morris's mockup. Do not invent those pixels in the check.
+- `shell-reading-margin` is S3, and it has no pixel bar yet. Which margin facts are approved is the annotation margin section of `docs/design/shell/spec.md`. Do not invent an unset item in the check.
 - `shell-immersive-no-gray` is S4. Immersive reading shows no gray field. The card meets the window edges.
 
 ## How to get to it (user POV)
@@ -33,7 +33,7 @@ Reading interactions, recorded 2026-11-17. The rule is `docs/design/reading-inte
 - Press Control-Command-I, or use the View menu item, or use the toolbar button. The card goes edge to edge. Escape leaves that form.
 - Choose **全部书籍** to return to the library and the chat panel.
 
-S3's reading checks wait until Morris approves the margin mockup. Do not drive a substitute margin.
+S3's reading checks wait while `docs/design/shell/spec.md` still marks margin items unset. Do not drive a substitute margin.
 
 ## Driving it with scripts/verify
 
