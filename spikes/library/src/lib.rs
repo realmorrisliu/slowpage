@@ -4,6 +4,7 @@ mod apple;
 mod calibre;
 mod cover;
 mod disk;
+pub mod margin;
 mod plate;
 mod shelf_grid;
 mod snapshot;

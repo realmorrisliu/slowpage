@@ -4,11 +4,11 @@ A highlight can carry Morris's note. `@alan` in that note embeds alan in-process
 
 ## Sub-features
 
-- `comment-note` is pending. A highlight cannot carry a note.
-- `comment-ui` is pending. The comment chrome is a later prototype.
+- `comment-note` is pending. The window has no control that writes a note onto a highlight.
+- `comment-ui` is pending. A stored note can draw in the margin. Creating, editing, and replying from the window are not in this slice.
 - `alan-spawn` is pending. The spike does not embed `alan`. The milestone waits on `docs/roadmap.md`.
 - `superreader-json` is pending. The `superreader` command is not in this repo.
-- `annotations-sqlite` is pending. Annotations are not in SQLite.
+- `annotations-sqlite` is pending. `annotations.sqlite` can store a note and a reply. The window cannot create either, and nothing syncs them.
 
 ## How to get to it (user POV)
 

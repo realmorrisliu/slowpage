@@ -1293,6 +1293,29 @@ fn shelf_event_point(event: &NSEvent, window: &NSWindow, mtm: MainThreadMarker) 
     NSPoint::new(mouse.x - frame.origin.x, mouse.y - frame.origin.y)
 }
 
+fn margin_claims_event(event: &NSEvent) -> bool {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    let Some(window) = shelf_event_window(event, mtm) else {
+        return false;
+    };
+    let Some(content) = window.contentView() else {
+        return false;
+    };
+    let size = content.frame().size;
+    if !size.width.is_finite()
+        || !size.height.is_finite()
+        || size.width <= 1.0
+        || size.height <= 1.0
+    {
+        return false;
+    }
+    let point = shelf_event_point(event, &window, mtm);
+    let presented = crate::ease::present(size.width, size.height, 0.0, crate::ease::current());
+    crate::form::margin_claims_wheel(point.x, size.height - point.y, presented.margin)
+}
+
 fn install_shelf_wheel() {
     static INSTALLED: AtomicBool = AtomicBool::new(false);
     if INSTALLED.swap(true, Ordering::Relaxed) {
@@ -1308,20 +1331,27 @@ fn install_shelf_wheel() {
         let line_x = e.deltaX();
         let line_y = e.deltaY();
         let scrolls_shelf = crate::visit::wheel_scrolls_shelf(shell_on());
-        let page_took = if scrolls_shelf {
+        let margin_claims = if scrolls_shelf {
             false
         } else {
-            crate::web::take_epub_wheel(
-                phase,
-                momentum,
-                crate::visit::wheel_points(precise, scroll_x, line_x),
-                crate::visit::wheel_points(precise, scroll_y, line_y),
-            )
+            margin_claims_event(e)
         };
-        match crate::visit::wheel_owner(scrolls_shelf, page_took) {
-            crate::visit::WheelOwner::Page => return std::ptr::null_mut(),
-            crate::visit::WheelOwner::Through => return event.as_ptr(),
-            crate::visit::WheelOwner::Shelf => {}
+        match crate::visit::wheel_step(margin_claims, scrolls_shelf) {
+            crate::visit::WheelStep::Margin => return event.as_ptr(),
+            crate::visit::WheelStep::Page => {
+                let page_took = crate::web::take_epub_wheel(
+                    phase,
+                    momentum,
+                    crate::visit::wheel_points(precise, scroll_x, line_x),
+                    crate::visit::wheel_points(precise, scroll_y, line_y),
+                );
+                return if page_took {
+                    std::ptr::null_mut()
+                } else {
+                    event.as_ptr()
+                };
+            }
+            crate::visit::WheelStep::Shelf => {}
         }
         let Some(mtm) = MainThreadMarker::new() else {
             return event.as_ptr();

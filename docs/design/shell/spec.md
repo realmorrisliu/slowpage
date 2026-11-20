@@ -114,11 +114,15 @@ Approved on 2026-11-20 at 16:03 Asia/Shanghai. Mochi conveyed Morris's choice af
 
 The 2026-11-10 list above stays that date's record. Lining a card up with its line, and scrolling a card to that line, stay in that list.
 
-Still unset:
+Mochi conveyed Morris's 2026-11-20 22:42 Asia/Shanghai widget answer: implement this set's card layout, connector, crowding, independent scroll, and page-turn update. The recording interface did not keep the widget. This paragraph records that conveyance. It does not claim the original widget log was read.
 
-- The exact gap and the horizontal position that line a card up with its line.
+- The column stays 240 points. A card is 208 points wide, inset 16 points from each side, with an 8 point gap and a 12 point radius. The card is white with the existing 0.5 point ring. Annotation text stays 13 to 14 points.
+- At rest a card is collapsed to the annotator and the first sentence, and it has no connector. Hover or selection expands it. The anchor is the first line of the highlight. The connector starts at that line's highlight end, or after the last glyph on that same line when unhighlighted words continue, and runs to the card's left edge. It does not use a later line. A hovered connector is the same 1 point ink at 0.28 alpha. A selected connector is solid. A selected card parked off its line uses that same ink as a short elbow.
+- Crowded cards move down and keep the 8 point gap. A selected card returns to its line. Cards above it that would overlap move up.
+- The card area scrolls on its own. Its top is the bottom of the 48 point header. Its bottom is the top of the input. The input sits outside that area, inset 18, radius 14, height 88, and it does not paint over card text. Scrolling reaches the body and the replies of a card taller than the area. Scrolling away from the anchor hides the connector. Scrolling back restores it. A line in the header parks the card at the top of the area. A line in the input band parks the card 8 points above the input.
+- During a page turn or the immersive slide the cards stay on the departing page. They change together when the slide lands.
 
-The shell has no annotation store. The margin shows the column or the cover, and the control, and no note cards. S3, S4, and checklist item 10 stay open.
+The local store is `annotations.sqlite` in the support directory. A card draws when that page has a stored note and a line. There is no control that creates, edits, or sends a note, and the shell does not call an agent. S3, S4, and checklist item 10 stay open.
 
 A shell change does not invent an unset item. Pull request 29's connector is not this approval.
 

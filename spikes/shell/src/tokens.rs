@@ -180,6 +180,10 @@ pub const TAG_PX: f32 = 3.0;
 pub const TAG_BORDER: f32 = 0.5;
 
 pub const CHAT_PAD_X: f32 = 16.0;
+pub const MARGIN_CARD_W: f32 = 208.0;
+pub const MARGIN_CARD_X: f32 = CHAT_PAD_X;
+pub const MARGIN_CARD_GAP: f32 = ROW_GAP;
+pub const MARGIN_COMPOSER_H: f32 = 88.0;
 pub const CHAT_HEAD_H: f32 = CHROME_H;
 pub const CHAT_HEAD_GAP: f32 = 10.0;
 pub const AVATAR: f32 = 26.0;
@@ -436,6 +440,10 @@ pub fn card_shadows() -> Vec<BoxShadow> {
     ]
 }
 
+pub fn margin_ring() -> Vec<BoxShadow> {
+    vec![layer(0.0, 0.0, 0.0, CARD_SPREAD, CARD_SPREAD_ALPHA)]
+}
+
 pub fn cover_shadows() -> Vec<BoxShadow> {
     vec![
         layer(0.0, 0.0, 0.0, 0.5, 0.08),
@@ -504,6 +512,17 @@ mod tests {
         assert!(stack > continue_and_shelf);
         assert!((library_min_height() - (f64::from(stack) + INSET * 2.0)).abs() < 0.1);
         assert!(library_min_height() > 400.0);
+    }
+
+    #[test]
+    fn margin_card_tokens_match_the_layout() {
+        assert!((f64::from(MARGIN_CARD_W) - spike_library::margin::CARD_W).abs() < 0.01);
+        assert!((f64::from(MARGIN_CARD_X) - spike_library::margin::CARD_X).abs() < 0.01);
+        assert!((f64::from(MARGIN_CARD_GAP) - spike_library::margin::GAP).abs() < 0.01);
+        assert!((CARD_RADIUS - spike_library::margin::RADIUS).abs() < 0.01);
+        assert!((f64::from(MARGIN_COMPOSER_H) - spike_library::margin::COMPOSER_H).abs() < 0.01);
+        assert!((f64::from(COMPOSER_INSET) - spike_library::margin::COMPOSER_INSET).abs() < 0.01);
+        assert_eq!(margin_ring().len(), 1);
     }
 
     #[test]

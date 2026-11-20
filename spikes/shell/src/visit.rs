@@ -132,6 +132,48 @@ pub fn wheel_owner(scrolls_shelf: bool, page_took_it: bool) -> WheelOwner {
     }
 }
 
+/// Who may see a wheel before any page gesture starts. `Margin` means the
+/// card column owns it: the caller must not ask the page to turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WheelStep {
+    Shelf,
+    Page,
+    Margin,
+}
+
+pub fn wheel_step(margin_claims: bool, scrolls_shelf: bool) -> WheelStep {
+    if scrolls_shelf {
+        WheelStep::Shelf
+    } else if margin_claims {
+        WheelStep::Margin
+    } else {
+        WheelStep::Page
+    }
+}
+
+/// The PDF page the margin shows. While a turn is moving, this is the
+/// departing page. `None` is an empty document.
+pub fn margin_pdf_index(
+    count: usize,
+    index: usize,
+    departing: usize,
+    moving: bool,
+) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let index = index.min(count - 1);
+    Some(if moving {
+        departing.min(count - 1)
+    } else {
+        index
+    })
+}
+
+pub fn margin_page_number(index: usize) -> u32 {
+    (index as u32).saturating_add(1)
+}
+
 /// The scroll monitor is installed for a direct file as well as the shelf.
 /// `shell` is the shelf flag. It does not gate installation.
 pub fn arms_page_wheel(shell: bool) -> bool {

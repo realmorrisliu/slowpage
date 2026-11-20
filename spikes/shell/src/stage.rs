@@ -216,7 +216,31 @@ define_class!(
             let line_y: f64 = unsafe { msg_send![event, deltaY] };
             let phase = event.phase().0 as u64;
             let momentum = event.momentumPhase().0 as u64;
+            let (x, y) = point_in(self, event);
             let mut state = self.ivars().state.borrow_mut();
+            let width = if state.shell_w > 2.0 {
+                state.shell_w
+            } else {
+                state.stage_w
+            };
+            let height = if state.shell_h > 2.0 {
+                state.shell_h
+            } else {
+                state.stage_h
+            };
+            let presented = crate::ease::present(
+                width,
+                height,
+                state.chrome.content_top.get(),
+                crate::ease::current(),
+            );
+            if crate::visit::wheel_step(
+                crate::form::margin_claims_wheel(x, y, presented.margin),
+                false,
+            ) != crate::visit::WheelStep::Page
+            {
+                return;
+            }
             if state.fits_card() && matches!(state.mode, Mode::Pdfium | Mode::Hayro) {
                 state.wheel_pdf(
                     phase,
@@ -1990,6 +2014,7 @@ impl State {
         self.chrome
             .note_chrome_status(f64::from(title_opacity), entered.chrome_shared);
         crate::chrome::append_chrome_status(&self.chrome);
+        let (margin_book, margin_page, margin_moving, margin_pw, margin_ph) = self.margin_frame();
         let anchor = self
             .anchor
             .as_ref()
@@ -2018,6 +2043,11 @@ impl State {
                 "trim": self.trim_id,
                 "page": shown_page,
                 "pages": shown_pages,
+                "margin_book": margin_book,
+                "margin_page": margin_page,
+                "margin_moving": margin_moving,
+                "margin_pw": margin_pw,
+                "margin_ph": margin_ph,
                 "empty": self.mode == Mode::Empty,
                 "stage_w": if self.shell_w > 2.0 { self.shell_w } else { self.stage_w },
                 "stage_h": if self.shell_h > 2.0 { self.shell_h } else { self.stage_h },
@@ -2026,6 +2056,48 @@ impl State {
                 "content_top": self.chrome.content_top.get(),
             }),
         );
+    }
+
+    fn margin_frame(&self) -> (String, u32, bool, f64, f64) {
+        let book = self.book_path.clone();
+        match self.mode {
+            Mode::Pdfium | Mode::Hayro => {
+                let count = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0);
+                if count == 0 {
+                    return (book, 0, false, 0.0, 0.0);
+                }
+                let index = self.current_page().min(count - 1);
+                let (from, incoming, _) = self.pdf_shift(index);
+                let moving = incoming.is_some();
+                let Some(shown) = crate::visit::margin_pdf_index(count, index, from, moving) else {
+                    return (book, 0, false, 0.0, 0.0);
+                };
+                let (pw, ph) = self
+                    .pdf
+                    .as_ref()
+                    .and_then(|pdf| pdf.sizes.get(shown))
+                    .copied()
+                    .unwrap_or((0.0, 0.0));
+                (
+                    book,
+                    crate::visit::margin_page_number(shown),
+                    moving,
+                    f64::from(pw),
+                    f64::from(ph),
+                )
+            }
+            Mode::WebKit => {
+                let moving = self.web.as_ref().is_some_and(|web| web.inbox.borrow().leaf);
+                (
+                    book,
+                    (self.epub_page as u32).saturating_add(1),
+                    moving,
+                    0.0,
+                    0.0,
+                )
+            }
+            _ => (book, 0, false, 0.0, 0.0),
+        }
     }
 
     fn current_page(&self) -> usize {

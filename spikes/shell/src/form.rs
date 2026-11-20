@@ -373,6 +373,18 @@ pub fn reading_frame(width: f64, height: f64, top: f64, sidebar: f64, shown: boo
     }
 }
 
+pub fn margin_claims_wheel(x: f64, y: f64, margin: Option<Rect>) -> bool {
+    let Some(rect) = margin else {
+        return false;
+    };
+    rect.w > 0.5
+        && rect.h > 0.5
+        && x >= rect.x
+        && y >= rect.y
+        && x < rect.x + rect.w
+        && y < rect.y + rect.h
+}
+
 /// The fitted page a click can reach. A covering margin removes the part it
 /// covers. A column leaves the fitted page, because the card already sits
 /// beside the margin.
@@ -2148,13 +2160,43 @@ pub fn reading_margin(
     chrome: Signal<crate::tokens::ChromeIn>,
     stage: ElementRef,
     ease: Signal<u64>,
+    live: Signal<spike_library::margin::LivePage>,
+    hold: Signal<spike_library::margin::Hold>,
+    fault: Signal<String>,
 ) -> AnyElement {
     let _tick = ease.get();
     let _form = form.get();
     let size = window.get();
     let row = chrome.get();
     let top = f64::from(row.top.max(0.0));
-    let frame = crate::ease::present(size.width, size.height, top, crate::ease::current());
+    let trip = crate::ease::current();
+    let frame = crate::ease::present(size.width, size.height, top, trip);
+    let live_now = live.get();
+    let mut live_for_page = live_now.clone();
+    live_for_page.moving = live_for_page.moving || trip.moving();
+    let page_hold = spike_library::margin::reconcile(&hold.get(), &live_for_page);
+    let loaded = load_margin(&page_hold.book, page_hold.page);
+    let (notes, error) = match loaded {
+        Ok(notes) => (notes, String::new()),
+        Err(err) => (Vec::new(), err),
+    };
+    if fault.get() != error {
+        fault.set(error);
+    }
+    let margin_x = frame.margin.map(|rect| rect.x).unwrap_or(0.0);
+    let settled = settle_margin(
+        &hold.get(),
+        &live_now,
+        trip.moving(),
+        &frame.page,
+        margin_x,
+        size.height,
+        &notes,
+    );
+    if hold.get() != settled.hold {
+        hold.set(settled.hold);
+    }
+    let scene = settled.scene;
     let mut root = view()
         .absolute()
         .size_full()
@@ -2169,6 +2211,75 @@ pub fn reading_margin(
                 .h(px(rect.h as f32))
                 .bg(rgb(FIELD_HEX).to_hsla()),
         );
+        for placed in &scene.cards {
+            for seg in &placed.segments {
+                if seg.w < 0.5 && seg.h < 0.5 {
+                    continue;
+                }
+                let alpha = if seg.fade {
+                    spike_library::margin::CONNECTOR_FADE as f32
+                } else {
+                    1.0
+                };
+                root = root.child(
+                    view()
+                        .absolute()
+                        .left(px(seg.x as f32))
+                        .top(px(seg.y as f32))
+                        .w(px(seg.w.max(1.0) as f32))
+                        .h(px(seg.h.max(1.0) as f32))
+                        .bg(ink())
+                        .opacity(alpha)
+                        .pointer_events(PointerEvents::BoxNone),
+                );
+            }
+        }
+        let band = spike_library::margin::band_bottom(size.height);
+        let clip_h = (band - spike_library::margin::BAND_TOP).max(0.0);
+        let mut clip = view()
+            .absolute()
+            .left(px(rect.x as f32))
+            .top(px(spike_library::margin::BAND_TOP as f32))
+            .w(px(rect.w as f32))
+            .h(px(clip_h as f32))
+            .overflow_hidden()
+            .pointer_events(PointerEvents::Auto)
+            .on_wheel({
+                let hold = hold.clone();
+                move |event: &WheelEvent| {
+                    let dy = f64::from(event.delta.points(Points(16.0)).y.0);
+                    let mut current = hold.get();
+                    let scrolled =
+                        (current.scroll + dy).clamp(current.scroll_min, current.scroll_max);
+                    if (scrolled - current.scroll).abs() > 0.01 {
+                        current.scroll = scrolled;
+                        hold.set(current);
+                    }
+                }
+            });
+        for placed in &scene.cards {
+            if let Some(note) = notes.iter().find(|note| note.id == placed.id) {
+                clip = clip.child(margin_card(note, placed, hold.clone()));
+            }
+        }
+        root = root.child(clip);
+        let composer_top = band;
+        root = root.child(
+            view()
+                .absolute()
+                .left(px(
+                    (rect.x + f64::from(crate::tokens::COMPOSER_INSET)) as f32
+                ))
+                .top(px(composer_top as f32))
+                .w(px(
+                    (rect.w - f64::from(crate::tokens::COMPOSER_INSET) * 2.0).max(1.0) as f32,
+                ))
+                .h(px(crate::tokens::MARGIN_COMPOSER_H))
+                .rounded(px(crate::tokens::COMPOSER_RADIUS))
+                .bg(rgb(crate::tokens::CARD).to_hsla())
+                .shadow(crate::tokens::margin_ring())
+                .pointer_events(PointerEvents::Auto),
+        );
     }
     if frame.panel_toggle {
         root = root.child(margin_toggle(form.clone(), row, stage.clone()));
@@ -2180,6 +2291,185 @@ pub fn reading_margin(
         stage,
     ));
     root.into_element()
+}
+
+pub(crate) struct MarginView {
+    pub hold: spike_library::margin::Hold,
+    pub fit: spike_library::margin::Fit,
+    pub scene: spike_library::margin::Scene,
+}
+
+pub(crate) fn settle_margin(
+    hold: &spike_library::margin::Hold,
+    live: &spike_library::margin::LivePage,
+    ease_moving: bool,
+    page_box: &Rect,
+    margin_x: f64,
+    window_h: f64,
+    notes: &[spike_library::margin::StoredNote],
+) -> MarginView {
+    let mut live_now = live.clone();
+    live_now.moving = live_now.moving || ease_moving;
+    let mut next = spike_library::margin::reconcile(hold, &live_now);
+    let fit = margin_fit(page_box, live_now.page_w, live_now.page_h);
+    let cards = spike_library::margin::cards_from(notes, fit);
+    let scene = spike_library::margin::place(
+        &cards,
+        spike_library::margin::Focus {
+            hover: next.hover,
+            selected: next.selected,
+        },
+        window_h,
+        margin_x,
+        next.scroll,
+    );
+    next.scroll = scene.scroll;
+    next.scroll_min = scene.scroll_min;
+    next.scroll_max = scene.scroll_max;
+    MarginView {
+        hold: next,
+        fit,
+        scene,
+    }
+}
+
+fn margin_fit(page: &Rect, page_w: f64, page_h: f64) -> spike_library::margin::Fit {
+    if page_w < 1.0 || page_h < 1.0 {
+        return spike_library::margin::Fit {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            scale: 0.0,
+        };
+    }
+    let (x, y, w, _) =
+        spike_report::fitted_pdf_page(page.x, page.y, page.w, page.h, page_w, page_h);
+    spike_library::margin::Fit {
+        origin_x: x,
+        origin_y: y,
+        scale: w / page_w,
+    }
+}
+
+pub(crate) fn load_margin(
+    book: &str,
+    page: u32,
+) -> Result<Vec<spike_library::margin::StoredNote>, String> {
+    if book.is_empty() || page == 0 {
+        return Ok(Vec::new());
+    }
+    let path = crate::settings::support_dir().join("annotations.sqlite");
+    let notes = spike_library::margin::Notes::open(&path)?;
+    notes.list(book, page)
+}
+
+fn margin_card(
+    note: &spike_library::margin::StoredNote,
+    placed: &spike_library::margin::Placed,
+    hold: Signal<spike_library::margin::Hold>,
+) -> AnyElement {
+    let id = note.id;
+    let source = spike_library::margin::shown_text(note).to_string();
+    let sentence = source.lines().next().unwrap_or("").trim().to_string();
+    let mut column = view().w_full().flex().flex_col().child(
+        line!(
+            note.author.clone(),
+            crate::tokens::BODY_SIZE,
+            crate::tokens::NAME_WEIGHT,
+            ink(),
+            0.0_f32
+        )
+        .line_height(px(18.0))
+        .truncate(),
+    );
+    if placed.open {
+        column = column.child(
+            line!(
+                source,
+                crate::tokens::BODY_SIZE,
+                crate::tokens::BODY_WEIGHT,
+                ink(),
+                0.0_f32
+            )
+            .line_height(px(18.0)),
+        );
+        if hold.get().selected == Some(id) {
+            for reply in &note.replies {
+                column = column.child(
+                    line!(
+                        reply.clone(),
+                        crate::tokens::BODY_SIZE,
+                        crate::tokens::BODY_WEIGHT,
+                        ink(),
+                        0.0_f32
+                    )
+                    .line_height(px(18.0))
+                    .mt(px(crate::tokens::MARGIN_CARD_GAP + 8.0)),
+                );
+            }
+        }
+    } else {
+        column = column.child(
+            line!(
+                sentence,
+                crate::tokens::BODY_SIZE,
+                crate::tokens::BODY_WEIGHT,
+                ink(),
+                0.0_f32
+            )
+            .line_height(px(18.0))
+            .truncate(),
+        );
+    }
+    let top = (placed.y - spike_library::margin::BAND_TOP) as f32;
+    view()
+        .absolute()
+        .left(px(crate::tokens::MARGIN_CARD_X))
+        .top(px(top))
+        .w(px(crate::tokens::MARGIN_CARD_W))
+        .h(px(placed.h as f32))
+        .rounded(px(crate::tokens::CARD_RADIUS as f32))
+        .bg(rgb(crate::tokens::CARD).to_hsla())
+        .shadow(crate::tokens::margin_ring())
+        .overflow_hidden()
+        .px(px(12.0))
+        .pt(px(8.0))
+        .pb(px(8.0))
+        .pointer_events(PointerEvents::Auto)
+        .on_mouse_enter({
+            let hold = hold.clone();
+            move |_: &MouseEvent| {
+                let mut current = hold.get();
+                if current.hover != Some(id) {
+                    current.hover = Some(id);
+                    hold.set(current);
+                }
+            }
+        })
+        .on_mouse_leave({
+            let hold = hold.clone();
+            move |_: &MouseEvent| {
+                let mut current = hold.get();
+                if current.hover == Some(id) {
+                    current.hover = None;
+                    hold.set(current);
+                }
+            }
+        })
+        .on_press({
+            let hold = hold.clone();
+            move || {
+                let mut current = hold.get();
+                current.selected = if current.selected == Some(id) {
+                    None
+                } else {
+                    Some(id)
+                };
+                current.scroll = 0.0;
+                hold.set(current);
+            }
+        })
+        .child(column)
+        .into_element()
 }
 
 fn immersive_button(form: Signal<Form>, seat: Rect, plate: bool, stage: ElementRef) -> AnyElement {
@@ -4125,5 +4415,253 @@ mod tests {
             crate::tokens::library_min_height(),
         );
         assert_shared_centers(1920.0, 1080.0);
+    }
+
+    #[test]
+    fn a_wheel_on_the_margin_stays_with_the_cards() {
+        struct Restore {
+            immersive: bool,
+            margin: bool,
+        }
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                crate::ease::settle(self.immersive, self.margin);
+            }
+        }
+        let restore = Restore {
+            immersive: immersive_on(),
+            margin: margin_shown(),
+        };
+        crate::ease::settle(false, true);
+        let wide = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        let wide_again = crate::ease::present(1440.0, 900.0, 48.0, crate::ease::current());
+        assert_eq!(
+            wide.margin.map(|rect| rect.x),
+            wide_again.margin.map(|rect| rect.x)
+        );
+        assert!(margin_claims_wheel(1300.0, 200.0, wide.margin));
+        assert!(!margin_claims_wheel(400.0, 200.0, wide.margin));
+        assert_eq!(
+            crate::visit::wheel_step(true, false),
+            crate::visit::WheelStep::Margin
+        );
+        assert_eq!(
+            crate::visit::wheel_step(false, false),
+            crate::visit::WheelStep::Page
+        );
+        assert_eq!(
+            crate::visit::wheel_step(true, true),
+            crate::visit::WheelStep::Shelf
+        );
+        let narrow = reading_frame(760.0, 900.0, 0.0, 0.0, true);
+        assert!(margin_claims_wheel(600.0, 200.0, narrow.margin));
+        crate::ease::settle(true, true);
+        let immersed = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        assert!(!margin_claims_wheel(1300.0, 200.0, immersed.margin));
+        assert_eq!(
+            crate::visit::wheel_step(false, false),
+            crate::visit::WheelStep::Page
+        );
+        crate::ease::settle(false, false);
+        let hidden = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        assert!(!margin_claims_wheel(1300.0, 200.0, hidden.margin));
+        drop(restore);
+    }
+
+    #[test]
+    fn the_margin_keeps_the_departing_page_and_maps_its_line() {
+        let shown = crate::visit::margin_pdf_index(10, 4, 3, true).unwrap();
+        assert_eq!(crate::visit::margin_page_number(shown), 4);
+        let landed_index = crate::visit::margin_pdf_index(10, 4, 3, false).unwrap();
+        assert_eq!(crate::visit::margin_page_number(landed_index), 5);
+        assert!(crate::visit::margin_pdf_index(0, 0, 0, true).is_none());
+        let live = spike_library::margin::LivePage {
+            book: "a.pdf".into(),
+            page: crate::visit::margin_page_number(shown),
+            page_w: 400.0,
+            page_h: 500.0,
+            moving: true,
+        };
+        let hold = spike_library::margin::Hold {
+            book: "a.pdf".into(),
+            page: 4,
+            scroll: 0.0,
+            selected: Some(7),
+            ..spike_library::margin::Hold::default()
+        };
+        let page = Rect {
+            x: 10.0,
+            y: 20.0,
+            w: 800.0,
+            h: 1000.0,
+        };
+        let note = spike_library::margin::StoredNote {
+            id: 7,
+            page: 4,
+            spine: String::new(),
+            start: 0,
+            end: 4,
+            passage: "word ".repeat(80),
+            body: String::new(),
+            author: "读者".into(),
+            quads: vec![
+                spike_library::margin::Quad {
+                    x: 10.0,
+                    y: 20.0,
+                    w: 30.0,
+                    h: 8.0,
+                },
+                spike_library::margin::Quad {
+                    x: 4.0,
+                    y: 40.0,
+                    w: 12.0,
+                    h: 8.0,
+                },
+            ],
+            text_right: 90.0,
+            replies: Vec::new(),
+        };
+        let moving = settle_margin(&hold, &live, false, &page, 1200.0, 900.0, &[note.clone()]);
+        assert_eq!(moving.hold.page, 4);
+        assert!(moving.hold.scroll.abs() < 0.01);
+        assert_eq!(moving.hold.selected, Some(7));
+        let refused = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: 12.0,
+                ..moving.hold.clone()
+            },
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[note.clone()],
+        );
+        assert!(refused.scene.scroll_max.abs() < 0.01);
+        assert!(refused.hold.scroll.abs() < 0.01);
+        assert!((refused.scene.cards[0].y - 60.0).abs() < 0.01);
+        assert!(!refused.scene.cards[0].segments.is_empty());
+        assert!((refused.scene.cards[0].segments[0].x - 190.0).abs() < 0.01);
+        let cards = spike_library::margin::cards_from(&[note.clone()], moving.fit);
+        assert!((cards[0].line.top - 60.0).abs() < 0.01);
+        assert!((cards[0].line.text_right - 190.0).abs() < 0.01);
+        assert!(cards[0].line.highlight_right < cards[0].line.text_right);
+        assert!(cards[0].hover_h > spike_library::margin::open_height("", &[]));
+        let placed = &moving.scene.cards[0];
+        assert!((placed.y - 60.0).abs() < 0.01);
+        assert!((placed.segments[0].x - 190.0).abs() < 0.01);
+        let mut tall_note = note.clone();
+        tall_note.passage = "word ".repeat(160);
+        let tall = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: 0.0,
+                ..moving.hold.clone()
+            },
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[tall_note.clone()],
+        );
+        assert!(tall.scene.scroll_max > 0.5);
+        assert!(!tall.scene.cards[0].segments.is_empty());
+        let hidden = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: tall.scene.scroll_max,
+                ..tall.hold.clone()
+            },
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[tall_note.clone()],
+        );
+        assert!((hidden.hold.scroll - tall.scene.scroll_max).abs() < 0.01);
+        assert!(hidden.scene.cards[0].segments.is_empty());
+        let restored = settle_margin(
+            &spike_library::margin::Hold {
+                scroll: 0.0,
+                ..hidden.hold.clone()
+            },
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[tall_note],
+        );
+        assert!(restored.hold.scroll.abs() < 0.01);
+        assert!(!restored.scene.cards[0].segments.is_empty());
+        assert!((restored.scene.cards[0].segments[0].x - 190.0).abs() < 0.01);
+        let mut arrived = live.clone();
+        arrived.moving = false;
+        arrived.page = 5;
+        let still = settle_margin(&moving.hold, &arrived, true, &page, 1200.0, 900.0, &[]);
+        assert_eq!(still.hold.page, 4);
+        assert_eq!(still.hold.selected, Some(7));
+        let landed = settle_margin(&still.hold, &arrived, false, &page, 1200.0, 900.0, &[]);
+        assert_eq!(landed.hold.page, 5);
+        assert!(landed.hold.scroll.abs() < 0.01);
+        assert!(landed.hold.selected.is_none());
+        let other = spike_library::margin::LivePage {
+            book: "b.pdf".into(),
+            page: 1,
+            moving: false,
+            ..arrived
+        };
+        let changed = settle_margin(&landed.hold, &other, false, &page, 1200.0, 900.0, &[]);
+        assert_eq!(changed.hold.book, "b.pdf");
+        assert_eq!(changed.hold.page, 1);
+        assert!(changed.hold.selected.is_none());
+    }
+
+    #[test]
+    fn a_broken_annotation_store_keeps_its_error() {
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+                    None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+                }
+            }
+        }
+        let restore = Restore(std::env::var("SUPERREADER_SUPPORT_DIR").ok());
+        let dir = std::env::temp_dir().join(format!("margin-fault-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
+        std::fs::write(dir.join("annotations.sqlite"), b"not a database").unwrap();
+        let err = load_margin("/books/a.pdf", 2).expect_err("a bad file is not an empty margin");
+        assert!(!err.is_empty());
+        let _ = std::fs::remove_file(dir.join("annotations.sqlite"));
+        let notes = spike_library::margin::Notes::open(&dir.join("annotations.sqlite")).unwrap();
+        notes
+            .insert(&spike_library::margin::NewNote {
+                book: "/books/a.pdf".into(),
+                page: 2,
+                spine: String::new(),
+                start: 0,
+                end: 3,
+                passage: "ink".into(),
+                body: "a note".into(),
+                author: "读者".into(),
+                quads: vec![spike_library::margin::Quad {
+                    x: 1.0,
+                    y: 2.0,
+                    w: 3.0,
+                    h: 4.0,
+                }],
+                text_right: 8.0,
+            })
+            .unwrap();
+        drop(notes);
+        let loaded = load_margin("/books/a.pdf", 2).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(load_margin("", 2).unwrap().is_empty());
+        drop(restore);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
