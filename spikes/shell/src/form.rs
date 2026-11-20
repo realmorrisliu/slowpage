@@ -101,19 +101,19 @@ fn reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
 
 /// The shortcut, the View menu, and Escape call this.
 /// An unchanged form does not touch the published flags.
-/// A change asks the stage to redraw, the same way the margin toggle does.
+/// A change calls `notify`. The window uses that to redraw the stage.
 pub fn apply_immersive(
     form: &Signal<Form>,
     reading: bool,
     leave_only: bool,
-    stage: &ElementRef,
+    notify: &impl Fn(bool),
 ) -> Option<bool> {
     let before = form.get();
     let next = commit_reading_immersive(before, reading, leave_only);
     form.set(next);
     let notice = (next != before).then_some(matches!(next, Form::Immersive));
     if let Some(on) = notice {
-        stage.command("immersive", serde_json::json!(on));
+        notify(on);
     }
     notice
 }

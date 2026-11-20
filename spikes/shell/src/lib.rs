@@ -410,7 +410,9 @@ pub fn SpikeApp() -> impl IntoElement {
                 immersive,
                 move || {
                     let reading = visit_pick.get().surface == visit::Surface::Reading;
-                    form::apply_immersive(&form_pick, reading, false, &stage_immersive);
+                    form::apply_immersive(&form_pick, reading, false, &|on| {
+                        tell_immersive(&stage_immersive, on);
+                    });
                 },
             ));
         }
@@ -503,7 +505,9 @@ pub fn SpikeApp() -> impl IntoElement {
         let shell_form = shell_form.clone();
         let stage = stage.clone();
         move |_| {
-            apply_leave(&visit, &shell_form, visit::LeaveKey::Escape, &stage);
+            apply_leave(&visit, &shell_form, visit::LeaveKey::Escape, &|on| {
+                tell_immersive(&stage, on);
+            });
         }
     });
     on_key_with("mod+[", leave_keys, {
@@ -511,7 +515,9 @@ pub fn SpikeApp() -> impl IntoElement {
         let shell_form = shell_form.clone();
         let stage = stage.clone();
         move |_| {
-            apply_leave(&visit, &shell_form, visit::LeaveKey::Back, &stage);
+            apply_leave(&visit, &shell_form, visit::LeaveKey::Back, &|on| {
+                tell_immersive(&stage, on);
+            });
         }
     });
     on_key_with(IMMERSIVE_KEY, leave_keys, {
@@ -520,7 +526,9 @@ pub fn SpikeApp() -> impl IntoElement {
         let stage = stage.clone();
         move |_| {
             let reading = visit.get().surface == visit::Surface::Reading;
-            form::apply_immersive(&shell_form, reading, false, &stage);
+            form::apply_immersive(&shell_form, reading, false, &|on| {
+                tell_immersive(&stage, on);
+            });
         }
     });
     let import_apple = {
@@ -1087,11 +1095,15 @@ fn commit_visit(slot: &Signal<visit::Visit>, next: visit::Visit) {
     slot.set(next);
 }
 
+fn tell_immersive(stage: &ElementRef, on: bool) {
+    stage.command("immersive", json!(on));
+}
+
 fn apply_leave(
     visit: &Signal<visit::Visit>,
     form: &Signal<form::Form>,
     key: visit::LeaveKey,
-    stage: &ElementRef,
+    notify: &impl Fn(bool),
 ) -> Option<bool> {
     let immersion = if matches!(form.get(), form::Form::Immersive) {
         visit::Immersion::On
@@ -1108,7 +1120,7 @@ fn apply_leave(
         }
         visit::KeyEffect::StayOnBook => {
             let reading = visit.get().surface == visit::Surface::Reading;
-            form::apply_immersive(form, reading, true, stage)
+            form::apply_immersive(form, reading, true, notify)
         }
         visit::KeyEffect::None => None,
     }
@@ -1221,7 +1233,6 @@ mod launch_tests {
     use super::visit::{self, PlaceFile, Surface, WheelOwner};
     use super::{apply_leave, launch_target, LaunchTarget};
     use nsh_core::element::reactive::signal;
-    use nsh_core::prelude::element_ref;
 
     #[test]
     fn a_stored_page_does_not_open_the_shelf_launch() {
@@ -1335,7 +1346,8 @@ mod launch_tests {
         let runtime = nsh_core::element::reactive::Runtime::default();
         let _entered = runtime.enter();
         let (owner, _) = nsh_core::element::reactive::create_root(|| {
-            let stage = element_ref();
+            let sent = std::cell::RefCell::new(Vec::new());
+            let note = |on: bool| sent.borrow_mut().push(on);
             let toggle =
                 |form: &nsh_core::element::reactive::Signal<form::Form>,
                  visit: &nsh_core::element::reactive::Signal<visit::Visit>| {
@@ -1343,7 +1355,7 @@ mod launch_tests {
                         form,
                         visit.get().surface == Surface::Reading,
                         false,
-                        &stage,
+                        &note,
                     )
                 };
             let shelf = signal(visit::Visit::shelf());
@@ -1539,7 +1551,7 @@ mod launch_tests {
             assert!((bare.card.w - (900.0 - crate::tokens::INSET * 2.0)).abs() < 0.01);
 
             assert_eq!(
-                apply_leave(&visit, &form, visit::LeaveKey::Back, &stage),
+                apply_leave(&visit, &form, visit::LeaveKey::Back, &note),
                 None
             );
             assert_eq!(form.get(), form::Form::Immersive);
@@ -1547,7 +1559,7 @@ mod launch_tests {
             assert_eq!(visit.get().page, 4);
 
             assert_eq!(
-                apply_leave(&visit, &form, visit::LeaveKey::Escape, &stage),
+                apply_leave(&visit, &form, visit::LeaveKey::Escape, &note),
                 Some(false)
             );
             assert!(matches!(
@@ -1574,7 +1586,7 @@ mod launch_tests {
             assert_eq!(reopened.resume().offset, 12);
 
             assert_eq!(
-                apply_leave(&visit, &form, visit::LeaveKey::Escape, &stage),
+                apply_leave(&visit, &form, visit::LeaveKey::Escape, &note),
                 None
             );
             assert_eq!(visit.get().surface, Surface::Library);
@@ -1600,6 +1612,10 @@ mod launch_tests {
             );
             assert_eq!(reopened.resume().page, 4);
             assert_eq!(reopened.resume().offset, 12);
+            assert_eq!(
+                sent.borrow().as_slice(),
+                [true, true, false, true, false, true]
+            );
         });
         owner.dispose();
     }
