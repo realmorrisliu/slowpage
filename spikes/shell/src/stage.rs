@@ -216,7 +216,31 @@ define_class!(
             let line_y: f64 = unsafe { msg_send![event, deltaY] };
             let phase = event.phase().0 as u64;
             let momentum = event.momentumPhase().0 as u64;
+            let (x, y) = point_in(self, event);
             let mut state = self.ivars().state.borrow_mut();
+            let width = if state.shell_w > 2.0 {
+                state.shell_w
+            } else {
+                state.stage_w
+            };
+            let height = if state.shell_h > 2.0 {
+                state.shell_h
+            } else {
+                state.stage_h
+            };
+            let presented = crate::ease::present(
+                width,
+                height,
+                state.chrome.content_top.get(),
+                crate::ease::current(),
+            );
+            if crate::visit::wheel_step(
+                crate::form::margin_claims_wheel(x, y, presented.margin),
+                false,
+            ) != crate::visit::WheelStep::Page
+            {
+                return;
+            }
             if state.fits_card() && matches!(state.mode, Mode::Pdfium | Mode::Hayro) {
                 state.wheel_pdf(
                     phase,
@@ -2045,7 +2069,9 @@ impl State {
                 let index = self.current_page().min(count - 1);
                 let (from, incoming, _) = self.pdf_shift(index);
                 let moving = incoming.is_some();
-                let shown = if moving { from.min(count - 1) } else { index };
+                let Some(shown) = crate::visit::margin_pdf_index(count, index, from, moving) else {
+                    return (book, 0, false, 0.0, 0.0);
+                };
                 let (pw, ph) = self
                     .pdf
                     .as_ref()
@@ -2054,7 +2080,7 @@ impl State {
                     .unwrap_or((0.0, 0.0));
                 (
                     book,
-                    (shown as u32).saturating_add(1),
+                    crate::visit::margin_page_number(shown),
                     moving,
                     f64::from(pw),
                     f64::from(ph),

@@ -435,6 +435,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let ease_tick = signal(0_u64);
     let margin_live = signal(spike_library::margin::LivePage::default());
     let margin_hold = signal(spike_library::margin::Hold::default());
+    let margin_fault = signal(String::new());
     let shell_chrome = signal(form::chrome_off());
     let bars_row = signal(shell_on);
     let dropped = stage.clone();
@@ -700,15 +701,28 @@ pub fn SpikeApp() -> impl IntoElement {
         .child(when(
             {
                 let notice = root_notice.clone();
-                move || !notice.get().is_empty()
+                let fault = margin_fault.clone();
+                let visit = visit.clone();
+                move || {
+                    let reading = visit.get().surface == visit::Surface::Reading;
+                    !notice.get().is_empty() || (reading && !fault.get().is_empty())
+                }
             },
             {
                 let notice = root_notice.clone();
+                let fault = margin_fault.clone();
                 move || {
-                    text(move || notice.get())
-                        .text_size(px(13.0))
-                        .px_4()
-                        .h(px(28.0))
+                    text(move || {
+                        let open = notice.get();
+                        if !open.is_empty() {
+                            open
+                        } else {
+                            fault.get()
+                        }
+                    })
+                    .text_size(px(13.0))
+                    .px_4()
+                    .h(px(28.0))
                 }
             },
         ))
@@ -979,6 +993,7 @@ pub fn SpikeApp() -> impl IntoElement {
                 let ease = ease_tick.clone();
                 let live = margin_live.clone();
                 let hold = margin_hold.clone();
+                let fault = margin_fault.clone();
                 move || {
                     form::reading_margin(
                         form.clone(),
@@ -988,6 +1003,7 @@ pub fn SpikeApp() -> impl IntoElement {
                         ease.clone(),
                         live.clone(),
                         hold.clone(),
+                        fault.clone(),
                     )
                 }
             },
