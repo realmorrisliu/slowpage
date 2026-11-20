@@ -174,6 +174,20 @@ Evidence. `spikes/shell/src/visit.rs` tests the key and the stop. The CI `test` 
 
 Not run. A Mac window, `nsh test`, the key event itself, pdfium drawing the turned page, smoothness, frames, and animation.
 
+## S3 held key
+
+Goal. Holding the right arrow, or the left arrow, keeps turning one page for each repeat the system delivers. The book stops on the page that last repeat asked for. A repeat at the first or last page stays on that page.
+
+Scope. The page's key listener delivers a repeated arrow, Space, or Shift-Space to the turn it already uses. A repeat that arrives while a slide is painting takes the one queue slot. A second repeat replaces that slot. It does not add another page. The posts from those turns are the place `handle_page` writes.
+
+Non-goals. This does not complete checklist item 9. A repeated contents click, leaving and reopening a book, and a resize during a turn stay in the swipe slice. No new animation, no margin, and no PDF fit-page.
+
+Done. On a 400 point column, one right arrow and two repeats while that slide is painting answer `ok`, then `queued`, then `queued`. The column ends at 800, which is two pages on, and the file reopens on the last of those turn posts. Two left arrows at the first page, the second a repeat, stay at scroll 0.
+
+Evidence. `a_key_during_the_release_still_turns` fires those key events on the page script, then writes the turn posts through `handle_page` and `SettingsBook` and opens the file again. The CI `test` job already names that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run the test.
+
+Not run. A Mac window, the key repeat itself, WebKit painting the slides, `nsh test`, and the feel of the hold.
+
 ## S3 edge turn
 
 Goal. While a book is open, a click on the left of the page moves one page back and a click on the right moves one page forward. A click in the middle does not turn. The first page and the last page stay put.

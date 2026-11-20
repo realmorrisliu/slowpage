@@ -1411,7 +1411,6 @@ const SCRIPT: &str = r#"
     window.spikeTurn(delta);
   }, true);
   window.addEventListener("keydown", function (event) {
-    if (event.repeat) return;
     var delta = 0;
     if (event.key === "ArrowRight" || (event.key === " " && !event.shiftKey)) delta = 1;
     else if (event.key === "ArrowLeft" || (event.key === " " && event.shiftKey)) delta = -1;
@@ -1797,6 +1796,44 @@ mod tests {
         assert_eq!(v["again"]["after"], turned);
         assert_eq!(v["ignored"]["scroll"], 400);
         assert_eq!(v["ignored"]["after"], turned);
+        assert_eq!(
+            v["hold"]["answers"],
+            serde_json::json!(["ok", "queued", "queued"])
+        );
+        assert_eq!(v["hold"]["scroll"], 800);
+        let turns = v["hold"]["turns"].as_array().expect("turn posts");
+        assert_eq!(turns.len(), 2);
+        assert_eq!(v["hold"]["edge"]["scroll"], 0);
+        assert_eq!(v["hold"]["edge"]["turns"], 2);
+        let dir =
+            std::env::temp_dir().join(format!("superreader-held-arrow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        crate::settings::record_progress(&file, book, 1, None, 0, "ch.xhtml").unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.place = crate::visit::ReadingPlace {
+            href: "ch.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        for message in turns {
+            let applied = crate::visit::handle_page(&mut reader, message, "ch.xhtml", &mut store);
+            assert!(applied.accepted, "{message}");
+        }
+        let last = turns.last().unwrap();
+        crate::visit::leave(&mut reader);
+        crate::visit::open_resume(&mut reader, &store);
+        assert_eq!(reader.place.page, last["page"].as_u64().unwrap() as u32);
+        assert_eq!(
+            reader.place.offset,
+            last["sentence"].as_u64().unwrap_or(0) as u32
+        );
+        assert_eq!(reader.place.href, "ch.xhtml");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2510,7 +2547,30 @@ const ignored = { scroll: body.scrollLeft };
 fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
 ignored.after = take();
 
-console.log(JSON.stringify({ key, drop, cancel, again, ignored }));
+const holdPosts = [];
+window.webkit.messageHandlers.spike.postMessage = (body) => { holdPosts.push(JSON.parse(body)); };
+boot(); spy();
+fire('keydown', { key: 'ArrowRight', repeat: false, preventDefault(){} });
+const holdFirst = take();
+fire('keydown', { key: 'ArrowRight', repeat: true, preventDefault(){} });
+const holdNext = take();
+fire('keydown', { key: 'ArrowRight', repeat: true, preventDefault(){} });
+const holdAgain = take();
+flush();
+flush();
+const hold = {
+  answers: holdFirst.concat(holdNext, holdAgain),
+  scroll: body.scrollLeft,
+  turns: holdPosts.filter((post) => post.kind === "turn")
+};
+boot(); spy();
+holdPosts.length = 0;
+fire('keydown', { key: 'ArrowLeft', repeat: false, preventDefault(){} });
+fire('keydown', { key: 'ArrowLeft', repeat: true, preventDefault(){} });
+flush();
+hold.edge = { scroll: body.scrollLeft, turns: holdPosts.filter((post) => post.kind === "turn").length };
+
+console.log(JSON.stringify({ key, drop, cancel, again, ignored, hold }));
 "#;
 
 const REVEAL_DURING_RELEASE: &str = r#"
