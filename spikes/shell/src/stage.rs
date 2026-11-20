@@ -1504,6 +1504,9 @@ impl State {
             title_opacity,
         );
         title_opacity = entered.title_opacity;
+        self.chrome
+            .note_chrome_status(f64::from(title_opacity), entered.chrome_shared);
+        crate::chrome::append_chrome_status(&self.chrome);
         let anchor = self
             .anchor
             .as_ref()

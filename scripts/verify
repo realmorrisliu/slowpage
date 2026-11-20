@@ -120,7 +120,7 @@ PENDING = [
 
 
 def check(id_, feature, driver, status, detail, evidence=None):
-    if status not in ("pass", "fail", "pending"):
+    if status not in ("pass", "fail", "pending", "blocked"):
         raise ValueError(status)
     row = {
         "id": id_,
@@ -3778,6 +3778,7 @@ def signature_problems(source):
 
 
 def self_test():
+    reading_chrome_self_test()
     provided_binary_self_test()
     form_diff_self_check()
     left, right = light_gaps(12.0, 70.0, 0.0, 82.0)
@@ -9124,6 +9125,642 @@ def run_chrome(out, window_tool, ocr_tool):
     return rows
 
 
+READING_CHROME_CHECKS = (
+    ("reading-chrome-entry-status", "structure"),
+    ("reading-chrome-entry-lights", "native"),
+    ("reading-chrome-entry-title-field", "native"),
+    ("reading-chrome-enter", "native"),
+    ("reading-chrome-short-leave", "native"),
+    ("reading-chrome-leave", "native"),
+    ("reading-chrome-resize", "structure"),
+    ("reading-chrome-blur", "native"),
+    ("reading-chrome-fullscreen-align", "structure"),
+    ("reading-chrome-minimum-align", "structure"),
+    ("reading-chrome-shot-entry", "screenshot"),
+    ("reading-chrome-shot-shown", "screenshot"),
+    ("reading-chrome-shot-hidden", "screenshot"),
+    ("reading-chrome-shot-fullscreen", "screenshot"),
+    ("reading-chrome-shot-minimum", "screenshot"),
+)
+READING_CHROME_DELAY_MS = 400
+READING_CHROME_STEP = 0.25
+READING_CHROME_MIN_W = 578.0
+READING_CHROME_MIN_H = 528.0
+
+
+def reading_chrome_blocked(reason):
+    return [
+        check(check_id, "window-chrome", kind, "blocked", reason)
+        for check_id, kind in READING_CHROME_CHECKS
+    ]
+
+
+def _chrome_num(sample, key):
+    if not isinstance(sample, dict) or sample.get(key) is None:
+        return None
+    try:
+        value = float(sample[key])
+    except (TypeError, ValueError):
+        return None
+    if value != value:
+        return None
+    return value
+
+
+def _chrome_phase(samples, phase):
+    return [
+        sample
+        for sample in samples
+        if isinstance(sample, dict) and sample.get("phase") == phase
+    ]
+
+
+def _button_centers(sample):
+    close = sample.get("close") if isinstance(sample, dict) else None
+    zoom = sample.get("zoom") if isinstance(sample, dict) else None
+    if not isinstance(close, dict) or not isinstance(zoom, dict):
+        return None
+    try:
+        close_y = float(close["y"]) + float(close["h"]) / 2.0
+        zoom_y = float(zoom["y"]) + float(zoom["h"]) / 2.0
+    except (KeyError, TypeError, ValueError):
+        return None
+    return abs(close_y - zoom_y)
+
+
+def _frame_inside(frame, width, height):
+    try:
+        x = float(frame["x"])
+        y = float(frame["y"])
+        wide = float(frame["w"])
+        high = float(frame["h"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return x >= -0.5 and y >= -0.5 and x + wide <= width + 0.5 and y + high <= height + 0.5
+
+
+def _align_row(sample):
+    if not isinstance(sample, dict):
+        return "blocked", "no window sample"
+    width = _chrome_num(sample, "window_w")
+    height = _chrome_num(sample, "window_h")
+    if width is None or height is None:
+        return "blocked", "window size was not read"
+    gap = _button_centers(sample)
+    if gap is None:
+        return "blocked", "standardWindowButton frames were not on the window"
+    if not _frame_inside(sample.get("close"), width, height) or not _frame_inside(
+        sample.get("zoom"), width, height
+    ):
+        return "fail", f"a traffic light sits outside {width:.0f} by {height:.0f}"
+    if gap > 0.5:
+        return "fail", f"close and zoom centers differ by {gap:.2f}"
+    return "pass", f"close and zoom centers differ by {gap:.2f}"
+
+
+def _shared_tracks(samples):
+    for sample in samples:
+        if not sample.get("chrome_shared"):
+            continue
+        title = _chrome_num(sample, "title_opacity")
+        button = _chrome_num(sample, "button_alpha")
+        if title is None or button is None:
+            return "blocked", "shared title opacity or button alpha was not read"
+        if abs(title - button) > READING_CHROME_STEP + 0.05:
+            return "fail", f"title_opacity {title:.2f} and button alpha {button:.2f} diverged"
+    return None
+
+
+def _hold_and_steps(samples):
+    timed = []
+    for sample in samples:
+        moment = _chrome_num(sample, "t_ms")
+        alpha = _chrome_num(sample, "button_alpha")
+        if moment is None or alpha is None:
+            return "blocked", "button alpha or time was not read"
+        timed.append((moment, alpha))
+    if len(timed) < 2:
+        return "blocked", "the exit was not sampled"
+    gaps = [timed[index][0] - timed[index - 1][0] for index in range(1, len(timed))]
+    if max(gaps) > 120:
+        return "blocked", f"poll gap {max(gaps):.0f} ms"
+    start_t, start = timed[0]
+    for moment, alpha in timed:
+        if moment < start_t + READING_CHROME_DELAY_MS and alpha < start - 0.03:
+            return "fail", f"alpha {alpha:.2f} dropped before {READING_CHROME_DELAY_MS} ms"
+    rest = [alpha for moment, alpha in timed if moment >= start_t + READING_CHROME_DELAY_MS]
+    if not rest:
+        return "blocked", "the 400 ms exit was not sampled"
+    previous = start
+    for alpha in rest:
+        if alpha > previous + 0.03:
+            return "fail", f"alpha rose to {alpha:.2f} during the exit"
+        if previous - alpha > READING_CHROME_STEP + 0.03:
+            return "fail", f"alpha jumped from {previous:.2f} to {alpha:.2f}"
+        previous = alpha
+    if rest[-1] > 0.02:
+        return "fail", f"exit ended at {rest[-1]:.2f}"
+    cursor = 0
+    for alpha in rest:
+        if cursor < 3 and abs(alpha - (0.75, 0.5, 0.25)[cursor]) <= 0.08:
+            cursor += 1
+    if cursor < 3:
+        return "blocked", "the poll missed a 0.25 step"
+    shared = _shared_tracks(samples)
+    if shared is not None:
+        return shared
+    return "pass", "held 400 ms then stepped by 0.25 to 0"
+
+
+def _entry_status(lines):
+    reading = [line for line in lines if isinstance(line, dict) and line.get("reading") is True]
+    if not reading:
+        return "blocked", "no status line was written for the reading entry"
+    first = reading[0]
+    opacity = _chrome_num(first, "title_opacity")
+    if opacity is None or "chrome_shared" not in first:
+        return "blocked", "the first status did not carry title_opacity and chrome_shared"
+    if opacity <= 0.02 and first.get("chrome_shared") is True:
+        return "pass", f"first status title_opacity {opacity:.2f} chrome_shared true"
+    return "fail", (
+        f"first status title_opacity {opacity:.2f} chrome_shared {first.get('chrome_shared')}"
+    )
+
+
+def _entry_lights(lines, samples):
+    reading_lines = [line for line in lines if isinstance(line, dict) and line.get("reading") is True]
+    reading_samples = [
+        sample for sample in _chrome_phase(samples, "entry") if sample.get("reading") is True
+    ]
+    if not reading_lines or not reading_samples:
+        return "blocked", "the first status and a button sample were not both recorded"
+    status_t = _chrome_num(reading_lines[0], "t_ms")
+    sample_t = _chrome_num(reading_samples[0], "t_ms")
+    if status_t is None or sample_t is None:
+        return "blocked", "entry time was not read"
+    delta = sample_t - status_t
+    if delta < 0 or delta > 80:
+        return "blocked", f"button sample was {delta:.0f} ms from the first status"
+    alpha = _chrome_num(reading_samples[0], "button_alpha")
+    if alpha is None:
+        return "blocked", "standardWindowButton alphaValue was not read"
+    if alpha <= 0.02:
+        return "pass", f"standardWindowButton alpha {alpha:.2f} at the first status"
+    return "fail", f"standardWindowButton alpha {alpha:.2f} at the first status"
+
+
+def _entry_field(samples):
+    reading_samples = [
+        sample for sample in _chrome_phase(samples, "entry") if sample.get("reading") is True
+    ]
+    if not reading_samples:
+        return "blocked", "the reading entry was not sampled"
+    sample = reading_samples[0]
+    if sample.get("title_field_present") is not True:
+        return (
+            "pass",
+            "NSTextField absent. title_opacity is the NSH status value and was not read from this field.",
+        )
+    alpha = _chrome_num(sample, "title_field_alpha")
+    if alpha is None:
+        return "blocked", "NSTextField alphaValue was not read"
+    if alpha <= 0.02:
+        return "pass", f"NSTextField alpha {alpha:.2f}"
+    return "fail", f"NSTextField alpha {alpha:.2f}"
+
+
+def _enter_row(samples):
+    phase = _chrome_phase(samples, "enter")
+    if not phase:
+        return "blocked", "the pointer enter was not sampled"
+    alpha = _chrome_num(phase[-1], "button_alpha")
+    if alpha is None:
+        return "blocked", "standardWindowButton alphaValue was not read"
+    if alpha < 0.9:
+        return "fail", f"enter ended at button alpha {alpha:.2f}"
+    shared = _shared_tracks([phase[-1]])
+    if shared is not None:
+        return shared
+    return "pass", f"enter ended at button alpha {alpha:.2f}"
+
+
+def _short_leave(samples):
+    timed = []
+    for sample in _chrome_phase(samples, "short-leave"):
+        moment = _chrome_num(sample, "t_ms")
+        alpha = _chrome_num(sample, "button_alpha")
+        if moment is None or alpha is None:
+            return "blocked", "button alpha or time was not read"
+        timed.append((moment, alpha))
+    if len(timed) < 2:
+        return "blocked", "the short leave was not sampled"
+    span = timed[-1][0] - timed[0][0]
+    if span >= READING_CHROME_DELAY_MS:
+        return "fail", f"short leave lasted {span:.0f} ms"
+    start = timed[0][1]
+    for _moment, alpha in timed:
+        if alpha < start - 0.03:
+            return "fail", f"short leave dropped to {alpha:.2f}"
+    return "pass", f"short leave {span:.0f} ms stayed at {start:.2f}"
+
+
+def _resize_row(samples):
+    phase = _chrome_phase(samples, "resize")
+    if len(phase) < 2:
+        return "blocked", "the resize was not sampled"
+    first_w = _chrome_num(phase[0], "window_w")
+    first_h = _chrome_num(phase[0], "window_h")
+    first_g = _chrome_num(phase[0], "generation")
+    if None in (first_w, first_h, first_g):
+        return "blocked", "size or generation was not read"
+    changed = None
+    for sample in phase[1:]:
+        width = _chrome_num(sample, "window_w")
+        height = _chrome_num(sample, "window_h")
+        if width is None or height is None:
+            continue
+        if abs(width - first_w) > 2 or abs(height - first_h) > 2:
+            changed = sample
+            break
+    if changed is None:
+        return "fail", "the window size did not change"
+    generation = _chrome_num(changed, "generation")
+    if generation is None:
+        return "blocked", "generation was not read"
+    if generation <= first_g:
+        return "fail", "a real size change did not bump the fade generation"
+    if changed.get("pointer_at_top") is True:
+        return "fail", "the pointer was still in the top band"
+    start = _chrome_num(changed, "t_ms")
+    later = [
+        sample
+        for sample in phase
+        if _chrome_num(sample, "t_ms") is not None and _chrome_num(sample, "t_ms") >= start
+    ]
+    status, detail = _hold_and_steps(later)
+    if status != "pass":
+        return status, detail
+    align, align_detail = _align_row(phase[-1])
+    if align != "pass":
+        return align, align_detail
+    return "pass", f"generation {first_g:.0f} to {generation:.0f}, {align_detail}"
+
+
+def _blur_row(samples):
+    phase = _chrome_phase(samples, "blur")
+    if not phase:
+        return "blocked", "blur was not sampled"
+    lost = [sample for sample in phase if sample.get("focused") is False]
+    if not lost:
+        return "fail", "window stayed key"
+    alpha = _chrome_num(lost[0], "button_alpha")
+    if alpha is None:
+        return "blocked", "standardWindowButton alphaValue was not read"
+    if alpha <= 0.02:
+        return "pass", f"blur button alpha {alpha:.2f}"
+    return "fail", f"blur left button alpha {alpha:.2f}"
+
+
+def _fullscreen_row(samples):
+    phase = [
+        sample for sample in _chrome_phase(samples, "fullscreen") if sample.get("fullscreen") is True
+    ]
+    if not phase:
+        return "blocked", "fullscreen was not sampled"
+    width = _chrome_num(phase[-1], "window_w")
+    height = _chrome_num(phase[-1], "window_h")
+    if width is None or height is None:
+        return "blocked", "window size was not read"
+    if width <= READING_CHROME_MIN_W + 2 or height <= READING_CHROME_MIN_H + 2:
+        return "fail", f"fullscreen window {width:.0f} by {height:.0f} is still the minimum"
+    return _align_row(phase[-1])
+
+
+def _minimum_row(samples):
+    phase = _chrome_phase(samples, "minimum")
+    if not phase:
+        return "blocked", "the minimum window was not sampled"
+    width = _chrome_num(phase[-1], "window_w")
+    height = _chrome_num(phase[-1], "window_h")
+    if width is None or height is None:
+        return "blocked", "window size was not read"
+    if abs(width - READING_CHROME_MIN_W) > 2 or abs(height - READING_CHROME_MIN_H) > 2:
+        return "fail", f"window {width:.0f} by {height:.0f}"
+    return _align_row(phase[-1])
+
+
+def _shot_row(check_id, shots):
+    raw = shots.get(check_id) if isinstance(shots, dict) else None
+    path = Path(raw) if raw else None
+    if path is None or not path.is_file() or path.stat().st_size < 1000:
+        return "blocked", "no screenshot"
+    return "pass", "screenshot captured. This row does not score pixels or the structure."
+
+
+def score_reading_chrome(status_lines, samples, shots, blocked_reason=None):
+    if blocked_reason:
+        return reading_chrome_blocked(blocked_reason)
+    decisions = {
+        "reading-chrome-entry-status": _entry_status(status_lines or []),
+        "reading-chrome-entry-lights": _entry_lights(status_lines or [], samples or []),
+        "reading-chrome-entry-title-field": _entry_field(samples or []),
+        "reading-chrome-enter": _enter_row(samples or []),
+        "reading-chrome-short-leave": _short_leave(samples or []),
+        "reading-chrome-leave": _hold_and_steps(_chrome_phase(samples or [], "leave")),
+        "reading-chrome-resize": _resize_row(samples or []),
+        "reading-chrome-blur": _blur_row(samples or []),
+        "reading-chrome-fullscreen-align": _fullscreen_row(samples or []),
+        "reading-chrome-minimum-align": _minimum_row(samples or []),
+    }
+    for check_id, kind in READING_CHROME_CHECKS:
+        if kind == "screenshot":
+            decisions[check_id] = _shot_row(check_id, shots or {})
+    rows = []
+    for check_id, kind in READING_CHROME_CHECKS:
+        status, detail = decisions[check_id]
+        evidence = None
+        if kind == "screenshot" and status == "pass":
+            evidence = Path(shots[check_id]).name
+        rows.append(check(check_id, "window-chrome", kind, status, detail, evidence))
+    return rows
+
+
+def reading_chrome_self_test():
+    lights = {
+        "close": {"x": 12, "y": 14, "w": 14, "h": 14},
+        "zoom": {"x": 56, "y": 14, "w": 14, "h": 14},
+    }
+
+    def sample(phase, moment, alpha, **extra):
+        row = {
+            "phase": phase,
+            "t_ms": moment,
+            "button_alpha": alpha,
+            "title_opacity": alpha,
+            "chrome_shared": True,
+            "pointer_at_top": False,
+            "focused": True,
+            "fullscreen": False,
+            "reading": True,
+            "window_w": 1440,
+            "window_h": 900,
+            "generation": 4,
+        }
+        row.update(lights)
+        row.update(extra)
+        return row
+
+    def fade(phase, start):
+        rows = [sample(phase, start + dt, 1.0) for dt in (0, 50, 100, 200, 300, 390)]
+        moment = start + 450
+        for alpha in (0.75, 0.5, 0.25, 0.0):
+            rows.append(sample(phase, moment, alpha))
+            moment += 50
+        return rows
+
+    resize = [sample("resize", 0, 1.0, window_w=1440, window_h=900, generation=1)]
+    resize.extend(
+        sample("resize", 50 + dt, 1.0, window_w=1100, window_h=800, generation=2)
+        for dt in (0, 50, 100, 200, 300, 390)
+    )
+    moment = 500
+    for alpha in (0.75, 0.5, 0.25, 0.0):
+        resize.append(sample("resize", moment, alpha, window_w=1100, window_h=800, generation=2))
+        moment += 50
+    samples = [
+        sample("entry", 1040, 0.0, title_field_present=False),
+        sample("enter", 2000, 1.0, pointer_at_top=True),
+        sample("short-leave", 3000, 1.0),
+        sample("short-leave", 3150, 1.0),
+    ]
+    samples.extend(fade("leave", 5000))
+    samples.extend(resize)
+    samples.append(sample("blur", 8000, 0.0, focused=False))
+    samples.append(
+        sample("fullscreen", 9000, 0.0, fullscreen=True, window_w=1600, window_h=1000)
+    )
+    samples.append(sample("minimum", 10000, 0.0, window_w=578, window_h=528))
+    lines = [{"t_ms": 1000, "reading": True, "title_opacity": 0.0, "chrome_shared": True}]
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        shots = {}
+        for check_id, kind in READING_CHROME_CHECKS:
+            if kind != "screenshot":
+                continue
+            path = folder / f"{check_id}.png"
+            path.write_bytes(b"x" * 1000)
+            shots[check_id] = str(path)
+        bare = score_reading_chrome(lines, samples, {})
+        assert summary_failed(bare)
+        assert any(row["id"] == "reading-chrome-entry-status" and row["status"] == "pass" for row in bare)
+        assert any(
+            row["id"] == "reading-chrome-shot-entry" and row["status"] == "blocked" for row in bare
+        )
+        good = score_reading_chrome(lines, samples, shots)
+        assert not summary_failed(good), [
+            (row["id"], row["status"], row["detail"]) for row in good if row["status"] != "pass"
+        ]
+        assert any("NSTextField absent" in row["detail"] for row in good)
+        flashed = score_reading_chrome(
+            [{"t_ms": 1000, "reading": True, "title_opacity": 1.0, "chrome_shared": False}],
+            samples,
+            shots,
+        )
+        assert any(row["id"] == "reading-chrome-entry-status" and row["status"] == "fail" for row in flashed)
+        assert any(row["id"] == "reading-chrome-shot-shown" and row["status"] == "pass" for row in flashed)
+        late = score_reading_chrome(lines, [sample("entry", 1200, 0.0)], {})
+        assert any("button sample was" in row["detail"] and row["status"] == "blocked" for row in late)
+        jumped = fade("leave", 5000)
+        jumped[-4]["button_alpha"] = 0.0
+        jumped[-4]["title_opacity"] = 0.0
+        assert _hold_and_steps(jumped)[0] == "fail"
+        early = fade("leave", 5000)
+        early[1]["button_alpha"] = 0.5
+        early[1]["title_opacity"] = 0.5
+        assert _hold_and_steps(early)[0] == "fail"
+        assert _short_leave([sample("short-leave", 0, 1.0), sample("short-leave", 500, 1.0)])[0] == "fail"
+        stuck = [sample("resize", 0, 1.0, generation=3), sample("resize", 50, 1.0, window_w=1100, generation=3)]
+        assert _resize_row(stuck)[0] == "fail"
+        assert _blur_row([sample("blur", 0, 1.0, focused=True)])[0] == "fail"
+        assert _fullscreen_row([sample("fullscreen", 0, 0.0, fullscreen=True, close=None, zoom=None)])[0] == "blocked"
+        refused = score_reading_chrome(lines, samples, shots, "this host is linux")
+        assert all(row["status"] == "blocked" for row in refused)
+        assert all("NSTextField" not in row["detail"] for row in refused)
+        assert summary_failed(refused)
+        present = [sample("entry", 1040, 0.0, title_field_present=True, title_field_alpha=1.0)]
+        assert _entry_field(present)[0] == "fail"
+
+
+def read_status_lines():
+    path = Path("/tmp/superreader-spike/chrome-status.jsonl")
+    if not path.is_file():
+        return []
+    rows = []
+    for line in path.read_text().splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            body = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(body, dict):
+            rows.append(body)
+    return rows
+
+
+def clear_reading_chrome_files():
+    for path in (
+        Path("/tmp/superreader-spike/chrome-blur"),
+        Path("/tmp/superreader-spike/chrome-status.jsonl"),
+        Path("/tmp/superreader-spike/shell-frame"),
+        BAR_FULLSCREEN,
+    ):
+        path.unlink(missing_ok=True)
+
+
+def absorb_chrome(bucket, phase, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        body = read_chrome()
+        if isinstance(body, dict) and "window_w" in body:
+            row = dict(body)
+            row["phase"] = phase
+            bucket.append(row)
+        time.sleep(0.02)
+
+
+def snap_reading(out, window_tool, pid, filename):
+    dest = out / filename
+    try:
+        metrics = window_metrics(window_tool, pid)
+        if not metrics:
+            return None
+        capture(metrics["id"], dest)
+    except (RuntimeError, OSError):
+        return None
+    if dest.is_file() and dest.stat().st_size >= 1000:
+        return str(dest)
+    return None
+
+
+def run_reading_chrome(out):
+    session = read_gui_session()
+    if session.platform != "darwin":
+        return reading_chrome_blocked(gui_session_detail(session))
+    block = gui_session_block(session)
+    if block:
+        return reading_chrome_blocked(block)
+    proc = subprocess.run(
+        [
+            cargo_bin(),
+            "build",
+            "--release",
+            "-p",
+            "spike-library",
+            "--features",
+            "fixture",
+            "--bin",
+            "library-fixture",
+        ],
+        cwd=SPIKES,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stderr or proc.stdout).splitlines()[-8:])
+        return reading_chrome_blocked(tail or "library-fixture did not build")
+    root = Path(tempfile.mkdtemp(prefix="superreader-reading-chrome-"))
+    subprocess.run(
+        [str(release_bin("library-fixture")), str(root), "form"],
+        check=True,
+        cwd=SPIKES,
+    )
+    libs = FormLibraries(root)
+    clear_reading_chrome_files()
+    state = None
+    samples = []
+    shots = {}
+    try:
+        window_tool = compile_window_id(out)
+        mouse = compile_mouse(out)
+        state = launch(
+            out,
+            "reading-chrome",
+            child_env(
+                {
+                    "SUPERREADER_SUPPORT_DIR": str(root / "support"),
+                    "SPIKE_WINDOW": "1440x900",
+                    "SUPERREADER_FORM_FIXTURE": "1",
+                    "SUPERREADER_LIBRARY": str(libs.apple),
+                    "SUPERREADER_CALIBRE": str(libs.calibre),
+                    "SUPERREADER_FOLDER": str(libs.folder),
+                }
+            ),
+            lambda names: "Pride and Prejudice" in names,
+            45,
+        )
+        if not state["alive"]:
+            return reading_chrome_blocked("spike-shell exited before the library was up")
+        if not click_named(state["pid"], "Pride and Prejudice"):
+            return reading_chrome_blocked("System Events did not press Pride and Prejudice")
+        absorb_chrome(samples, "entry", 1.0)
+        if not any(sample.get("reading") is True for sample in samples):
+            return reading_chrome_blocked("the library press did not open a book")
+        shots["reading-chrome-shot-entry"] = snap_reading(
+            out, window_tool, state["pid"], "reading-chrome-entry.png"
+        )
+        metrics = window_metrics(window_tool, state["pid"])
+        if not metrics:
+            return score_reading_chrome(read_status_lines(), samples, shots)
+        park_mouse(mouse, metrics["screen_h"])
+        reveal_lights(mouse, metrics)
+        absorb_chrome(samples, "enter", 1.0)
+        shots["reading-chrome-shot-shown"] = snap_reading(
+            out, window_tool, state["pid"], "reading-chrome-shown.png"
+        )
+        park_mouse(mouse, metrics["screen_h"])
+        absorb_chrome(samples, "short-leave", 0.2)
+        reveal_lights(mouse, metrics)
+        park_mouse(mouse, metrics["screen_h"])
+        absorb_chrome(samples, "leave", 2.2)
+        shots["reading-chrome-shot-hidden"] = snap_reading(
+            out, window_tool, state["pid"], "reading-chrome-hidden.png"
+        )
+        Path("/tmp/superreader-spike/shell-frame").write_text("1100 800\n")
+        absorb_chrome(samples, "resize", 1.4)
+        Path("/tmp/superreader-spike/chrome-blur").write_text("1\n")
+        absorb_chrome(samples, "blur", 0.6)
+        Path("/tmp/superreader-spike/chrome-blur").unlink(missing_ok=True)
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                f'tell application "System Events" to set frontmost of (first process whose unix id is {state["pid"]}) to true',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        Path("/tmp/superreader-spike/shell-frame").write_text("578 528\n")
+        absorb_chrome(samples, "minimum", 1.5)
+        shots["reading-chrome-shot-minimum"] = snap_reading(
+            out, window_tool, state["pid"], "reading-chrome-minimum.png"
+        )
+        Path("/tmp/superreader-spike/shell-frame").unlink(missing_ok=True)
+        BAR_FULLSCREEN.write_text("1\n")
+        absorb_chrome(samples, "fullscreen", 2.0)
+        shots["reading-chrome-shot-fullscreen"] = snap_reading(
+            out, window_tool, state["pid"], "reading-chrome-fullscreen.png"
+        )
+        BAR_FULLSCREEN.write_text("0\n")
+        present = {key: value for key, value in shots.items() if value}
+        return score_reading_chrome(read_status_lines(), samples, present)
+    finally:
+        clear_reading_chrome_files()
+        if state:
+            finish_launch(state)
+
+
 def pending_rows():
     return [check(check_id, feature, "none", "pending", detail) for check_id, feature, detail in PENDING]
 
@@ -9655,7 +10292,7 @@ def git_head():
 
 
 def write_summary(out, rows, version, load_start):
-    failing = [row for row in rows if row["status"] == "fail"]
+    failing = summary_failed(rows)
     summary = {
         "ok": not failing,
         "nsh": version,
@@ -9675,6 +10312,11 @@ def write_summary(out, rows, version, load_start):
         print(f"{row['status']} {row['id']} {row['detail']}")
     print(path)
     return 1 if failing else 0
+
+
+def summary_failed(rows):
+    """A blocked row is not a pass. Pending stays out of this decision."""
+    return any(row["status"] in ("fail", "blocked") for row in rows)
 
 
 BOLD_PROBES = (
@@ -10806,8 +11448,8 @@ def main():
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument(
         "--subset",
-        choices=["cache", "alpha", "shelf", "preflight"],
-        help="preflight launches only the shell form: 1440, minimum, fullscreen enter/settle/exit, accessibility titles, and the shelf wheel",
+        choices=["cache", "alpha", "shelf", "preflight", "reading-chrome"],
+        help="preflight launches only the shell form. reading-chrome launches one library session and scores the reading chrome",
     )
     args = parser.parse_args()
     if args.harness:
@@ -10854,13 +11496,21 @@ def main():
     rows = doctor()
     if doctor_failed(rows):
         rows.extend(skipped("not run because doctor failed"))
+        rows.extend(reading_chrome_blocked("not run because doctor failed"))
         rows.extend(pending_rows())
         return write_summary(out, rows, version, load_start)
     built = build(out / "build.log")
     rows.append(built)
     if built["status"] == "fail":
         rows.extend(skipped("not run because the release build failed"))
+        rows.extend(reading_chrome_blocked("not run because the release build failed"))
         rows.extend(pending_rows())
+        return write_summary(out, rows, version, load_start)
+    if args.subset == "reading-chrome":
+        try:
+            rows.extend(run_reading_chrome(out))
+        except Exception as exc:
+            rows.extend(reading_chrome_blocked(f"session stopped: {exc}"))
         return write_summary(out, rows, version, load_start)
     if args.subset == "cache":
         rows.extend(cache_subset(out))
@@ -10955,6 +11605,10 @@ def main():
         rows.append(check("shell-form-fixture", "shell", "window", "fail", str(exc)))
         rows.append(check("shell-form-parity", "shell", "window", "fail", str(exc)))
     rows.append(check("smoke-shell-click", "smoke", "window", "pending", SHELL_CLICK_GAP))
+    try:
+        rows.extend(run_reading_chrome(out))
+    except Exception as exc:
+        rows.extend(reading_chrome_blocked(f"session stopped: {exc}"))
     rows.extend(pending_rows())
     head = git_head()
     rows.append(

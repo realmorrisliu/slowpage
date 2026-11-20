@@ -104,6 +104,8 @@ pub struct Runtime {
     chrome_cut: Cell<bool>,
     chrome_tick: Cell<Option<Instant>>,
     sent_lights: Cell<f64>,
+    title_opacity: Cell<f64>,
+    chrome_shared: Cell<bool>,
 }
 
 impl Default for Runtime {
@@ -160,6 +162,8 @@ impl Default for Runtime {
             chrome_cut: Cell::new(false),
             chrome_tick: Cell::new(None),
             sent_lights: Cell::new(f64::NAN),
+            title_opacity: Cell::new(1.0),
+            chrome_shared: Cell::new(false),
         }
     }
 }
@@ -187,6 +191,11 @@ impl Runtime {
         }
         self.sent_lights.set(alpha);
         true
+    }
+
+    pub fn note_chrome_status(&self, title_opacity: f64, chrome_shared: bool) {
+        self.title_opacity.set(title_opacity);
+        self.chrome_shared.set(chrome_shared);
     }
 
     pub fn mark_bar_dirty(&self) {
@@ -359,6 +368,7 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
     // `FullScreenPrimary`, so put the bit back on every sync, not only the
     // first style.
     keep_fullscreen_primary(window);
+    note_blur(window);
     style_window(window, rt);
     // The shelf and the EPUB page share this monitor. A direct file open
     // never engages the shelf, and the page script no longer handles the wheel.
@@ -416,6 +426,7 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
             let alpha = reading_chrome_alpha(window, rt);
             place_fullscreen_lights(window, alpha);
             rt.lights.set(alpha);
+            remember_shared(rt, alpha);
             clear_shell_chrome(window);
             place_contents_button(window, rt, alpha);
         } else {
@@ -513,6 +524,7 @@ pub fn sync(window: &NSWindow, rt: &Runtime, page: PageBox) {
         approach(rt.lights.get(), hover_target(window))
     };
     rt.lights.set(next);
+    remember_shared(rt, next);
     paint_lights(window, next);
     if shell_on() {
         clear_shell_chrome(window);
@@ -1042,6 +1054,56 @@ fn settle_bar(window: &NSWindow, rt: &Runtime) {
     rt.frame_key.set(frame_key);
     rt.bar_w.set(measured.width);
     *rt.traffic.borrow_mut() = Some(measured);
+}
+
+fn note_blur(window: &NSWindow) {
+    if std::path::Path::new("/tmp/superreader-spike/chrome-blur").is_file() {
+        unsafe {
+            let _: () = msg_send![window, resignKeyWindow];
+        }
+    }
+}
+
+fn remember_shared(rt: &Runtime, alpha: f64) {
+    if shell_on() && rt.reading.get() && !flag("SPIKE_LIGHTS") {
+        rt.note_chrome_status(alpha, true);
+    }
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
+fn button_alpha(window: &NSWindow) -> Option<f64> {
+    let button = window.standardWindowButton(NSWindowButton::CloseButton)?;
+    let alpha: f64 = unsafe { msg_send![&*button, alphaValue] };
+    alpha.is_finite().then_some(alpha)
+}
+
+fn title_field_alpha(rt: &Runtime) -> Option<f64> {
+    let field = rt.hover_title.borrow().clone()?;
+    let alpha: f64 = unsafe { msg_send![&*field, alphaValue] };
+    alpha.is_finite().then_some(alpha)
+}
+
+pub fn append_chrome_status(rt: &Runtime) {
+    let dir = "/tmp/superreader-spike";
+    let _ = std::fs::create_dir_all(dir);
+    let line = serde_json::json!({
+        "t_ms": unix_ms(),
+        "reading": rt.reading.get(),
+        "title_opacity": rt.title_opacity.get(),
+        "chrome_shared": rt.chrome_shared.get(),
+        "lights": rt.lights.get(),
+    });
+    let path = format!("{dir}/chrome-status.jsonl");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = writeln!(file, "{line}");
+    }
 }
 
 fn file_flag(path: &str) -> Option<bool> {
@@ -1944,6 +2006,12 @@ fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
     rt.content_top.set(top);
     let page = rt.page.get();
     let frame = window.frame();
+    let button = button_alpha(window)
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
+    let field_alpha = title_field_alpha(rt)
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
     let lights = rt.traffic.borrow().unwrap_or(TrafficLights {
         close_min_x: 0.0,
         close_max_x: 0.0,
@@ -1977,6 +2045,16 @@ fn write_json(window: &NSWindow, rt: &Runtime, fullscreen: bool) {
         "side": SIDE,
         "fullscreen": fullscreen,
         "lights": rt.lights.get(),
+        "t_ms": unix_ms(),
+        "reading": rt.reading.get(),
+        "title_opacity": rt.title_opacity.get(),
+        "chrome_shared": rt.chrome_shared.get(),
+        "button_alpha": button,
+        "title_field_present": rt.hover_title.borrow().is_some(),
+        "title_field_alpha": field_alpha,
+        "focused": window.isKeyWindow(),
+        "pointer_at_top": near_top(window),
+        "generation": rt.chrome_gen.get(),
         "lights_visible": rt.lights_visible.get(),
         "content_top": rt.content_top.get(),
         "ratio_w": page.ratio_w,

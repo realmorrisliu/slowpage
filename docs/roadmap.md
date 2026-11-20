@@ -256,7 +256,7 @@ Done. From hidden, four pointer steps reach alpha 1. A 16 ms exit and a return s
 
 Evidence. `reading_chrome_follows_the_pointer_and_drops_a_stale_hide` runs that pump order through `step_chrome`, `light_alpha_shown`, `lights_shown`, `shell_publish_key`, and `publish_key_effect`, then the next step. It also runs `reader_shown` and `enter_reading_chrome` for the shelf's first status. The CI `test` job names that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run the test.
 
-Not run. A Mac window, the pointer, the fade on screen, WebKit, `nsh test`, and the feel of the hold. Linux compiled the `step_chrome` lines outside the crate and those assertions passed. `cargo test -p spike-shell` did not compile here: `objc2` only works on Apple platforms, so the named test was not executed on Linux.
+Not run. A Mac window, the pointer, the fade on screen, WebKit, `nsh test`, and the feel of the hold. `scripts/verify --self-test` scores a sample log for the reading-chrome rows and does not launch the app. `just verify --subset reading-chrome` is the one-session console run and was not run. Linux compiled the `step_chrome` lines outside the crate and those assertions passed. `cargo test -p spike-shell` did not compile here: `objc2` only works on Apple platforms, so the named test was not executed on Linux.
 
 ## S3 link
 
