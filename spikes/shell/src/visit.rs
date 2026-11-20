@@ -415,8 +415,9 @@ pub fn chapter_return(
     ChapterStep { go, back }
 }
 
-/// The place that belongs to the href on screen. A jump aimed at that href
-/// wins. A saved offset from a different href does not.
+/// The stored sentence is the place. A jump that already has an offset for
+/// the href on screen is that sentence. A view can change before the
+/// sentence does. That view is not a sentence, and it is not the return.
 fn shown_place(
     shown_href: &str,
     shown_page: u32,
@@ -436,11 +437,16 @@ fn shown_place(
             };
         }
     }
-    if saved_href == shown_href {
+    if !saved_href.is_empty() {
+        let offset = if saved_href == shown_href {
+            awaiting.unwrap_or(saved_offset)
+        } else {
+            saved_offset
+        };
         return ReadingPlace {
-            href: shown_href.to_string(),
+            href: saved_href.to_string(),
             page: saved_page.max(1),
-            offset: awaiting.unwrap_or(saved_offset),
+            offset,
         };
     }
     ReadingPlace {
@@ -1526,7 +1532,8 @@ pub fn handle_page(
 }
 
 /// Chapter and return. The saved place is already the last accepted turn.
-/// This does not read the inbox.
+/// The href on screen can be a chapter that has not been written. That href
+/// is not the return. This does not read the inbox.
 pub fn handle_chapter(
     reader: &mut Reader,
     pick: isize,
@@ -1838,12 +1845,26 @@ pub fn handle_link_message(
         dest.href
     };
     let mark = link_mark(&href, offset);
-    let applied = handle_chapter(reader, 0, &[mark], spine, shown, store);
+    let mut applied = handle_chapter(reader, 0, &[mark], spine, shown, store);
     if matches!(applied.go, Some(ChapterMove::Stay)) {
         return applied;
     }
     reader.fragment = None;
+    reveal_shown(reader, &mut applied, &href, shown);
     applied
+}
+
+fn reveal_shown(reader: &mut Reader, applied: &mut Apply, target: &str, shown: &str) {
+    let Some(ChapterMove::Chapter { offset, .. }) = applied.go else {
+        return;
+    };
+    if spine_key(target) != spine_key(shown) {
+        return;
+    }
+    reader.jump_offset = None;
+    reader.awaiting = Some(offset);
+    applied.reveal = Some(offset);
+    applied.go = Some(ChapterMove::Reveal { offset });
 }
 
 fn finish_link(
@@ -1895,12 +1916,7 @@ fn finish_link(
     if !applied.accepted {
         return applied;
     }
-    if spine_key(&target) == spine_key(shown) {
-        reader.jump_offset = None;
-        reader.awaiting = Some(offset);
-        applied.reveal = Some(offset);
-        applied.go = Some(ChapterMove::Reveal { offset });
-    }
+    reveal_shown(reader, &mut applied, &target, shown);
     reader.fragment = None;
     applied
 }

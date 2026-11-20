@@ -1221,8 +1221,18 @@ const SCRIPT: &str = r#"
     if (here == null) return false;
     return samePath(path, here);
   }
+  function styleHides(node) {
+    let el = node && node.parentElement;
+    while (el) {
+      const style = window.getComputedStyle(el);
+      if (style && (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse')) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
   function liveChar(node) {
     if (!node || node.nodeType !== 3) return null;
+    if (styleHides(node)) return null;
     const text = node.textContent || '';
     for (let i = 0; i < text.length; i++) {
       if (!text.charAt(i).trim()) continue;
@@ -1501,6 +1511,11 @@ mod tests {
         assert_eq!(v["empty"]["raw"], "#mark");
         assert_eq!(v["empty"]["measured"], true);
         assert_eq!(v["empty"]["offset"], 13);
+        assert_eq!(v["far"]["raw"], "#far");
+        assert_eq!(v["far"]["measured"], true);
+        assert_eq!(v["far"]["offset"], 4);
+        assert_eq!(v["vis"]["raw"], "#vis");
+        assert_eq!(v["vis"]["measured"], serde_json::json!(false));
     }
 
     #[test]
@@ -2422,7 +2437,7 @@ const posts = [];
 global.__now = 0;
 global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
 global.performance = { now: () => global.__now };
-global.getComputedStyle = () => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal' });
+global.getComputedStyle = (el) => ({ position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px', fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal', display: el && el.display || 'block', visibility: el && el.visibility || 'visible' });
 function el() {
   return {
     id: '', style: { setProperty(){}, transform: 'none', cssText: '' },
@@ -2450,10 +2465,15 @@ const noteText = text('Target', false);
 const hidSpace = text(' ', true);
 const zeroLetter = text('Z', true);
 const tail = text('Tail', false);
+const farText = text('Page', false);
+const visHost = { parentElement: null, nodeType: 1, visibility: 'hidden', closest(){ return null; } };
+const visText = { nodeType: 3, textContent: 'Hide', nodeValue: 'Hide', parentElement: visHost, compareDocumentPosition(){ return 0; } };
 const note = { id: 'note', compareDocumentPosition(){ return 0; } };
 const hid = { id: 'hid', compareDocumentPosition(){ return 0; } };
 const zero = { id: 'zero', compareDocumentPosition(){ return 0; } };
 const mark = { id: 'mark', compareDocumentPosition(node) { return node === tail ? 4 : 0; } };
+const far = { id: 'far', compareDocumentPosition(){ return 0; } };
+const vis = { id: 'vis', compareDocumentPosition(){ return 0; } };
 function walker(list) {
   let i = -1;
   return {
@@ -2474,8 +2494,8 @@ global.document = {
   location: { pathname: '/OEBPS/chapter.xhtml' },
   querySelectorAll: () => [],
   querySelector: () => null,
-  getElementById: (id) => (id === 'note' ? note : id === 'hid' ? hid : id === 'zero' ? zero : id === 'mark' ? mark : null),
-  createTreeWalker: (root) => walker(root === note ? [noteSpaces, noteText] : root === hid ? [hidSpace] : root === zero ? [zeroLetter] : root === mark ? [] : bodyNodes),
+  getElementById: (id) => (id === 'note' ? note : id === 'hid' ? hid : id === 'zero' ? zero : id === 'mark' ? mark : id === 'far' ? far : id === 'vis' ? vis : null),
+  createTreeWalker: (root) => walker(root === note ? [noteSpaces, noteText] : root === hid ? [hidSpace] : root === zero ? [zeroLetter] : root === mark ? [] : root === far ? [farText] : root === vis ? [visText] : bodyNodes),
   addEventListener(){},
   caretRangeFromPoint(){ return null; },
   createRange(){
@@ -2487,6 +2507,7 @@ global.document = {
       getClientRects(){ return []; },
       getBoundingClientRect(){
         if (startNode && startNode.hidden) return { left:0, right:0, top:0, bottom:0, width:0, height:0 };
+        if (startNode && startNode.far) return { left:2000, right:2008, top:-40, bottom:-30, width:8, height:10 };
         return { left:0, right:8, top:0, bottom:10, width:8, height:10 };
       },
     };
@@ -2543,6 +2564,11 @@ bodyNodes = [prefix, zeroLetter];
 const zeroClick = click(200, '#zero', 0, false);
 bodyNodes = [prefix, noteSpaces, noteText, tail];
 const empty = click(200, '#mark', 0, false);
+farText.far = true;
+bodyNodes = [prefix, farText];
+const farClick = click(200, '#far', 0, false);
+bodyNodes = [prefix, visText];
+const visClick = click(200, '#vis', 0, false);
 console.log(JSON.stringify({
   link: link[0] || null,
   edgeLink: edgeLink[0] || null,
@@ -2557,5 +2583,7 @@ console.log(JSON.stringify({
   hid: hidClick[0] || null,
   zero: zeroClick[0] || null,
   empty: empty[0] || null,
+  far: farClick[0] || null,
+  vis: visClick[0] || null,
 }));
 "#;
