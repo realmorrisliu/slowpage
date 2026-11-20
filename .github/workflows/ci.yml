@@ -96,6 +96,7 @@ jobs:
             a_stored_sentence_round_trips \
             a_chapter_choice_lands_on_that_sentence_and_returns \
             a_book_link_lands_on_the_sentence_and_returns \
+            a_pending_fragment_keeps_the_origin_sentence \
             a_page_link_click_posts_the_character_offset \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
@@ -137,6 +138,7 @@ jobs:
             a_stored_sentence_round_trips \
             a_chapter_choice_lands_on_that_sentence_and_returns \
             a_book_link_lands_on_the_sentence_and_returns \
+            a_pending_fragment_keeps_the_origin_sentence \
             a_page_link_click_posts_the_character_offset \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \

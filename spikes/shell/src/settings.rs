@@ -4400,6 +4400,366 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn a_pending_fragment_keeps_the_origin_sentence() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-link-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        let chapter = "/OEBPS/chapter.xhtml";
+        let next = "/OEBPS/next.xhtml";
+        let spaced = "/OEBPS/spaced name.xhtml";
+        let spine = vec![chapter.to_string(), next.to_string(), spaced.to_string()];
+        let message = |raw: &str, load: u64, offset: Option<u32>, measured: bool, auto: bool| {
+            let mut value = serde_json::json!({
+                "kind": "link",
+                "raw": raw,
+                "load": load,
+                "measured": measured,
+                "auto": auto,
+            });
+            if let Some(offset) = offset {
+                value["offset"] = serde_json::json!(offset);
+            }
+            value
+        };
+        let saved = |page, offset, href: &str| {
+            assert_eq!(resume_page(&file, book), page);
+            assert_eq!(resume_offset(&file, book), offset);
+            assert_eq!(resume_href(&file, book), href);
+            let text = std::fs::read_to_string(&file).unwrap();
+            assert!(!text.contains("\"back\""), "{text}");
+        };
+        let turn = |page| {
+            serde_json::json!({
+                "kind": "turn",
+                "page": page,
+                "sentence": 0,
+                "frames": []
+            })
+        };
+        let open = |store: &SettingsBook| {
+            let mut reopened = crate::visit::Reader::default();
+            crate::visit::open_resume(&mut reopened, store);
+            reopened
+        };
+
+        record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.restore_load = 1;
+        reader.place = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let mut store = SettingsBook { file: &file, book };
+        let started = crate::visit::handle_link_message(
+            &mut reader,
+            &message("next.xhtml#note", 1, None, false, false),
+            chapter,
+            &spine,
+            &mut store,
+        );
+        assert!(started.accepted && !started.wrote);
+        assert_eq!(
+            started.go,
+            Some(crate::visit::ChapterMove::Chapter {
+                index: 1,
+                offset: 0
+            })
+        );
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        assert_eq!(reader.jump_href, next);
+        assert!(reader.back.is_none());
+        assert_eq!(reader.place.page, 4);
+        assert_eq!(reader.place.offset, 800);
+        saved(4, 800, chapter);
+        let arrived = crate::visit::handle_page(&mut reader, &turn(1), chapter, &mut store);
+        assert!(arrived.accepted && !arrived.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        assert_eq!(reader.jump_href, next);
+        assert!(reader.jump_offset.is_none());
+        assert!(reader.back.is_none());
+        assert_eq!(reader.place.href, chapter);
+        assert_eq!(reader.place.page, 4);
+        assert_eq!(reader.place.offset, 800);
+        saved(4, 800, chapter);
+        let same_page = crate::visit::handle_page(&mut reader, &turn(4), chapter, &mut store);
+        assert!(same_page.accepted && !same_page.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        assert_eq!(reader.place.offset, 800);
+        saved(4, 800, chapter);
+        let swiped = crate::visit::handle_page(
+            &mut reader,
+            &serde_json::json!({ "kind": "turn", "page": 1, "sentence": 0, "swipe": 9, "frames": [] }),
+            chapter,
+            &mut store,
+        );
+        assert!(!swiped.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        saved(4, 800, chapter);
+        let stale = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#note", 99, Some(120), true, true),
+            next,
+            &spine,
+            &mut store,
+        );
+        assert!(!stale.accepted && !stale.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        saved(4, 800, chapter);
+        for raw in [
+            "https%3A%2F%2Fevil.example/a",
+            "javascript%3Aalert(1)",
+            "%2e%2e/%2e%2e/secret.xhtml",
+            "%00note.xhtml",
+            "%zz.xhtml",
+        ] {
+            let refused = crate::visit::handle_link_message(
+                &mut reader,
+                &message(raw, 1, Some(5), true, false),
+                chapter,
+                &spine,
+                &mut store,
+            );
+            assert!(!refused.accepted && !refused.wrote, "{raw}");
+            assert_eq!(reader.fragment.as_deref(), Some("note"), "{raw}");
+            assert_eq!(reader.place.offset, 800, "{raw}");
+            saved(4, 800, chapter);
+        }
+        reader.restore_load = 2;
+        let missed = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#note", 2, None, false, true),
+            next,
+            &spine,
+            &mut store,
+        );
+        assert!(missed.accepted && !missed.wrote);
+        assert!(reader.fragment.is_none());
+        assert_eq!(
+            missed.go,
+            Some(crate::visit::ChapterMove::Chapter {
+                index: 0,
+                offset: 800
+            })
+        );
+        assert_eq!(reader.place.page, 4);
+        assert_eq!(reader.place.offset, 800);
+        saved(4, 800, chapter);
+
+        record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.restore_load = 1;
+        reader.place = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let started = crate::visit::handle_link_message(
+            &mut reader,
+            &message("next.xhtml#note", 1, None, false, false),
+            chapter,
+            &spine,
+            &mut store,
+        );
+        assert!(started.accepted && !started.wrote);
+        let arrived = crate::visit::handle_page(&mut reader, &turn(1), next, &mut store);
+        assert!(!arrived.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        saved(4, 800, chapter);
+        reader.restore_load = 2;
+        let landed = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#note", 2, Some(120), true, true),
+            next,
+            &spine,
+            &mut store,
+        );
+        assert!(landed.wrote);
+        assert_eq!(
+            landed.go,
+            Some(crate::visit::ChapterMove::Reveal { offset: 120 })
+        );
+        assert_eq!(
+            reader
+                .back
+                .as_ref()
+                .map(|place| (place.href.as_str(), place.page, place.offset)),
+            Some((chapter, 4, 800))
+        );
+        assert_eq!(reader.place.href, next);
+        assert_eq!(reader.place.offset, 120);
+        saved(1, 120, next);
+        let reopened = open(&store);
+        assert_eq!(reopened.place.href, next);
+        assert_eq!(reopened.place.offset, 120);
+        assert!(reopened.back.is_none());
+        let late = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#note", 2, Some(1), true, true),
+            next,
+            &spine,
+            &mut store,
+        );
+        assert!(!late.accepted && !late.wrote);
+        saved(1, 120, next);
+
+        record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.restore_load = 1;
+        reader.place = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let started = crate::visit::handle_link_message(
+            &mut reader,
+            &message("next.xhtml#note", 1, None, false, false),
+            chapter,
+            &spine,
+            &mut store,
+        );
+        assert!(started.accepted && !started.wrote);
+        let retarget = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#local", 1, Some(50), true, false),
+            chapter,
+            &spine,
+            &mut store,
+        );
+        assert!(retarget.wrote);
+        assert!(reader.fragment.is_none());
+        assert_eq!(
+            reader.back.as_ref().map(|place| (place.page, place.offset)),
+            Some((4, 800))
+        );
+        saved(4, 50, chapter);
+        let old_boot = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#note", 1, Some(120), true, true),
+            next,
+            &spine,
+            &mut store,
+        );
+        assert!(!old_boot.accepted && !old_boot.wrote);
+        assert_eq!(reader.place.offset, 50);
+        saved(4, 50, chapter);
+
+        record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.restore_load = 1;
+        reader.place = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let started = crate::visit::handle_link_message(
+            &mut reader,
+            &message("next.xhtml#note", 1, None, false, false),
+            chapter,
+            &spine,
+            &mut store,
+        );
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        assert!(!started.wrote);
+        let marks = crate::visit::contents_marks("Plain Essay", &spine);
+        let toc = crate::visit::handle_chapter(&mut reader, 1, &marks, &spine, chapter, &mut store);
+        assert!(toc.wrote);
+        assert!(reader.fragment.is_none());
+        assert_eq!(reader.place.href, next);
+        assert_eq!(reader.place.page, 1);
+        assert_eq!(reader.place.offset, 0);
+        assert_eq!(
+            reader
+                .back
+                .as_ref()
+                .map(|place| (place.href.as_str(), place.page, place.offset)),
+            Some((chapter, 4, 800))
+        );
+        saved(1, 0, next);
+        reader.restore_load = 2;
+        let late_boot = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#note", 2, Some(120), true, true),
+            next,
+            &spine,
+            &mut store,
+        );
+        assert!(!late_boot.accepted && !late_boot.wrote);
+        assert_eq!(
+            reader
+                .back
+                .as_ref()
+                .map(|place| (place.href.as_str(), place.page, place.offset)),
+            Some((chapter, 4, 800))
+        );
+        saved(1, 0, next);
+        let back = crate::visit::handle_chapter(&mut reader, -1, &[], &spine, next, &mut store);
+        assert_eq!(
+            back.go,
+            Some(crate::visit::ChapterMove::Chapter {
+                index: 0,
+                offset: 800
+            })
+        );
+        assert_eq!(reader.place.href, chapter);
+        assert_eq!(reader.place.offset, 800);
+        saved(1, 800, chapter);
+
+        record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.restore_load = 1;
+        reader.place = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let started = crate::visit::handle_link_message(
+            &mut reader,
+            &message("spaced%20name.xhtml#%6Eote", 1, None, false, false),
+            chapter,
+            &spine,
+            &mut store,
+        );
+        assert!(started.accepted && !started.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        assert_eq!(reader.jump_href, spaced);
+        assert_eq!(reader.place.offset, 800);
+        saved(4, 800, chapter);
+        let arrived = crate::visit::handle_page(&mut reader, &turn(1), spaced, &mut store);
+        assert!(!arrived.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        saved(4, 800, chapter);
+        reader.restore_load = 2;
+        let landed = crate::visit::handle_link_message(
+            &mut reader,
+            &message("#%6Eote", 2, Some(40), true, true),
+            spaced,
+            &spine,
+            &mut store,
+        );
+        assert!(landed.wrote);
+        assert_eq!(reader.place.href, spaced);
+        assert_eq!(reader.place.offset, 40);
+        assert_eq!(
+            reader
+                .back
+                .as_ref()
+                .map(|place| (place.href.as_str(), place.page, place.offset)),
+            Some((chapter, 4, 800))
+        );
+        saved(1, 40, spaced);
+        let reopened = open(&store);
+        assert_eq!(reopened.place.href, spaced);
+        assert_eq!(reopened.place.offset, 40);
+        assert!(reopened.back.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn writeln_cmd(stdin: &mut impl std::io::Write, command: &str) {
         stdin.write_all(command.as_bytes()).unwrap();
         stdin.write_all(b"\n").unwrap();
