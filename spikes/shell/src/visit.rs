@@ -1325,13 +1325,7 @@ pub fn handle_page(
         };
     }
     if reader.fragment.is_some() {
-        if user_turn(&report) {
-            reader.fragment = None;
-            reader.jump_href.clear();
-            reader.jump_offset = None;
-        } else {
-            return apply_idle(true);
-        }
+        return apply_idle(true);
     }
     if report.hold.is_some()
         && report.token.is_none()
@@ -1541,6 +1535,10 @@ pub fn handle_chapter(
     href: &str,
     store: &mut dyn PlaceFile,
 ) -> Apply {
+    if reader.fragment.take().is_some() {
+        reader.jump_href.clear();
+        reader.jump_offset = None;
+    }
     let nav = navigate(NavIn {
         shown_href: href,
         shown_page: reader.place.page.max(1),
@@ -1602,6 +1600,40 @@ pub struct LinkDest {
     pub same: bool,
 }
 
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            out.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return None;
+        }
+        let hi = hex_digit(bytes[index + 1])?;
+        let lo = hex_digit(bytes[index + 2])?;
+        let byte = (hi << 4) | lo;
+        if byte == 0 {
+            return None;
+        }
+        out.push(byte);
+        index += 3;
+    }
+    String::from_utf8(out).ok()
+}
+
 fn link_scheme(raw: &str) -> bool {
     if raw.starts_with("//") {
         return true;
@@ -1617,6 +1649,8 @@ fn link_scheme(raw: &str) -> bool {
 }
 
 pub(crate) fn spine_key(href: &str) -> String {
+    let owned = percent_decode(href).unwrap_or_else(|| href.to_string());
+    let href = owned.as_str();
     href.split(['#', '?'])
         .next()
         .unwrap_or(href)
@@ -1669,7 +1703,8 @@ fn join_link(shown: &str, rel: &str) -> Option<String> {
 /// on `shown`. `#` is not a spine item. An external scheme, a path that leaves
 /// the book, or an unknown spine item is `None`.
 pub fn resolve_link(raw: &str, shown: &str, spine: &[String]) -> Option<LinkDest> {
-    let raw = raw.trim();
+    let decoded = percent_decode(raw.trim())?;
+    let raw = decoded.as_str();
     if raw.is_empty() || link_scheme(raw) || raw.contains('\\') || raw.contains('?') {
         return None;
     }
@@ -1727,10 +1762,22 @@ fn link_message<'a>(value: &'a serde_json::Value) -> (&'a str, u64, bool, Option
     )
 }
 
+fn link_matches_pending(reader: &Reader, raw: &str, shown: &str, spine: &[String]) -> bool {
+    let Some(pending) = reader.fragment.as_deref() else {
+        return false;
+    };
+    let Some(dest) = resolve_link(raw, shown, spine) else {
+        return false;
+    };
+    dest.fragment == pending && spine_key(&dest.href) == spine_key(&reader.jump_href)
+}
+
 /// One `kind: "link"` message. The page measured `offset` with the same
 /// character walk as a caret. A cross-chapter fragment carries no offset
 /// until the target document measures it. The return place stays on the
 /// reader. The file receives the destination sentence only.
+/// While that measurement is still waiting, a page message is not a turn
+/// and does not write. `auto` is that measurement. A click is a new target.
 pub fn handle_link_message(
     reader: &mut Reader,
     value: &serde_json::Value,
@@ -1742,8 +1789,19 @@ pub fn handle_link_message(
     if load != reader.restore_load {
         return apply_idle(false);
     }
+    let auto = value["auto"].as_bool() == Some(true);
     if reader.fragment.is_some() {
-        return finish_link(reader, raw, measured, offset, shown, spine, store);
+        if link_matches_pending(reader, raw, shown, spine) {
+            return finish_link(reader, raw, measured, offset, shown, spine, store);
+        }
+        if auto || resolve_link(raw, shown, spine).is_none() {
+            return apply_idle(false);
+        }
+        reader.fragment = None;
+        reader.jump_href.clear();
+        reader.jump_offset = None;
+    } else if auto {
+        return apply_idle(false);
     }
     let Some(dest) = resolve_link(raw, shown, spine) else {
         return apply_idle(false);

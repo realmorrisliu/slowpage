@@ -1186,24 +1186,69 @@ const SCRIPT: &str = r#"
     if (event.buttons !== 1) return;
     if (Math.abs(event.clientX - edgeX) >= __SLOP__ || Math.abs(event.clientY - edgeY) >= __SLOP__) edgeDrag = true;
   }, true);
-  function textOffsetIn(el) {
-    if (!el) return null;
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    if (!walker.nextNode()) return null;
-    const node = walker.currentNode;
-    if (!node || node.nodeType !== 3) return null;
-    return offsetOf(node, 0);
+  function decodeHref(raw) {
+    try { return decodeURIComponent(String(raw)); } catch (e) { return null; }
+  }
+  function samePath(path, here) {
+    const stack = path.charAt(0) === '/' ? [] : here.split('/').slice(0, -1);
+    const parts = path.split('/');
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i];
+      if (!seg || seg === '.') continue;
+      if (seg === '..') {
+        if (!stack.length) return false;
+        stack.pop();
+        continue;
+      }
+      if (seg.indexOf(':') >= 0) return false;
+      stack.push(seg);
+    }
+    if (!stack.length) return false;
+    const joined = stack[0] === '' ? stack.join('/') : '/' + stack.join('/');
+    const norm = here.charAt(0) === '/' ? here : '/' + here;
+    return joined === norm;
   }
   function linkInDocument(raw) {
-    const hash = raw.indexOf('#');
-    const path = (hash < 0 ? raw : raw.slice(0, hash)).trim();
+    const decoded = decodeHref(raw);
+    if (decoded == null) return false;
+    const hash = decoded.indexOf('#');
+    const path = (hash < 0 ? decoded : decoded.slice(0, hash)).trim();
     if (!path) return true;
     if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return false;
-    if (path.indexOf("..") >= 0 || path.indexOf("?") >= 0 || path.indexOf("\\") >= 0) return false;
-    const file = path.split("/").pop();
-    const loc = (document.location && document.location.pathname) || "";
-    const here = loc.split("/").pop();
-    return !!file && file === here;
+    if (path.indexOf('?') >= 0 || path.indexOf('\\') >= 0) return false;
+    const loc = (document.location && document.location.pathname) || '';
+    const here = decodeHref(loc);
+    if (here == null) return false;
+    return samePath(path, here);
+  }
+  function liveChar(node) {
+    if (!node || node.nodeType !== 3) return null;
+    const text = node.textContent || '';
+    for (let i = 0; i < text.length; i++) {
+      if (!text.charAt(i).trim()) continue;
+      if (!liveRect(charRect(node, i))) continue;
+      return offsetOf(node, i);
+    }
+    return null;
+  }
+  function textOffsetIn(el) {
+    if (!el) return null;
+    const inside = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let saw = false;
+    while (inside.nextNode()) {
+      saw = true;
+      const at = liveChar(inside.currentNode);
+      if (at != null) return at;
+    }
+    if (saw) return null;
+    const all = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (all.nextNode()) {
+      const node = all.currentNode;
+      if (!(el.compareDocumentPosition && (el.compareDocumentPosition(node) & 4))) continue;
+      const at = liveChar(node);
+      if (at != null) return at;
+    }
+    return null;
   }
   function followLink(event) {
     const node = event.target;
@@ -1215,8 +1260,10 @@ const SCRIPT: &str = r#"
     if (event.preventDefault) event.preventDefault();
     let measured = false;
     let offset = 0;
-    const hash = raw.indexOf('#');
-    const fragment = hash < 0 ? "" : raw.slice(hash + 1);
+    const decoded = decodeHref(raw);
+    const lookup = decoded == null ? '' : decoded;
+    const hash = lookup.indexOf('#');
+    const fragment = hash < 0 ? '' : lookup.slice(hash + 1);
     if (fragment && linkInDocument(raw)) {
       const at = textOffsetIn(document.getElementById(fragment));
       if (at == null) {
@@ -1378,9 +1425,10 @@ const SCRIPT: &str = r#"
     });
   }
   if (window.__spikeFragment) {
-    const id = String(window.__spikeFragment);
-    const at = textOffsetIn(document.getElementById(id));
-    post({ kind: "link", raw: '#' + id, load: pageLoad, offset: at == null ? 0 : at, measured: at != null });
+    const stored = String(window.__spikeFragment);
+    const id = decodeHref(stored);
+    const at = id == null ? null : textOffsetIn(document.getElementById(id));
+    post({ kind: "link", raw: '#' + (id == null ? stored : id), load: pageLoad, offset: at == null ? 0 : at, measured: at != null, auto: true });
   }
   requestAnimationFrame(function () { post(); });
 })();
@@ -1430,15 +1478,29 @@ mod tests {
         assert_eq!(v["link"]["kind"], "link");
         assert_eq!(v["link"]["raw"], "#note");
         assert_eq!(v["link"]["measured"], true);
-        assert_eq!(v["link"]["offset"], 4);
+        assert_eq!(v["link"]["offset"], 7);
         assert_eq!(v["edgeLink"]["raw"], "#note");
-        assert_eq!(v["edgeLink"]["offset"], 4);
+        assert_eq!(v["edgeLink"]["offset"], 7);
         assert_eq!(v["turns"], serde_json::json!([]));
         assert_eq!(v["edgeText"], "ok");
         assert_eq!(v["dragLinks"], 0);
         assert_eq!(v["otherButton"], 0);
         assert_eq!(v["cross"]["measured"], serde_json::json!(false));
         assert_eq!(v["cross"]["raw"], "next.xhtml#fn1");
+        assert_eq!(v["encoded"]["raw"], "#%6Eote");
+        assert_eq!(v["encoded"]["measured"], true);
+        assert_eq!(v["encoded"]["offset"], 7);
+        assert_eq!(v["encodedFile"]["raw"], "chapter%2Exhtml#%6Eote");
+        assert_eq!(v["encodedFile"]["offset"], 7);
+        assert_eq!(v["spaced"]["raw"], "spaced%20name.xhtml#note");
+        assert_eq!(v["spaced"]["measured"], serde_json::json!(false));
+        assert_eq!(v["hid"]["raw"], "#hid");
+        assert_eq!(v["hid"]["measured"], serde_json::json!(false));
+        assert_eq!(v["zero"]["raw"], "#zero");
+        assert_eq!(v["zero"]["measured"], serde_json::json!(false));
+        assert_eq!(v["empty"]["raw"], "#mark");
+        assert_eq!(v["empty"]["measured"], true);
+        assert_eq!(v["empty"]["offset"], 13);
     }
 
     #[test]
@@ -2379,9 +2441,19 @@ function el() {
 const body = el();
 const rootEl = el();
 const parent = { closest() { return null; } };
-const prefix = { nodeType: 3, textContent: 'aaaa', nodeValue: 'aaaa', parentElement: parent };
-const noteText = { nodeType: 3, textContent: 'Target', nodeValue: 'Target', parentElement: parent };
-const note = { id: 'note' };
+function text(value, hidden) {
+  return { nodeType: 3, textContent: value, nodeValue: value, parentElement: parent, hidden: !!hidden, compareDocumentPosition(){ return 0; } };
+}
+const prefix = text('aaaa', false);
+const noteSpaces = text('   ', false);
+const noteText = text('Target', false);
+const hidSpace = text(' ', true);
+const zeroLetter = text('Z', true);
+const tail = text('Tail', false);
+const note = { id: 'note', compareDocumentPosition(){ return 0; } };
+const hid = { id: 'hid', compareDocumentPosition(){ return 0; } };
+const zero = { id: 'zero', compareDocumentPosition(){ return 0; } };
+const mark = { id: 'mark', compareDocumentPosition(node) { return node === tail ? 4 : 0; } };
 function walker(list) {
   let i = -1;
   return {
@@ -2393,6 +2465,7 @@ function walker(list) {
     },
   };
 }
+let bodyNodes = [prefix, noteSpaces, noteText];
 global.document = {
   createElement: () => el(),
   documentElement: rootEl,
@@ -2401,11 +2474,23 @@ global.document = {
   location: { pathname: '/OEBPS/chapter.xhtml' },
   querySelectorAll: () => [],
   querySelector: () => null,
-  getElementById: (id) => (id === 'note' ? note : null),
-  createTreeWalker: (root) => walker(root === note ? [noteText] : [prefix, noteText]),
+  getElementById: (id) => (id === 'note' ? note : id === 'hid' ? hid : id === 'zero' ? zero : id === 'mark' ? mark : null),
+  createTreeWalker: (root) => walker(root === note ? [noteSpaces, noteText] : root === hid ? [hidSpace] : root === zero ? [zeroLetter] : root === mark ? [] : bodyNodes),
   addEventListener(){},
   caretRangeFromPoint(){ return null; },
-  createRange(){ return { setStart(){}, setEnd(){}, selectNodeContents(){}, getClientRects(){ return []; }, getBoundingClientRect(){ return { left:0, right:10, top:0, bottom:10, width:10, height:10 }; } }; },
+  createRange(){
+    let startNode = null;
+    return {
+      setStart(node){ startNode = node; },
+      setEnd(){},
+      selectNodeContents(node){ startNode = node; },
+      getClientRects(){ return []; },
+      getBoundingClientRect(){
+        if (startNode && startNode.hidden) return { left:0, right:0, top:0, bottom:0, width:0, height:0 };
+        return { left:0, right:8, top:0, bottom:10, width:8, height:10 };
+      },
+    };
+  },
 };
 global.NodeFilter = { SHOW_TEXT: 4 };
 const listeners = {};
@@ -2449,6 +2534,15 @@ const otherBefore = posts.length;
 click(20, '#note', 2, false);
 const otherButton = posts.slice(otherBefore).filter((post) => post.kind === 'link').length;
 const cross = click(200, 'next.xhtml#fn1', 0, false);
+const encoded = click(200, '#%6Eote', 0, false);
+const encodedFile = click(200, 'chapter%2Exhtml#%6Eote', 0, false);
+const spaced = click(200, 'spaced%20name.xhtml#note', 0, false);
+bodyNodes = [prefix, hidSpace];
+const hidClick = click(200, '#hid', 0, false);
+bodyNodes = [prefix, zeroLetter];
+const zeroClick = click(200, '#zero', 0, false);
+bodyNodes = [prefix, noteSpaces, noteText, tail];
+const empty = click(200, '#mark', 0, false);
 console.log(JSON.stringify({
   link: link[0] || null,
   edgeLink: edgeLink[0] || null,
@@ -2457,5 +2551,11 @@ console.log(JSON.stringify({
   dragLinks,
   otherButton,
   cross: cross[0] || null,
+  encoded: encoded[0] || null,
+  encodedFile: encodedFile[0] || null,
+  spaced: spaced[0] || null,
+  hid: hidClick[0] || null,
+  zero: zeroClick[0] || null,
+  empty: empty[0] || null,
 }));
 "#;
