@@ -2651,9 +2651,7 @@ pub enum SlideAt {
 
 /// The horizontal ease. At 80 ms of the 160 ms turn the page has moved halfway.
 pub fn slide_shift(elapsed_ms: u32, width: f64) -> f64 {
-    let u = (f64::from(elapsed_ms) / 160.0).clamp(0.0, 1.0);
-    let ease = (1.0 - (std::f64::consts::PI * u).cos()) / 2.0;
-    ease * width.max(0.0)
+    glide_shift(0.0, width.max(0.0), elapsed_ms)
 }
 
 /// Start a turn. The same page, including either end, does not start one.
@@ -2723,6 +2721,195 @@ pub fn slide_at(slide: &Slide, elapsed_ms: u32, live_book: u64, width: f64) -> S
         page: slide.from,
         shift: sign * slide_shift(elapsed_ms, width),
     }
+}
+
+/// One point of finger travel is one point of page shift, clamped to the
+/// fitted page. The commit distance stays 48 points. This is not a new gain.
+pub fn finger_shift(travel: f64, width: f64) -> f64 {
+    if !travel.is_finite() || !width.is_finite() || width <= 0.0 {
+        return 0.0;
+    }
+    travel.clamp(-width, width)
+}
+
+/// The same cosine the 160 ms slide already uses, from the finger's offset.
+pub fn glide_shift(from: f64, to: f64, elapsed_ms: u32) -> f64 {
+    if elapsed_ms >= 160 {
+        return to;
+    }
+    let u = f64::from(elapsed_ms) / 160.0;
+    let ease = (1.0 - (std::f64::consts::PI * u).cos()) / 2.0;
+    from + (to - from) * ease
+}
+
+fn page_index(page: u32, pages: u32) -> usize {
+    if pages == 0 {
+        return 0;
+    }
+    (page as usize).saturating_sub(1).min(pages as usize - 1)
+}
+
+fn one_page(delta: i32) -> i32 {
+    if delta < 0 {
+        -1
+    } else if delta > 0 {
+        1
+    } else {
+        0
+    }
+}
+
+/// The neighbor a non-zero shift reveals. A blocked end has no neighbor.
+pub fn finger_neighbor(page: u32, pages: u32, shift: f64) -> Option<usize> {
+    if shift == 0.0 || pages == 0 {
+        return None;
+    }
+    let index = page_index(page, pages);
+    let next = if shift > 0.0 {
+        index.saturating_add(1)
+    } else {
+        index.saturating_sub(1)
+    };
+    (next != index && next < pages as usize).then_some(next)
+}
+
+/// The trackpad glide. A key slide stays a `Slide`. `write` is the page index
+/// stored when the 160 ms glide lands. None returns to the page already shown.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FingerGlide {
+    pub book: u64,
+    pub page: usize,
+    pub from: f64,
+    pub to: f64,
+    pub incoming: Option<usize>,
+    pub write: Option<usize>,
+    pub queued: i32,
+    pub token: u64,
+}
+
+/// What one wheel effect does to the PDF picture. Follow does not write.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PdfWheel {
+    Pass,
+    Follow { shift: f64 },
+    Begin(FingerGlide),
+    Busy { queued: i32 },
+    Drop,
+}
+
+/// The PDF card's answer to one `Swipe::offer` effect. The stage paints it.
+/// `gliding` is a commit already on screen. A return yields to a new finger.
+/// A key slide keeps the picture. A second commit replaces the one queued page.
+pub fn pdf_wheel(
+    effect: WheelMove,
+    token: u64,
+    book: u64,
+    page: u32,
+    pages: u32,
+    width: f64,
+    held: f64,
+    gliding: bool,
+    key_slide: bool,
+) -> PdfWheel {
+    let busy = gliding || key_slide;
+    match effect {
+        WheelMove::Pass | WheelMove::Swallow | WheelMove::Hold => PdfWheel::Pass,
+        WheelMove::Follow(offset) => {
+            if busy {
+                PdfWheel::Pass
+            } else {
+                PdfWheel::Follow {
+                    shift: finger_shift(offset, width),
+                }
+            }
+        }
+        WheelMove::Commit(delta) => {
+            let queued = one_page(delta);
+            if busy {
+                return PdfWheel::Busy { queued };
+            }
+            let index = page_index(page, pages);
+            let next = step_index(index, pages as usize, i64::from(queued));
+            if queued == 0 || next == index {
+                return PdfWheel::Drop;
+            }
+            let to = if queued > 0 {
+                width.max(0.0)
+            } else {
+                -width.max(0.0)
+            };
+            PdfWheel::Begin(FingerGlide {
+                book,
+                page: index,
+                from: held,
+                to,
+                incoming: Some(next),
+                write: Some(next),
+                queued: 0,
+                token,
+            })
+        }
+        WheelMove::Ease(_) | WheelMove::Cancel => {
+            if busy || held == 0.0 {
+                PdfWheel::Drop
+            } else {
+                let index = page_index(page, pages);
+                PdfWheel::Begin(FingerGlide {
+                    book,
+                    page: index,
+                    from: held,
+                    to: 0.0,
+                    incoming: finger_neighbor(page, pages, held),
+                    write: None,
+                    queued: 0,
+                    token: 0,
+                })
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GlideAt {
+    Moving {
+        page: usize,
+        shift: f64,
+        incoming: Option<usize>,
+    },
+    Landed {
+        page: usize,
+        write: Option<usize>,
+        queued: i32,
+        token: u64,
+    },
+    Dropped,
+}
+
+/// The finger-up glide. A changed book writes nothing. The page is written
+/// only when `elapsed_ms` reaches the existing 160 ms and `write` is set.
+pub fn glide_at(glide: &FingerGlide, elapsed_ms: u32, live_book: u64) -> GlideAt {
+    if glide.book != live_book {
+        return GlideAt::Dropped;
+    }
+    if elapsed_ms >= 160 {
+        return GlideAt::Landed {
+            page: glide.write.unwrap_or(glide.page),
+            write: glide.write,
+            queued: glide.queued,
+            token: glide.token,
+        };
+    }
+    GlideAt::Moving {
+        page: glide.page,
+        shift: glide_shift(glide.from, glide.to, elapsed_ms),
+        incoming: glide.incoming,
+    }
+}
+
+/// A resize, immersive enter or leave, or a cross of 818 changes the card.
+/// The finger paint does not survive that. The same card keeps it.
+pub fn card_keeps_finger(old_w: f64, old_h: f64, new_w: f64, new_h: f64) -> bool {
+    old_w.round() as i32 == new_w.round() as i32 && old_h.round() as i32 == new_h.round() as i32
 }
 
 pub fn leave_key(key: LeaveKey, focus: Focus, immersion: Immersion, surface: Surface) -> KeyEffect {
@@ -4125,6 +4312,329 @@ mod tests {
         let returned = crate::form::reading_frame(817.0, 800.0, 0.0, 0.0, true);
         assert_eq!(returned.card, hidden.card);
         assert!(returned.covers);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_finger_moves_the_pdf_page_and_saves_when_the_glide_lands() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-pdf-finger-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = "/books/field.pdf";
+        crate::settings::record_open(&file, book, 4, Some(75), 1).unwrap();
+        let store = crate::settings::SettingsBook { file: &file, book };
+        let width = 400.0;
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mom = |dx: f64| WheelTick {
+            finger: Finger::None,
+            momentum: true,
+            dx,
+            dy: 0.0,
+        };
+
+        let mut swipe = Swipe::default();
+        let first = swipe.offer(down(30.0), 4, 75);
+        let PdfWheel::Follow { shift } = pdf_wheel(first, 0, 1, 4, 75, width, 0.0, false, false)
+        else {
+            panic!("the finger did not move the page");
+        };
+        assert_eq!(shift, 30.0);
+        assert_eq!(store.resume().page, 4);
+
+        let second = swipe.offer(down(50.0), 4, 75);
+        let PdfWheel::Follow { shift } = pdf_wheel(second, 0, 1, 4, 75, width, shift, false, false)
+        else {
+            panic!("the page left the finger");
+        };
+        assert_eq!(shift, 80.0);
+        assert!(landed_progress(4, 0, 4).is_none());
+        assert_eq!(store.resume().page, 4);
+
+        let lift = swipe.offer(up, 4, 75);
+        assert_eq!(lift, WheelMove::Commit(1));
+        let token = swipe.commit_token().unwrap();
+        let mut glide = match pdf_wheel(lift, token, 1, 4, 75, width, 80.0, false, false) {
+            PdfWheel::Begin(glide) => glide,
+            other => panic!("the lift did not start from the finger: {other:?}"),
+        };
+        assert_eq!(glide.from, 80.0);
+        assert_eq!(glide.to, width);
+        assert_eq!(glide.write, Some(4));
+        match glide_at(&glide, 0, 1) {
+            GlideAt::Moving {
+                page,
+                shift,
+                incoming,
+            } => {
+                assert_eq!((page, incoming), (3, Some(4)));
+                assert!((shift - 80.0).abs() < 0.01);
+            }
+            other => panic!("the glide left the finger: {other:?}"),
+        }
+        let mid = glide_shift(80.0, width, 80);
+        match glide_at(&glide, 80, 1) {
+            GlideAt::Moving { shift, .. } => assert!((shift - mid).abs() < 0.01),
+            other => panic!("the glide skipped the existing ease: {other:?}"),
+        }
+        assert!((slide_shift(80, width) - glide_shift(0.0, width, 80)).abs() < 0.01);
+        assert_eq!(store.resume().page, 4);
+        assert_eq!(swipe.commit_token(), Some(token));
+
+        let GlideAt::Landed {
+            write,
+            token: landed_token,
+            queued,
+            page,
+        } = glide_at(&glide, 160, 1)
+        else {
+            panic!("the glide did not land");
+        };
+        assert_eq!((page, write, queued, landed_token), (4, Some(4), 0, token));
+        assert!(swipe.take_commit_post(landed_token));
+        let (written, offset) = landed_progress(4, 0, page as u32 + 1).unwrap();
+        assert_eq!((written, offset), (5, 0));
+        crate::settings::record_progress(&file, book, written, Some(75), offset, "").unwrap();
+        assert_eq!(store.resume().page, 5);
+
+        let mut back = Swipe::default();
+        let held = match pdf_wheel(
+            back.offer(down(20.0), 5, 75),
+            0,
+            1,
+            5,
+            75,
+            width,
+            0.0,
+            false,
+            false,
+        ) {
+            PdfWheel::Follow { shift } => shift,
+            other => panic!("a short finger did not paint: {other:?}"),
+        };
+        assert_eq!(held, 20.0);
+        let short = back.offer(up, 5, 75);
+        assert_eq!(short, WheelMove::Cancel);
+        let returning = match pdf_wheel(short, 0, 1, 5, 75, width, held, false, false) {
+            PdfWheel::Begin(glide) => glide,
+            other => panic!("a short lift did not return: {other:?}"),
+        };
+        assert_eq!(returning.write, None);
+        assert_eq!(returning.to, 0.0);
+        match glide_at(&returning, 160, 1) {
+            GlideAt::Landed { write, .. } => assert_eq!(write, None),
+            other => panic!("the return wrote a page: {other:?}"),
+        }
+        assert_eq!(store.resume().page, 5);
+        let again = back.offer(down(15.0), 5, 75);
+        assert_eq!(again, WheelMove::Follow(15.0));
+        assert_eq!(
+            pdf_wheel(again, 0, 1, 5, 75, width, 0.0, false, false),
+            PdfWheel::Follow { shift: 15.0 }
+        );
+
+        let mut edge = Swipe::default();
+        let blocked = edge.offer(down(-80.0), 1, 75);
+        assert_eq!(blocked, WheelMove::Follow(0.0));
+        assert!(matches!(
+            pdf_wheel(blocked, 0, 1, 1, 75, width, 0.0, false, false),
+            PdfWheel::Follow { shift: 0.0 }
+        ));
+        let eased = edge.offer(up, 1, 75);
+        assert_eq!(eased, WheelMove::Ease(-1));
+        assert_eq!(
+            pdf_wheel(eased, 0, 1, 1, 75, width, 0.0, false, false),
+            PdfWheel::Drop
+        );
+        assert_eq!(store.resume().page, 5);
+
+        let mut reversed = Swipe::default();
+        assert_eq!(reversed.offer(down(30.0), 5, 75), WheelMove::Follow(30.0));
+        assert_eq!(reversed.offer(down(-50.0), 5, 75), WheelMove::Follow(-20.0));
+        assert_eq!(reversed.offer(up, 5, 75), WheelMove::Cancel);
+        let mut turned = Swipe::default();
+        assert_eq!(turned.offer(down(30.0), 5, 75), WheelMove::Follow(30.0));
+        assert_eq!(turned.offer(down(-100.0), 5, 75), WheelMove::Follow(-70.0));
+        let back_page = turned.offer(up, 5, 75);
+        assert_eq!(back_page, WheelMove::Commit(-1));
+        match pdf_wheel(
+            back_page,
+            turned.commit_token().unwrap(),
+            1,
+            5,
+            75,
+            width,
+            -70.0,
+            false,
+            false,
+        ) {
+            PdfWheel::Begin(glide) => {
+                assert_eq!(glide.to, -width);
+                assert_eq!(glide.write, Some(3));
+            }
+            other => panic!("a reversal did not turn back: {other:?}"),
+        }
+        assert_eq!(store.resume().page, 5);
+
+        let mut coast = Swipe::default();
+        assert_eq!(coast.offer(down(48.0), 5, 75), WheelMove::Follow(48.0));
+        assert_eq!(coast.offer(up, 5, 75), WheelMove::Commit(1));
+        assert_eq!(coast.offer(mom(200.0), 6, 75), WheelMove::Swallow);
+        assert_eq!(
+            pdf_wheel(WheelMove::Swallow, 0, 1, 6, 75, width, 0.0, true, false),
+            PdfWheel::Pass
+        );
+        assert_eq!(store.resume().page, 5);
+
+        let queued_finger = coast.offer(down(80.0), 6, 75);
+        assert_eq!(
+            pdf_wheel(queued_finger, 0, 1, 6, 75, width, 0.0, true, false),
+            PdfWheel::Pass
+        );
+        let queued_lift = coast.offer(up, 6, 75);
+        assert_eq!(queued_lift, WheelMove::Commit(1));
+        assert_eq!(
+            pdf_wheel(
+                queued_lift,
+                coast.commit_token().unwrap(),
+                1,
+                6,
+                75,
+                width,
+                0.0,
+                true,
+                false,
+            ),
+            PdfWheel::Busy { queued: 1 }
+        );
+        assert_eq!(coast.offer(down(-90.0), 6, 75), WheelMove::Follow(-90.0));
+        assert_eq!(
+            pdf_wheel(
+                WheelMove::Follow(-90.0),
+                0,
+                1,
+                6,
+                75,
+                width,
+                0.0,
+                true,
+                false,
+            ),
+            PdfWheel::Pass
+        );
+        let replaced = coast.offer(up, 6, 75);
+        assert_eq!(replaced, WheelMove::Commit(-1));
+        assert_eq!(
+            pdf_wheel(
+                replaced,
+                coast.commit_token().unwrap(),
+                1,
+                6,
+                75,
+                width,
+                0.0,
+                true,
+                false,
+            ),
+            PdfWheel::Busy { queued: -1 }
+        );
+        glide.queued = -1;
+        match glide_at(&glide, 80, 1) {
+            GlideAt::Moving { page, .. } => assert_eq!(page, 3),
+            other => panic!("a second finger moved the first page: {other:?}"),
+        }
+        match glide_at(&glide, 160, 1) {
+            GlideAt::Landed { write, queued, .. } => assert_eq!((write, queued), (Some(4), -1)),
+            other => panic!("the queue did not wait: {other:?}"),
+        }
+        let next = begin_slide(1, 75, 4, -1).unwrap();
+        assert_eq!(pdf_turn(&next, 80, 1), PdfTurn::Moving { page: 4 });
+        assert!(landed_progress(5, 0, 5).is_none());
+        assert_eq!(store.resume().page, 5);
+        let PdfTurn::Landed { page, queued } = pdf_turn(&next, 160, 1) else {
+            panic!("the queued page did not land");
+        };
+        assert_eq!((page, queued), (3, 0));
+        let (written, offset) = landed_progress(5, 0, page as u32 + 1).unwrap();
+        assert_eq!((written, offset), (4, 0));
+        crate::settings::record_progress(&file, book, written, Some(75), offset, "").unwrap();
+        assert_eq!(store.resume().page, 4);
+
+        assert_eq!(glide_at(&glide, 160, 9), GlideAt::Dropped);
+        assert_eq!(store.resume().page, 4);
+
+        let page_card = crate::form::page_frame(900.0, 800.0, true, false);
+        let immersed = crate::form::page_frame(900.0, 800.0, true, true);
+        assert!(!card_keeps_finger(
+            page_card.card.w,
+            page_card.card.h,
+            immersed.card.w,
+            immersed.card.h
+        ));
+        let narrow = crate::form::page_frame(817.0, 800.0, false, false);
+        let wide = crate::form::page_frame(818.0, 800.0, true, false);
+        assert!(!card_keeps_finger(
+            narrow.card.w,
+            narrow.card.h,
+            wide.card.w,
+            wide.card.h
+        ));
+        assert!(card_keeps_finger(
+            page_card.card.w,
+            page_card.card.h,
+            page_card.card.w,
+            page_card.card.h
+        ));
+        assert_eq!(store.resume().page, 4);
+
+        let mut huge = Swipe::default();
+        let over = huge.offer(down(900.0), 6, 75);
+        match pdf_wheel(over, 0, 1, 6, 75, width, 0.0, false, false) {
+            PdfWheel::Follow { shift } => assert_eq!(shift, width),
+            other => panic!("the page slid past one page: {other:?}"),
+        }
+        assert_eq!(huge.offer(up, 6, 75), WheelMove::Commit(1));
+        assert_eq!(store.resume().page, 4);
+
+        let mut notch = Swipe::default();
+        let wheel = notch.offer(
+            WheelTick {
+                finger: Finger::None,
+                momentum: false,
+                dx: 48.0,
+                dy: 0.0,
+            },
+            6,
+            75,
+        );
+        assert_eq!(wheel, WheelMove::Commit(1));
+        match pdf_wheel(
+            wheel,
+            notch.commit_token().unwrap(),
+            1,
+            6,
+            75,
+            width,
+            0.0,
+            false,
+            false,
+        ) {
+            PdfWheel::Begin(glide) => assert_eq!((glide.from, glide.to), (0.0, width)),
+            other => panic!("a notch did not use the existing slide: {other:?}"),
+        }
+        assert_eq!(store.resume().page, 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

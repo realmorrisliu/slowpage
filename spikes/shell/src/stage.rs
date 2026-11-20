@@ -308,6 +308,14 @@ fn point_in(view: &StageView, event: &NSEvent) -> (f64, f64) {
 struct PdfMotion {
     slide: crate::visit::Slide,
     started: Instant,
+    /// Zero is a key, Space, or an edge. A trackpad token is taken when the
+    /// slide lands, and a retired token does not write.
+    token: u64,
+}
+
+struct PdfGlide {
+    glide: crate::visit::FingerGlide,
+    started: Instant,
 }
 
 struct PdfView {
@@ -330,6 +338,9 @@ struct State {
     book_path: String,
     book_gen: u64,
     pdf_motion: Option<PdfMotion>,
+    pdf_drag: f64,
+    pdf_glide: Option<PdfGlide>,
+    pdf_card: (f64, f64),
     pdf_swipe: crate::visit::Swipe,
     product: bool,
     pdf_saved_page: u32,
@@ -483,6 +494,7 @@ impl State {
             self.dismiss_web();
         }
         if self.fits_card() {
+            self.note_card();
             let pump = self.finish_pdf_motion();
             self.draw_card_pdf(&ctx, bounds);
             if pump {
@@ -553,6 +565,7 @@ impl State {
             return;
         }
         let page = self.current_page() as u32 + 1;
+        let width = self.fitted_width(self.current_page());
         let effect = self.pdf_swipe.offer(
             crate::visit::WheelTick {
                 finger: crate::visit::finger_bits(phase),
@@ -563,18 +576,91 @@ impl State {
             page,
             pages,
         );
-        match effect {
-            crate::visit::WheelMove::Commit(delta) => {
-                if let Some(token) = self.pdf_swipe.commit_token() {
-                    let _ = self.pdf_swipe.take_commit_post(token);
+        let token = self.pdf_swipe.commit_token().unwrap_or(0);
+        let committing = self
+            .pdf_glide
+            .as_ref()
+            .is_some_and(|glide| glide.glide.write.is_some());
+        let decision = crate::visit::pdf_wheel(
+            effect,
+            token,
+            self.book_gen,
+            page,
+            pages,
+            width,
+            self.pdf_drag,
+            committing,
+            self.pdf_motion.is_some(),
+        );
+        self.apply_pdf_wheel(decision);
+    }
+
+    fn apply_pdf_wheel(&mut self, decision: crate::visit::PdfWheel) {
+        match decision {
+            crate::visit::PdfWheel::Pass => {}
+            crate::visit::PdfWheel::Follow { shift } => {
+                self.pdf_drag = shift;
+                if self
+                    .pdf_glide
+                    .as_ref()
+                    .is_some_and(|glide| glide.glide.write.is_none())
+                {
+                    self.pdf_glide = None;
                 }
-                self.turn_pdf(i64::from(delta));
             }
-            crate::visit::WheelMove::Ease(_) | crate::visit::WheelMove::Cancel => {
-                let _ = self.pdf_swipe.cancel_release();
+            crate::visit::PdfWheel::Begin(glide) => {
+                self.pdf_drag = 0.0;
+                self.pdf_motion = None;
+                self.pdf_glide = Some(PdfGlide {
+                    glide,
+                    started: Instant::now(),
+                });
             }
-            _ => {}
+            crate::visit::PdfWheel::Busy { queued } => {
+                if queued == 0 {
+                    return;
+                }
+                if let Some(glide) = self.pdf_glide.as_mut() {
+                    glide.glide.queued = queued;
+                } else if let Some(motion) = self.pdf_motion.as_mut() {
+                    crate::visit::queue_slide(&mut motion.slide, queued);
+                    if motion.token == 0 {
+                        if let Some(token) = self.pdf_swipe.commit_token() {
+                            let _ = self.pdf_swipe.take_commit_post(token);
+                        }
+                    }
+                }
+            }
+            crate::visit::PdfWheel::Drop => self.pdf_drag = 0.0,
         }
+    }
+
+    fn note_card(&mut self) {
+        let card = self.card_frame().card;
+        let (old_w, old_h) = self.pdf_card;
+        let finger = self.pdf_drag != 0.0
+            || self.pdf_glide.is_some()
+            || self
+                .pdf_motion
+                .as_ref()
+                .is_some_and(|motion| motion.token != 0);
+        if old_w > 1.0 && finger && !crate::visit::card_keeps_finger(old_w, old_h, card.w, card.h) {
+            self.drop_pdf_finger();
+        }
+        self.pdf_card = (card.w, card.h);
+    }
+
+    fn drop_pdf_finger(&mut self) {
+        self.pdf_drag = 0.0;
+        self.pdf_glide = None;
+        if self
+            .pdf_motion
+            .as_ref()
+            .is_some_and(|motion| motion.token != 0)
+        {
+            self.pdf_motion = None;
+        }
+        let _ = self.pdf_swipe.cancel_release();
     }
 
     fn pinch(&mut self, mag: f64) {
@@ -922,26 +1008,50 @@ impl State {
     }
 
     fn pdf_shift(&self, index: usize) -> (usize, Option<usize>, f64) {
-        let Some(motion) = &self.pdf_motion else {
-            return (index, None, 0.0);
-        };
-        let elapsed = motion
-            .started
-            .elapsed()
-            .as_millis()
-            .min(u128::from(u32::MAX)) as u32;
-        match crate::visit::slide_at(&motion.slide, elapsed, self.book_gen, 1.0) {
-            crate::visit::SlideAt::Moving { page, .. } => {
-                let width = self.fitted_width(page);
-                let shift =
-                    match crate::visit::slide_at(&motion.slide, elapsed, self.book_gen, width) {
+        if let Some(motion) = &self.pdf_motion {
+            let elapsed = motion
+                .started
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u32::MAX)) as u32;
+            match crate::visit::slide_at(&motion.slide, elapsed, self.book_gen, 1.0) {
+                crate::visit::SlideAt::Moving { page, .. } => {
+                    let width = self.fitted_width(page);
+                    let shift = match crate::visit::slide_at(
+                        &motion.slide,
+                        elapsed,
+                        self.book_gen,
+                        width,
+                    ) {
                         crate::visit::SlideAt::Moving { shift, .. } => shift,
                         _ => 0.0,
                     };
-                (page, Some(motion.slide.to), shift)
+                    return (page, Some(motion.slide.to), shift);
+                }
+                _ => return (index, None, 0.0),
             }
-            _ => (index, None, 0.0),
         }
+        if let Some(glide) = &self.pdf_glide {
+            let elapsed = glide
+                .started
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u32::MAX)) as u32;
+            return match crate::visit::glide_at(&glide.glide, elapsed, self.book_gen) {
+                crate::visit::GlideAt::Moving {
+                    page,
+                    shift,
+                    incoming,
+                } => (page, incoming, shift),
+                _ => (index, None, 0.0),
+            };
+        }
+        if self.pdf_drag != 0.0 {
+            let pages = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0) as u32;
+            let incoming = crate::visit::finger_neighbor(index as u32 + 1, pages, self.pdf_drag);
+            return (index, incoming, self.pdf_drag);
+        }
+        (index, None, 0.0)
     }
 
     fn fitted_width(&self, index: usize) -> f64 {
@@ -995,6 +1105,12 @@ impl State {
     }
 
     fn finish_pdf_motion(&mut self) -> bool {
+        let key = self.finish_key_slide();
+        let finger = self.finish_finger_glide();
+        key || finger
+    }
+
+    fn finish_key_slide(&mut self) -> bool {
         let Some(motion) = self.pdf_motion.take() else {
             return false;
         };
@@ -1010,14 +1126,58 @@ impl State {
                 true
             }
             crate::visit::PdfTurn::Landed { page, queued } => {
-                if let Some(pdf) = self.pdf.as_ref() {
-                    let sizes = pdf.sizes.clone();
-                    self.offset = page_offset(&sizes, page as u32 + 1, self.scale);
+                let accept = motion.token == 0 || self.pdf_swipe.take_commit_post(motion.token);
+                if accept {
+                    if let Some(pdf) = self.pdf.as_ref() {
+                        let sizes = pdf.sizes.clone();
+                        self.offset = page_offset(&sizes, page as u32 + 1, self.scale);
+                    }
+                    self.note_page();
+                    self.publish();
                 }
-                self.note_page();
-                self.publish();
                 if queued != 0 {
-                    self.start_pdf_slide(i64::from(queued));
+                    let token = self.pdf_swipe.commit_token().unwrap_or(0);
+                    self.begin_pdf_slide(i64::from(queued), token);
+                }
+                self.pdf_motion.is_some()
+            }
+        }
+    }
+
+    fn finish_finger_glide(&mut self) -> bool {
+        let Some(glide) = self.pdf_glide.take() else {
+            return false;
+        };
+        let elapsed = glide
+            .started
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u32::MAX)) as u32;
+        match crate::visit::glide_at(&glide.glide, elapsed, self.book_gen) {
+            crate::visit::GlideAt::Dropped => false,
+            crate::visit::GlideAt::Moving { .. } => {
+                self.pdf_glide = Some(glide);
+                true
+            }
+            crate::visit::GlideAt::Landed {
+                page,
+                write,
+                queued,
+                token,
+            } => {
+                let accept =
+                    write.is_some() && (token == 0 || self.pdf_swipe.take_commit_post(token));
+                if accept {
+                    if let Some(pdf) = self.pdf.as_ref() {
+                        let sizes = pdf.sizes.clone();
+                        self.offset = page_offset(&sizes, page as u32 + 1, self.scale);
+                    }
+                    self.note_page();
+                    self.publish();
+                }
+                if queued != 0 {
+                    let next = self.pdf_swipe.commit_token().unwrap_or(0);
+                    self.begin_pdf_slide(i64::from(queued), next);
                 }
                 self.pdf_motion.is_some()
             }
@@ -1025,6 +1185,10 @@ impl State {
     }
 
     fn start_pdf_slide(&mut self, delta: i64) -> bool {
+        self.begin_pdf_slide(delta, 0)
+    }
+
+    fn begin_pdf_slide(&mut self, delta: i64, token: u64) -> bool {
         let Some(pdf) = self.pdf.as_ref() else {
             return false;
         };
@@ -1034,9 +1198,12 @@ impl State {
         else {
             return false;
         };
+        self.pdf_drag = 0.0;
+        self.pdf_glide = None;
         self.pdf_motion = Some(PdfMotion {
             slide,
             started: Instant::now(),
+            token,
         });
         true
     }
@@ -1087,6 +1254,19 @@ impl State {
 
     fn turn_pdf(&mut self, delta: i64) {
         let _ = self.pdf_swipe.abandon();
+        self.pdf_drag = 0.0;
+        if let Some(glide) = self.pdf_glide.as_mut() {
+            if glide.glide.write.is_some() && glide.glide.book == self.book_gen {
+                glide.glide.queued = if delta < 0 { -1 } else { 1 };
+                if let Some(token) = self.pdf_swipe.commit_token() {
+                    if token != glide.glide.token {
+                        self.pdf_swipe.retire(token);
+                    }
+                }
+                return;
+            }
+        }
+        self.pdf_glide = None;
         if let Some(motion) = self.pdf_motion.as_mut() {
             if motion.slide.book == self.book_gen {
                 crate::visit::queue_slide(&mut motion.slide, delta as i32);
@@ -1114,6 +1294,9 @@ impl State {
         let mut page = page.max(1);
         self.book_gen = self.book_gen.wrapping_add(1);
         self.pdf_motion = None;
+        self.pdf_drag = 0.0;
+        self.pdf_glide = None;
+        self.pdf_card = (0.0, 0.0);
         let _ = self.pdf_swipe.abandon();
         self.page_total = None;
         crate::web::set_book(&book.path);
@@ -1927,6 +2110,9 @@ impl Stage {
             book_path: String::new(),
             book_gen: 1,
             pdf_motion: None,
+            pdf_drag: 0.0,
+            pdf_glide: None,
+            pdf_card: (0.0, 0.0),
             pdf_swipe: crate::visit::Swipe::default(),
             product: false,
             pdf_saved_page: 0,
