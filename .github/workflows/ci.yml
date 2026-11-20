@@ -83,13 +83,77 @@ jobs:
             a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
             fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
+            epub_open_keeps_the_shelf_scroll_and_returns_the_page \
+            pdf_open_keeps_the_shelf_scroll_and_returns_the_page \
+            leave_keys_skip_editing_and_immersive \
+            an_empty_path_and_a_bad_offset_do_not_move_the_shelf \
+            the_shell_shows_the_library_or_the_existing_reader \
+            a_wheel_on_the_reader_reaches_the_page_and_returns_to_the_shelf \
+            a_file_open_while_running_switches_books_and_refuses_a_bad_file \
+            a_page_key_turns_one_page_and_stops_at_the_ends \
+            a_click_on_the_page_edge_turns_and_the_middle_does_not \
+            a_reopen_keeps_the_sentence_on_the_same_page \
+            a_stored_sentence_round_trips \
+            a_chapter_choice_lands_on_that_sentence_and_returns \
+            chinese_footer_matches_the_books_line \
+            space_and_shift_space_use_the_existing_page_turn \
+            a_title_or_author_query_filters_the_shelf_and_clears \
+            a_trackpad_swipe_follows_cancels_and_commits_once \
+            a_key_during_the_release_still_turns \
+            a_direct_file_arms_the_wheel_without_the_shelf \
+            a_release_stays_open_until_chapter_or_resize_cancels_it \
+            a_reveal_during_the_release_does_not_post \
+            a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
+            a_second_finger_key_keeps_the_committed_page \
+            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it \
+            a_long_chapter_commit_is_never_dropped \
+            a_second_commit_and_a_long_chapter_post_every_token \
+            a_finished_page_is_saved_before_chapter_or_resize \
+            a_finished_swipe_is_the_place_a_later_open_reads \
+            a_page_resume_does_not_store_the_columns_it_crosses \
+            a_resume_walk_ends_when_the_reader_moves \
+            a_taken_turn_is_the_page_the_resume_stops_on \
+            a_resize_keeps_the_saved_page_until_the_anchor_lands \
+            a_hold_reads_the_column_character \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
             an_explicit_file_resumes_its_stored_page \
             a_reader_forcing_launch_is_not_the_shelf_and_does_not_take_the_place \
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
-            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice
+            fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
+            epub_open_keeps_the_shelf_scroll_and_returns_the_page \
+            pdf_open_keeps_the_shelf_scroll_and_returns_the_page \
+            leave_keys_skip_editing_and_immersive \
+            an_empty_path_and_a_bad_offset_do_not_move_the_shelf \
+            the_shell_shows_the_library_or_the_existing_reader \
+            a_wheel_on_the_reader_reaches_the_page_and_returns_to_the_shelf \
+            a_file_open_while_running_switches_books_and_refuses_a_bad_file \
+            a_page_key_turns_one_page_and_stops_at_the_ends \
+            a_click_on_the_page_edge_turns_and_the_middle_does_not \
+            a_reopen_keeps_the_sentence_on_the_same_page \
+            a_stored_sentence_round_trips \
+            a_chapter_choice_lands_on_that_sentence_and_returns \
+            chinese_footer_matches_the_books_line \
+            space_and_shift_space_use_the_existing_page_turn \
+            a_title_or_author_query_filters_the_shelf_and_clears \
+            a_trackpad_swipe_follows_cancels_and_commits_once \
+            a_key_during_the_release_still_turns \
+            a_direct_file_arms_the_wheel_without_the_shelf \
+            a_release_stays_open_until_chapter_or_resize_cancels_it \
+            a_reveal_during_the_release_does_not_post \
+            a_delayed_reveal_does_not_let_the_lift_replace_the_pin \
+            a_second_finger_key_keeps_the_committed_page \
+            a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it \
+            a_long_chapter_commit_is_never_dropped \
+            a_second_commit_and_a_long_chapter_post_every_token \
+            a_finished_page_is_saved_before_chapter_or_resize \
+            a_finished_swipe_is_the_place_a_later_open_reads \
+            a_page_resume_does_not_store_the_columns_it_crosses \
+            a_resume_walk_ends_when_the_reader_moves \
+            a_taken_turn_is_the_page_the_resume_stops_on \
+            a_resize_keeps_the_saved_page_until_the_anchor_lands \
+            a_hold_reads_the_column_character
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done
@@ -211,6 +275,9 @@ jobs:
       - name: Reject fast model ids in agent text
         working-directory: ${{ github.workspace }}
         run: sh scripts/lint-no-fast-models.sh
+      - name: Harness gates
+        working-directory: ${{ github.workspace }}
+        run: sh scripts/harness-check
       - name: Prebuilt binary sha and source gate
         working-directory: ${{ github.workspace }}
         run: |

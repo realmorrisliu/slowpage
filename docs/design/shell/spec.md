@@ -68,7 +68,7 @@ The chat panel exists only in Full. It is 320 points wide and sits on the gray b
 
 The header shows an avatar, the name **Slowpage**, and the subtitle **你的阅读助手**. The body is the conversation. The bottom is a rounded field. The placeholder is **问问 Slowpage…**.
 
-Shell slices build this frame and the empty state. They do not embed alan, and they do not speak alan's socket protocol. A later change can host alan in this panel. The one-shot `@alan` comment path in `docs/design/north-star.md` stays as written.
+Shell slices build this frame and the empty state. They do not embed alan. The 2026-11-17 embed decision is in `docs/design/north-star.md`. Integration starts after S3 and S4.
 
 Hiding the chat panel widens the card. The card stays inset 6 points from the base. Hiding the chat panel does not enter immersive reading.
 
@@ -112,7 +112,7 @@ Choosing **全部书籍** closes the book and returns to Full. The sidebar is sh
 
 Control-Command-I, written ⌃⌘I, the View menu item, and the toolbar button toggle immersive reading while a book is open. They enter it when it is off, and they leave it when it is on. With no book open, all three do nothing.
 
-Escape leaves immersive reading and does not enter it. Leaving immersive reading returns to Page and panel. The sidebar stays hidden, the annotation margin is shown, and the inset returns to 6 points. Escape does nothing to the form when immersive reading is already off.
+Escape leaves immersive reading and does not enter it. Leaving immersive reading returns to Page and panel. The sidebar stays hidden, the annotation margin is shown, and the inset returns to 6 points. When immersive reading is off and a book is open, Escape, Command-[, and the back button leave the book and return to Full. Full is the library card. That check is in `docs/design/reading-interactions.md`.
 
 The sidebar toggle in Full hides or shows the sidebar. The card keeps the library. The chat panel does not change. The inset stays 6 points. Hiding the sidebar does not open a book.
 
@@ -187,6 +187,6 @@ Each slice is a thin cut of this form. The order is fixed.
 
 1. S1 builds the gray base, the 220 point sidebar, the white card, and the chat panel frame, including empty states. It replaces the bare shelf window and removes the three paths above.
 2. S2 fills the card with the cover grid and **继续阅读**, from `Catalog`.
-3. S3 builds Page and panel with the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits for the margin mockup named above.
+3. S3 builds Page and panel with the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits for the margin mockup named above. The interaction checks are in `docs/design/reading-interactions.md`.
 4. S4 builds immersive reading.
 5. S5 polishes motion. Night mode and a theme switch stay out, under the 2026-11-03 rule. Light and dark join S5 only if a later decision revises that rule.

@@ -159,8 +159,18 @@ pub struct Inbox {
     pub reload: bool,
     pub did_reload: bool,
     pub turn_started: Option<Instant>,
+    /// The last `turn_command` returned `no`. The poll latch clears; the walk stays.
+    pub turn_declined: bool,
     pub hold: Option<u32>,
+    pub hold_probe: u64,
+    pub hold_missed: bool,
+    pub figure: Option<String>,
+    pub figure_lost: bool,
+    pub sentence: Option<u32>,
     pub pinned: Option<u32>,
+    pub pin_missed: bool,
+    pub await_nav: bool,
+    pub nav_done: bool,
     pub sample: Option<serde_json::Value>,
     pub gap_ratio: Option<f64>,
     pub page_w: f64,
@@ -191,6 +201,27 @@ pub struct Inbox {
     pub footer_size: String,
     pub measure_left: Option<f64>,
     pub measure_right: Option<f64>,
+}
+
+impl Inbox {
+    pub(crate) fn keep_figure(
+        &mut self,
+        value: &serde_json::Value,
+        probe: u64,
+        known: Option<&str>,
+    ) {
+        crate::visit::keep_message_figure(
+            &mut self.figure,
+            &mut self.figure_lost,
+            value,
+            probe,
+            known,
+        );
+    }
+
+    pub(crate) fn clear_figure(&mut self) {
+        crate::visit::drop_figure_mail(&mut self.figure, &mut self.figure_lost);
+    }
 }
 
 define_class!(
@@ -264,100 +295,144 @@ define_class!(
                 if !self.ivars().reports.get() {
                     return;
                 }
-                if let (Some(page), Some(pages)) = (value["page"].as_u64(), value["pages"].as_u64())
-                {
-                    let mut inbox = self.ivars().inbox.borrow_mut();
-                    let previous = inbox.pages;
-                    inbox.pages = Some((page as usize, pages as usize));
-                    if let Some(tofu) = value["tofu"].as_u64() {
-                        inbox.tofu = tofu as u32;
+                let place_message = value.get("page").is_some()
+                    || value.get("swipe").is_some()
+                    || value.get("frames").is_some()
+                    || value["kind"] == "turn";
+                if place_message {
+                    let href = self.ivars().href.borrow().clone();
+                    let report = crate::visit::page_report(&value);
+                    let applied = handle_script(&value, &href);
+                    {
+                        let (probe, known) = SESSION.with(|session| {
+                            let reader = &session.borrow().reader;
+                            (reader.probe, reader.figure.clone())
+                        });
+                        let mut inbox = self.ivars().inbox.borrow_mut();
+                        inbox.keep_figure(&value, probe, known.as_deref());
                     }
-                    if let Some(gap) = value["cjk_gap"].as_u64() {
-                        inbox.cjk_gap = gap as u32;
+                    if !applied.paint {
+                        return;
                     }
-                    if let Some(scroll) = value["sx"].as_f64() {
-                        inbox.scroll = scroll;
-                    }
-                    if let Some(hold) = value["hold"].as_u64() {
-                        inbox.hold = Some(hold as u32);
-                    }
-                    if let Some(pinned) = value["pinned"].as_u64() {
-                        inbox.pinned = Some(pinned as u32);
-                    }
-                    if value.get("sample").map(|item| !item.is_null()).unwrap_or(false) {
-                        inbox.sample = Some(value["sample"].clone());
-                    }
-                    if let Some(source) = value["layout"]["break_source"].as_str() {
-                        inbox.break_source = Some(source.to_string());
-                    }
-                    if value.get("layout").is_some_and(|item| !item.is_null()) {
-                        if value["layout"]["gap_ratio"].is_null() {
-                            inbox.gap_ratio = None;
-                        } else if let Some(ratio) = value["layout"]["gap_ratio"].as_f64() {
+                    let turn = report.token.is_some() || (report.kind == "turn" && !report.chase);
+                    if let (Some(page), Some(pages)) =
+                        (value["page"].as_u64(), value["pages"].as_u64())
+                    {
+                        let mut inbox = self.ivars().inbox.borrow_mut();
+                        let previous = inbox.pages;
+                        inbox.pages = Some((page as usize, pages as usize));
+                        inbox.sentence = value["sentence"].as_u64().map(|offset| offset as u32);
+                        if !turn {
+                            if let Some(missed) = value["missed"].as_bool() {
+                                inbox.pin_missed = missed;
+                            }
+                            if let Some(pinned) = value["pinned"].as_u64() {
+                                inbox.pinned = Some(pinned as u32);
+                            }
+                        }
+                        if let Some(tofu) = value["tofu"].as_u64() {
+                            inbox.tofu = tofu as u32;
+                        }
+                        if let Some(gap) = value["cjk_gap"].as_u64() {
+                            inbox.cjk_gap = gap as u32;
+                        }
+                        if let Some(scroll) = value["sx"].as_f64() {
+                            inbox.scroll = scroll;
+                        }
+                        if let Some(hold) = value["hold"].as_u64() {
+                            inbox.hold = Some(hold as u32);
+                            inbox.hold_probe = value["probe"].as_u64().unwrap_or(0);
+                            inbox.hold_missed = false;
+                            inbox.figure = None;
+                            inbox.figure_lost = false;
+                        } else if value["missed"].as_bool() == Some(true)
+                            && value.get("pinned").is_none()
+                            && value.get("figure").is_none()
+                        {
+                            let generation = value["probe"].as_u64().unwrap_or(0);
+                            let current = SESSION.with(|session| session.borrow().reader.probe);
+                            if generation == current {
+                                inbox.hold = None;
+                                inbox.hold_probe = generation;
+                                inbox.hold_missed = true;
+                            }
+                        }
+                        if value.get("sample").map(|item| !item.is_null()).unwrap_or(false) {
+                            inbox.sample = Some(value["sample"].clone());
+                        }
+                        if let Some(source) = value["layout"]["break_source"].as_str() {
+                            inbox.break_source = Some(source.to_string());
+                        }
+                        if value.get("layout").is_some_and(|item| !item.is_null()) {
+                            if value["layout"]["gap_ratio"].is_null() {
+                                inbox.gap_ratio = None;
+                            } else if let Some(ratio) = value["layout"]["gap_ratio"].as_f64() {
+                                inbox.gap_ratio = Some(ratio);
+                            }
+                            inbox.layout = Some(value["layout"].clone());
+                        } else if let Some(ratio) = value["gap_ratio"].as_f64() {
                             inbox.gap_ratio = Some(ratio);
                         }
-                        inbox.layout = Some(value["layout"].clone());
-                    } else if let Some(ratio) = value["gap_ratio"].as_f64() {
-                        inbox.gap_ratio = Some(ratio);
-                    }
-                    if let Some(view_w) = value["view_w"].as_f64() {
-                        inbox.view_w = view_w;
-                    }
-                    if inbox.page_ready_ms.is_none()
-                        && value["layout"]["ready"] == true
-                        && (inbox.view_w - inbox.page_w).abs() < 1.0
-                        && inbox.page_w > 1.0
-                    {
-                        inbox.page_ready_ms =
-                            Some(self.ivars().opened.elapsed().as_secs_f64() * 1000.0);
-                        inbox.ready_since_process_ms = since_process_ms();
-                    }
-                    if let Some(leaf) = value["leaf"].as_bool() {
-                        inbox.leaf = leaf;
-                    }
-                    inbox.fill_gap = value["fill_gap"].as_f64();
-                    inbox.line_h = value["line_h"].as_f64();
-                    inbox.last_bottom = value["last_bottom"].as_f64();
-                    inbox.footer_text_top = value["footer_text_top"].as_f64();
-                    inbox.footer_left = value["footer_left"].as_f64();
-                    inbox.footer_right = value["footer_right"].as_f64();
-                    if let Some(font) = value["footer_font"].as_str() {
-                        inbox.footer_font = font.to_string();
-                    }
-                    if let Some(variant) = value["footer_variant"].as_str() {
-                        inbox.footer_variant = variant.to_string();
-                    }
-                    if let Some(size) = value["footer_size"].as_str() {
-                        inbox.footer_size = size.to_string();
-                    }
-                    inbox.measure_left = value["measure_left"].as_f64();
-                    inbox.measure_right = value["measure_right"].as_f64();
-                    if let Some(plain) = value["plain"].as_str() {
-                        if !plain.is_empty() {
-                            inbox.plain = plain.to_string();
+                        if let Some(view_w) = value["view_w"].as_f64() {
+                            inbox.view_w = view_w;
                         }
-                    }
-                    if let Some(items) = value.get("bold_prefixes").and_then(|item| item.as_array())
-                    {
-                        inbox.bold_prefixes = items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(str::to_string))
-                            .collect();
-                    }
-                    if let Some(frames) = value.get("frames").and_then(|item| item.as_array()) {
-                        inbox.frame_ms.extend(frames.iter().filter_map(|item| item.as_f64()));
-                    }
-                    if previous.is_some() && previous != inbox.pages {
-                        if let Some(started) = inbox.turn_started.take() {
-                            inbox.turn_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+                        if inbox.page_ready_ms.is_none()
+                            && value["layout"]["ready"] == true
+                            && (inbox.view_w - inbox.page_w).abs() < 1.0
+                            && inbox.page_w > 1.0
+                        {
+                            inbox.page_ready_ms =
+                                Some(self.ivars().opened.elapsed().as_secs_f64() * 1000.0);
+                            inbox.ready_since_process_ms = since_process_ms();
                         }
-                    }
-                    drop(inbox);
-                    let href = self.ivars().href.borrow().clone();
-                    write_inbox(&self.ivars().inbox.borrow(), &href);
-                    crate::web::poke(self);
-                    if let Some(hook) = self.ivars().hook.borrow().clone() {
-                        hook(&value);
+                        if let Some(leaf) = value["leaf"].as_bool() {
+                            inbox.leaf = leaf;
+                        }
+                        inbox.fill_gap = value["fill_gap"].as_f64();
+                        inbox.line_h = value["line_h"].as_f64();
+                        inbox.last_bottom = value["last_bottom"].as_f64();
+                        inbox.footer_text_top = value["footer_text_top"].as_f64();
+                        inbox.footer_left = value["footer_left"].as_f64();
+                        inbox.footer_right = value["footer_right"].as_f64();
+                        if let Some(font) = value["footer_font"].as_str() {
+                            inbox.footer_font = font.to_string();
+                        }
+                        if let Some(variant) = value["footer_variant"].as_str() {
+                            inbox.footer_variant = variant.to_string();
+                        }
+                        if let Some(size) = value["footer_size"].as_str() {
+                            inbox.footer_size = size.to_string();
+                        }
+                        inbox.measure_left = value["measure_left"].as_f64();
+                        inbox.measure_right = value["measure_right"].as_f64();
+                        if let Some(plain) = value["plain"].as_str() {
+                            if !plain.is_empty() {
+                                inbox.plain = plain.to_string();
+                            }
+                        }
+                        if let Some(items) = value.get("bold_prefixes").and_then(|item| item.as_array())
+                        {
+                            inbox.bold_prefixes = items
+                                .iter()
+                                .filter_map(|item| item.as_str().map(str::to_string))
+                                .collect();
+                        }
+                        if let Some(frames) = value.get("frames").and_then(|item| item.as_array()) {
+                            inbox.frame_ms.extend(frames.iter().filter_map(|item| item.as_f64()));
+                        }
+                        if previous.is_some() && previous != inbox.pages {
+                            if let Some(started) = inbox.turn_started.take() {
+                                inbox.turn_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+                            }
+                        }
+                        drop(inbox);
+                        let href = self.ivars().href.borrow().clone();
+                        write_inbox(&self.ivars().inbox.borrow(), &href);
+                        crate::web::poke(self);
+                        if let Some(hook) = self.ivars().hook.borrow().clone() {
+                            hook(&value);
+                        }
+                        return;
                     }
                     return;
                 }
@@ -399,6 +474,13 @@ define_class!(
             }
             if !self.ivars().reports.get() {
                 return;
+            }
+            let waiting = self.ivars().inbox.borrow().await_nav;
+            if waiting {
+                let mut inbox = self.ivars().inbox.borrow_mut();
+                inbox.await_nav = false;
+                inbox.nav_done = true;
+                inbox.pages = None;
             }
             let open_ms = self.ivars().opened.elapsed().as_secs_f64() * 1000.0;
             {
@@ -537,9 +619,24 @@ fn eval(web: &AnyObject, js: &str, inbox: Rc<RefCell<Inbox>>, href: String, turn
         let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
             return;
         };
+        if parsed.get("swipe").is_some() {
+            if let Some(answer) = parsed["answer"].as_str() {
+                let token = parsed["swipe"].as_u64().unwrap_or(0);
+                SESSION
+                    .with(|session| session.borrow_mut().reader.swipe.note_answer(token, answer));
+            }
+            return;
+        }
+        if let Some(answer) = parsed["answer"].as_str() {
+            if !crate::visit::turn_accepted(answer) {
+                inbox.borrow_mut().turn_declined = true;
+            }
+            return;
+        }
         let mut inbox = inbox.borrow_mut();
         if let (Some(page), Some(pages)) = (parsed["page"].as_u64(), parsed["pages"].as_u64()) {
             inbox.pages = Some((page as usize, pages as usize));
+            inbox.sentence = parsed["sentence"].as_u64().map(|offset| offset as u32);
         }
         if turn {
             if let Some(ms) = parsed["ms"].as_f64() {
@@ -602,8 +699,9 @@ fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool) -> Vec<u8> {
     let justify =
         crate::reading::justify_source(std::env::var("SPIKE_JUSTIFY").as_deref() != Ok("0"));
     let starts = if bold { "true" } else { "false" };
+    let load = SESSION.with(|session| session.borrow().reader.restore_load);
     let script = format!(
-        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
+        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
         crate::reading::page_script(language)
     );
     if let Some(at) = html.to_ascii_lowercase().rfind("</body>") {
@@ -649,6 +747,7 @@ struct Slot {
     scripted: bool,
 }
 
+#[derive(Clone)]
 pub struct WebChapter {
     slot: Rc<RefCell<Slot>>,
     pub inbox: Rc<RefCell<Inbox>>,
@@ -657,11 +756,15 @@ pub struct WebChapter {
 }
 
 impl WebChapter {
-    pub fn open(parent: &AnyObject, path: &str) -> Result<Self, String> {
+    pub fn open(parent: &AnyObject, path: &str, resume: &str) -> Result<Self, String> {
         ensure_webkit();
         let packed = pack(path)?;
-        let href = packed.href.clone();
         let spine = packed.spine.clone();
+        let index = crate::visit::spine_index(&spine, resume);
+        let href = spine
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| packed.href.clone());
         let language = packed.language.clone();
         let declared = packed.declared_page;
         let book_title = packed.title.clone();
@@ -719,6 +822,7 @@ impl WebChapter {
             let nsurl = objc2_foundation::NSURL::URLWithString(&url).ok_or("url")?;
             let request: Retained<AnyObject> =
                 msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+            reset_restore_epoch();
             let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
         }
         let slot = Rc::new(RefCell::new(Slot {
@@ -726,7 +830,7 @@ impl WebChapter {
             shown_web: web,
             shown_edge: edge,
             shown_href: href,
-            shown_index: 0,
+            shown_index: index,
             shown_handler: handler.clone(),
             inbox: inbox.clone(),
             scripted: false,
@@ -796,11 +900,24 @@ impl WebChapter {
         place_pair(&web, &edge, x, y, width, height, zoom);
     }
 
-    pub fn hold(&self) {
+    pub fn measure(&self, page: u32, probe: u64) {
         let (web, _, href) = self.shown();
         eval(
             &web,
-            "window.spikeHold&&window.spikeHold()",
+            &crate::visit::hold_eval(page, probe),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    pub fn align(&self, id: &str) {
+        self.drop_swipe();
+        let quoted = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".to_string());
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeAlign&&window.spikeAlign({quoted})"),
             self.inbox.clone(),
             href,
             false,
@@ -808,6 +925,9 @@ impl WebChapter {
     }
 
     pub fn reveal(&self, offset: u32) {
+        // Stop an animation that has not posted. A commit that already posted
+        // keeps its token, and the walk keeps its goal.
+        self.drop_swipe();
         let (web, _, href) = self.shown();
         eval(
             &web,
@@ -818,15 +938,63 @@ impl WebChapter {
         );
     }
 
-    pub fn turn(&self, delta: i32) {
+    pub fn turn(&self, delta: i32, source: crate::visit::TurnSource) {
         self.inbox.borrow_mut().turn_started = Some(Instant::now());
         let (web, _, href) = self.shown();
+        let (target, ack, load) = SESSION.with(|session| {
+            let reader = &mut session.borrow_mut().reader;
+            let ack = if source == crate::visit::TurnSource::Restore {
+                let ack = reader.restore_ack;
+                reader.restore_ack = false;
+                ack
+            } else {
+                false
+            };
+            (reader.walk.unwrap_or(0), ack, reader.restore_load)
+        });
         eval(
             &web,
-            &format!("window.spikeTurn({delta})"),
+            &crate::visit::turn_command(delta, source, target, ack, load),
             self.inbox.clone(),
             href,
             true,
+        );
+    }
+
+    pub fn drop_swipe(&self) {
+        let (web, _, href) = self.shown();
+        let load = SESSION.with(|session| session.borrow().reader.restore_load);
+        eval(
+            &web,
+            &crate::visit::drop_command(load),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    pub fn follow(&self, offset: f64) {
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeFollow&&window.spikeFollow({offset})"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    pub fn release_swipe(&self, delta: i32, token: u64) {
+        if delta != 0 {
+            self.inbox.borrow_mut().turn_started = Some(Instant::now());
+        }
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &crate::visit::release_command(delta, token),
+            self.inbox.clone(),
+            href,
+            delta != 0,
         );
     }
 
@@ -845,6 +1013,39 @@ impl WebChapter {
 
     pub fn href(&self) -> String {
         self.slot.borrow().shown_href.clone()
+    }
+
+    pub fn spine(&self) -> Vec<String> {
+        self.slot.borrow().spine.clone()
+    }
+
+    pub fn show_chapter(&self, index: usize) -> Option<String> {
+        let (web, href) = {
+            let mut slot = self.slot.borrow_mut();
+            let href = slot.spine.get(index)?.clone();
+            slot.shown_index = index;
+            slot.shown_href = href.clone();
+            let handler = slot.shown_handler.clone();
+            handler.ivars().href.replace(href.clone());
+            let mut inbox = slot.inbox.borrow_mut();
+            inbox.pages = None;
+            inbox.pinned = None;
+            inbox.pin_missed = false;
+            inbox.await_nav = true;
+            inbox.nav_done = false;
+            inbox.clear_figure();
+            (slot.shown_web.clone(), href)
+        };
+        unsafe {
+            let url = NSString::from_str(&format!("epub://book{href}"));
+            if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
+                let request: Retained<AnyObject> =
+                    msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+                reset_restore_epoch();
+                let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
+            }
+        }
+        Some(href)
     }
 
     pub fn set_page_target(&self, width: f64) {
@@ -885,19 +1086,29 @@ impl WebChapter {
     }
 
     pub fn reload_source(&self) {
+        {
+            let mut inbox = self.inbox.borrow_mut();
+            inbox.clear_figure();
+        }
         let (web, _, href) = self.shown();
         unsafe {
             let url = NSString::from_str(&format!("epub://book{href}"));
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+                reset_restore_epoch();
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
         }
     }
 
     pub fn reload(&self) {
+        {
+            let mut inbox = self.inbox.borrow_mut();
+            inbox.clear_figure();
+        }
         let (web, _, _) = self.shown();
+        reset_restore_epoch();
         unsafe {
             let _: Option<Retained<AnyObject>> = msg_send![&web, reload];
         }
@@ -978,7 +1189,11 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                         handler.ivars().href.replace(href.clone());
                         handler.ivars().chapter_started.set(Some(Instant::now()));
                         handler.ivars().chapter_armed.set(false);
-                        handler.ivars().inbox.borrow_mut().chapter_ms = None;
+                        {
+                            let mut inbox = handler.ivars().inbox.borrow_mut();
+                            inbox.chapter_ms = None;
+                            inbox.clear_figure();
+                        }
                         launch = Some((web, href));
                     }
                 }
@@ -992,8 +1207,223 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
+                reset_restore_epoch();
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
+        }
+    }
+}
+
+struct Session {
+    reader: crate::visit::Reader,
+    book: String,
+}
+
+thread_local! {
+    static SWIPE_SHOWN: RefCell<Option<WebChapter>> = RefCell::new(None);
+    static SESSION: RefCell<Session> = RefCell::new(Session {
+        reader: crate::visit::Reader::default(),
+        book: String::new(),
+    });
+}
+
+/// The open book. EPUB writes use this path; a PDF page does not.
+pub fn set_book(book: &str) {
+    SESSION.with(|session| session.borrow_mut().book = book.to_string());
+}
+
+pub fn reader_has_back() -> bool {
+    SESSION.with(|session| session.borrow().reader.back.is_some())
+}
+
+/// One parse, one apply, one settings write. The inbox is not consulted.
+pub fn handle_script(value: &serde_json::Value, href: &str) -> crate::visit::Apply {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        let book = session.book.clone();
+        let path = crate::settings::path();
+        let mut store = crate::settings::SettingsBook {
+            file: &path,
+            book: &book,
+        };
+        crate::visit::handle_page(&mut session.reader, value, href, &mut store)
+    })
+}
+
+pub fn turn_chapter(
+    pick: isize,
+    marks: &[crate::visit::ChapterMark],
+    spine: &[String],
+    href: &str,
+) -> crate::visit::Apply {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        let book = session.book.clone();
+        let path = crate::settings::path();
+        let mut store = crate::settings::SettingsBook {
+            file: &path,
+            book: &book,
+        };
+        crate::visit::handle_chapter(&mut session.reader, pick, marks, spine, href, &mut store)
+    })
+}
+
+pub fn open_reader(page: u32, offset: u32, href: &str, caret: bool) {
+    SESSION.with(|session| {
+        crate::visit::open_place(&mut session.borrow_mut().reader, page, offset, href, caret);
+    });
+}
+
+pub fn reader_walk() -> Option<u32> {
+    SESSION.with(|session| session.borrow().reader.walk)
+}
+
+/// The spike launcher's `SPIKE_AT`. The saved row stays the opened page.
+pub fn prime_walk(page: u32) {
+    SESSION.with(|session| {
+        session.borrow_mut().reader.walk = crate::visit::resume_walk(page, 0);
+    });
+}
+
+pub fn stop_walk() {
+    SESSION.with(|session| crate::visit::stop_walk(&mut session.borrow_mut().reader));
+}
+
+/// A restore eval the page refused. One shot, so the next poll can run.
+pub fn take_turn_declined(inbox: &RefCell<Inbox>) -> bool {
+    let mut inbox = inbox.borrow_mut();
+    let declined = inbox.turn_declined;
+    inbox.turn_declined = false;
+    declined
+}
+
+/// One poll of the reader's walk. Reaching the column clears it.
+/// A caret read in flight does not chase and does not clear the walk.
+pub fn poll_reader_walk(shown: u32, pages: u32, turning: bool) -> bool {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        let polled = crate::visit::poll_anchored(&mut session.reader, shown, pages, turning);
+        polled.command.is_some()
+    })
+}
+
+/// The caret read failed or timed out. Do not reveal character 0.
+pub fn anchor_missed() {
+    SESSION.with(|session| {
+        session.borrow_mut().reader.anchoring = false;
+    });
+}
+
+pub fn note_figure(id: Option<String>) {
+    SESSION.with(|session| {
+        crate::visit::remember_figure(&mut session.borrow_mut().reader, id);
+    });
+}
+
+pub fn reader_figure() -> Option<String> {
+    SESSION.with(|session| session.borrow().reader.figure.clone())
+}
+
+pub fn layout_frame(tick: crate::visit::FrameTick) -> crate::visit::DrawPlan {
+    SESSION.with(|session| crate::visit::layout_frame(&mut session.borrow_mut().reader, tick))
+}
+
+pub fn take_reader_reveal() -> Option<u32> {
+    SESSION.with(|session| crate::visit::take_reveal(&mut session.borrow_mut().reader))
+}
+
+/// The EPUB chapter the scroll monitor may move. A different chapter or no
+/// chapter drops a gesture that was still on the previous page.
+pub fn show_swipe_target(next: Option<WebChapter>) {
+    let changed = SWIPE_SHOWN.with(|shown| match (shown.borrow().as_ref(), next.as_ref()) {
+        (None, None) => false,
+        (Some(old), Some(new)) => !Rc::ptr_eq(&old.slot, &new.slot) || old.href() != new.href(),
+        _ => true,
+    });
+    if changed {
+        cancel_swipe();
+    }
+    SWIPE_SHOWN.with(|shown| *shown.borrow_mut() = next);
+}
+
+/// Clear a live follow so a later finger-up cannot turn. Returns whether a
+/// finger was actually down. A finger-up glide stays up: a key queues behind it.
+pub fn abandon_swipe() -> bool {
+    let live = SESSION.with(|session| session.borrow_mut().reader.swipe.abandon());
+    if live {
+        if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
+            web.drop_swipe();
+        }
+    }
+    live
+}
+
+/// Drop a follow or the finger-up glide. A chapter, reveal, return, resize,
+/// reopen, or another book uses this. The glide must not seek or post later.
+pub fn cancel_swipe() -> bool {
+    let drop =
+        SESSION.with(|session| crate::visit::retire_restore(&mut session.borrow_mut().reader));
+    if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
+        web.drop_swipe();
+    }
+    drop
+}
+
+pub fn cancel_placed_page() {
+    SESSION.with(|session| {
+        let _ = crate::visit::cancel_placed_page(&mut session.borrow_mut().reader);
+    });
+    if let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) {
+        web.drop_swipe();
+    }
+}
+
+fn reset_restore_epoch() {
+    SESSION.with(|session| {
+        crate::visit::reset_restore_epoch(&mut session.borrow_mut().reader);
+    });
+}
+
+/// Handle one scroll-wheel sample while an EPUB page is showing.
+/// True means the event was the page gesture and must not also reach the view.
+pub fn take_epub_wheel(phase: u64, momentum: u64, dx: f64, dy: f64) -> bool {
+    let Some(web) = SWIPE_SHOWN.with(|shown| shown.borrow().clone()) else {
+        return false;
+    };
+    let (page, pages) = web
+        .inbox
+        .borrow()
+        .pages
+        .map(|(page, pages)| (page as u32, pages as u32))
+        .unwrap_or((0, 0));
+    let effect = SESSION.with(|session| {
+        session.borrow_mut().reader.swipe.offer(
+            crate::visit::WheelTick {
+                finger: crate::visit::finger_bits(phase),
+                momentum: momentum != 0,
+                dx,
+                dy,
+            },
+            page,
+            pages,
+        )
+    });
+    match effect {
+        crate::visit::WheelMove::Pass => false,
+        crate::visit::WheelMove::Swallow | crate::visit::WheelMove::Hold => true,
+        crate::visit::WheelMove::Follow(offset) => {
+            web.follow(offset);
+            true
+        }
+        crate::visit::WheelMove::Commit(delta) => {
+            let token =
+                SESSION.with(|session| session.borrow().reader.swipe.commit_token().unwrap_or(0));
+            web.release_swipe(delta, token);
+            true
+        }
+        crate::visit::WheelMove::Cancel => {
+            web.release_swipe(0, 0);
+            true
         }
     }
 }

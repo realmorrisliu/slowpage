@@ -14,9 +14,12 @@ The shell comes first. Morris decided on 2026-11-11 to finish the app shell befo
 
 Each slice below is a thin cut of that one form.
 
-- S1. The gray base, the 220 point version B sidebar, the white card, and the library chat panel frame, including empty states. Replace the bare shelf window. Remove the Open button flow and the `open -a` and Open With checks. Do not repair them. `spikes/library` stays.
-- S2. The cover grid and **继续阅读** in the card, filled from `Catalog`.
-- S3. The reading form, using the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits until Morris approves a mockup of the exact gap, the horizontal position, the margin width, and the toggle placement. The margin's contents are the 2026-11-10 hard requirement in `docs/design/north-star.md`.
+- S1. The gray base, the 220 point version B sidebar, the white card, and the library chat panel are in the library form. The bare shelf window is gone. The GUI is not verified.
+- S2. The cover grid and **继续阅读** are in that card. The GUI is not verified.
+- S3. The reading form, using the existing reader. The sidebar hides, the page is in the card, and the right region is the annotation margin. S3 waits until Morris approves a mockup of the exact gap, the horizontal position, the margin width, and the toggle placement. The margin's contents are the 2026-11-10 hard requirement in `docs/design/north-star.md`. Interaction detail for S3, S4, and every slice after them is `docs/design/reading-interactions.md`. One checklist item, or a small group, is one pull request. It merges on the necessary cloud checks and an independent review.
+
+The checklist document records the rule. It does not build an item, the margin mockup, or S4, and it does not start the alan embed. The document merges on the necessary cloud checks and an independent review. A green run does not pass the ten items. Not executed, and not a blocker for this document: the ten items, their `nsh test` runs, their Mac recordings, the real Apple Books round, and the shell GUI, performance, image, and animation checks. `deny.toml` still ignores RUSTSEC-2026-0543 (chrono 0.4.45 via nsh-base 0.5.1 and pdfium-render 0.9.5). That ignore is not a clearance. The spikes bump to rbook 0.7.13, sha2 0.11.1, resvg 0.50.0, and rusqlite 0.43.0 leaves chrono 0.4.45 in the lock. Those four crates declare rust-version 1.89 or older, and the toolchain is 1.98.1.
+
 - S4. The immersive form. Control-Command-I, the menu item, and the toolbar button enter it. Escape leaves it.
 - S5. Motion, and the fit of the three forms. Night mode and a theme switch stay out. Light and dark join this slice only if a later decision revises the 2026-11-03 rule.
 
@@ -30,7 +33,7 @@ These wait until S1 through S5 have landed. Do not start them ahead of the shell
 - Repo cleanup, including worktree cleanup in `scripts/cleanup-worktrees.sh`.
 - Calibre compatibility beyond the catalog `spikes/library` already reads. Writes, schema user_version 28, search, and the rest of the Library checklist below.
 - [Pull request 14](https://github.com/realmorrisliu/slowpage/pull/14). The shell spec replaces its split into A1, A2, A3, B1, and B2. The margin mockup replaces B1 and B2 as the annotation next step, and that mockup is an approval, not a code start.
-- Reading chrome leftovers from [pull request 8](https://github.com/realmorrisliu/slowpage/pull/8). Still missing: hover fade and the full Apple Books toolbar item set. The 朝花夕拾 narrow-window two-column bug and the page scrubber stay here too.
+- Reading chrome leftovers from [pull request 8](https://github.com/realmorrisliu/slowpage/pull/8). The hover fade is still the dev spike. The old full toolbar item set is checklist item 8: traffic lights and the book title. Do not put the AppKit toolbar back. The 朝花夕拾 narrow-window two-column bug and the page scrubber stay here too.
 - Owned typesetter follow-ups from [pull request 13](https://github.com/realmorrisliu/slowpage/pull/13). Still missing: passing gate B, CJK, and switching the default off WKWebView.
 - The rest of the Books toolbar icons. S1 uses the list glyph the contents control already ships.
 - Bold Word Starts, [pull request 21](https://github.com/realmorrisliu/slowpage/pull/21). Still missing: the WebKit rendering, the breaker and its cache key, and the owned typesetter.
@@ -103,7 +106,7 @@ Morris picked `generic` / `list` for the contents control. That glyph is on main
 
 Queued after the shell slices, with [pull request 45](https://github.com/realmorrisliu/slowpage/pull/45), and before the calibre targets in Library.
 
-The spike still scrolls PDFs in one column. Replace that with fit-page inside the white reading card, EPUB's page-turn interaction, and pdfium with adjacent-page cache. The hard requirements are in `docs/design/north-star.md`, PDF reading.
+The spike still scrolls PDFs in one column. Replace that with fit-page inside the white reading card, EPUB's page-turn interaction, and pdfium with adjacent-page cache. The hard requirements are in `docs/design/north-star.md`, PDF reading. EPUB and PDF both run the checklist in `docs/design/reading-interactions.md`. Item 10 of that checklist is this paged PDF rule.
 
 The implementing pull request must attach prototype screenshots for Morris's approval before the code change: fit-page in the card at two window sizes, and a mid-turn frame.
 
@@ -121,18 +124,108 @@ The reading form shows a highlight, a note, and an agent response in the annotat
 
 ## @alan
 
-Blocked on the external dependency. When the gate is open, `@alan` spawns a fresh one-shot `alan` process with the passage, the note, the earlier comments, and the question on stdin. SuperReader stores stdout as alan's reply. The spawn does not pass `--resume`. The comment shows a thinking state until the whole reply lands.
+Picked on 2026-11-17. This decision supersedes the 2026-11-03 one-shot process. The full decision is in `docs/design/north-star.md`. SuperReader embeds alan in-process through `alan_os_host::embed` in [alan pull request 1109](https://github.com/realmorrisliu/alan/pull/1109). A reply is `EmbedEvent::TextDelta` from `EmbedEventStream::next_event`. SuperReader's SQLite owns the thread. Each ask sends that thread as context.
 
-## External dependency
-
-Owner: Morris. The work is assigned to him on [alan issue 1078](https://github.com/realmorrisliu/alan/issues/1078).
-
-alan needs a launch flag or mode so that a reader-spawned run does not rewrite its global root-rollout pointer. Today every launch rewrites that pointer. A reader-spawned launch would replace Morris's next `alan --resume` session.
-
-Status: pending.
-
-Gate: confirm [alan issue 1078](https://github.com/realmorrisliu/alan/issues/1078) is closed and the flag has landed before the @alan milestone starts. The change lands in the alan repository. This repository does not carry that patch.
+Integration starts after S3 and S4. This repository does not start it now.
 
 ## Distribution
 
 WKWebView _setBackgroundColor: SPI, revisit before any Mac App Store build.
+
+## S3 shelf return
+
+Goal. A cover or **继续阅读** opens the existing reader. Escape or Command-[ returns to the library while editing is idle and immersive is off. The shelf scroll and the reading page stay. **继续阅读** lists the book just opened first.
+
+Scope. The visit is library or reading. The library form unmounts while reading, and the existing title and footer show. Shelf scroll is the offset the shelf already records, restored when the form mounts again. The page stays in settings history.
+
+Non-goals. No margin layout, no new motion, no PDF page architecture, and no immersive enter path.
+
+Observable. The EPUB fixture Plain Essay and the PDF fixture Field Guide keep scroll and page across leave. **继续阅读** follows `opened_at`. Editing focus and immersive Escape do not leave the book. A wheel on the open reader reaches the page. A wheel on the library moves the shelf.
+
+Evidence. `spikes/shell/src/visit.rs` tests. The headless `shell.test.tsx` case leaves the reader between the two opens. macOS CI runs the visit tests. `smoke-shell-click` stays pending because no window was driven.
+
+Not run. Mac GUI, smoothness, frames, animation, and PDF runtime loading.
+
+## S3 file open
+
+Goal. A file opened from Finder or the Dock, at launch or while Slowpage is already running, opens that book. A second file replaces the book on screen. A file that is not an EPUB or a PDF, or whose bytes do not match, stays on the current book and shows 打不开这个文件.
+
+Scope. `next_open_files` and a drop on the window use one decision. An EPUB starts with `PK`. A PDF starts with `%PDF`. The exploded EPUB directory still counts. The visit switches to reading and the stage receives `open`. Cold start from a command-line path stays the launch target it already is.
+
+Non-goals. No new animation, no margin, no new type, and no new PDF renderer. A file whose header matches and whose pages still fail to load is outside this slice.
+
+Done. Plain Essay and Field Guide switch the visit and keep the shelf offset. A bad file leaves the open book in place and is not queued for the stage. A handled arrival does not open again when the reader leaves the book. The refusal is the sentence above.
+
+Evidence. `spikes/shell/src/visit.rs` reads those two fixtures. macOS CI runs that test. `nsh test` does not deliver `openFiles` on this machine.
+
+Not run. A Mac window of Finder, the Dock, and a second real PDF loading in pdfium. Smoothness, frames, and animation.
+
+## S3 page turn
+
+Goal. While a book is open, the right arrow and Space move one page forward. The left arrow and Shift-Space move one page back. The first page and the last page stay put. The footer shows that page. On the library those keys do nothing.
+
+Scope. The keys use the turn the reader already has. An EPUB keeps the 160 ms slide. A PDF keeps the existing page offset. The product PDF footer uses the same line the EPUB footer already uses. The visit page follows the page the stage reports.
+
+Non-goals. No new slide, no edge target, and no finger-following swipe. The EPUB swipe that is already in the page stays. A page whose header matches and whose bytes still fail to load is outside this slice.
+
+Done. Page 4 of 10 goes to 5, then back to 4. Page 1 does not go back. Page 10 does not go forward. The library form stays. A direct reader launch, whose visit still starts on the library surface, still turns. The product footer for page 2 of 5 is 2/5页 and 本章还剩3页.
+
+Evidence. `spikes/shell/src/visit.rs` tests the key and the stop. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test.
+
+Not run. A Mac window, `nsh test`, the key event itself, pdfium drawing the turned page, smoothness, frames, and animation.
+
+## S3 edge turn
+
+Goal. While a book is open, a click on the left of the page moves one page back and a click on the right moves one page forward. A click in the middle does not turn. The first page and the last page stay put.
+
+Scope. The click uses the turn the reader already has. An EPUB keeps the 160 ms slide. A PDF keeps the existing page offset. The outer quarter of the page rectangle is the edge. The middle stays so a selection click there still selects.
+
+Non-goals. No new slide, no bounce, and no finger-following swipe. The EPUB swipe that is already in the page stays. A click on the footer does not turn. The library ignores the click.
+
+Done. On a page rectangle from x 100 to 500, a click at x 199 goes back, a click at x 401 goes forward, and a click at x 200 stays. A click outside the rectangle stays. A move of 3 points is a drag and does not turn. A point inside the footer rectangle does not turn. Page 1 does not go back. Page 10 does not go forward.
+
+Evidence. `spikes/shell/src/visit.rs` tests the click rectangle. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test. The EPUB page script copies the same fraction. That copy is script generation, not a delivered click.
+
+Not run. A Mac window, `nsh test`, the click event itself, pdfium drawing the turned page, and the 160 ms slide.
+
+## S3 sentence
+
+Goal. After a page turn, closing the book and opening it again shows the same sentence. The page number alone is not enough. A reopen on the right page and the wrong sentence fails.
+
+Scope. The sentence is the character offset the page already measures near the top of the column. That offset is stored with the page. Opening the book uses the existing reveal to put that character back on screen. The same page keeps a stored sentence when a later sample is empty. A new page replaces it.
+
+Non-goals. No new slide and no finger-following swipe. A table of contents, a bookmark, a search result, and an in-book link stay out. A fitted PDF page already shows the whole page, so this slice does not add a second position inside that page. The blocked-turn bounce stays out.
+
+Done. Page 4 with offset 800 stays 4 and 800 when the same page reports an empty sample. The same page with offset 860 becomes 860. Page 5 with offset 20 becomes page 5 offset 20. A stored file keeps 800 across an open that does not record a new sentence, and a later turn stores 20. The opening page is not written while a reveal is still pending, and a nonzero sample from that page is not the reveal report. The report is the pinned offset. A missed target does not replace the stored sentence.
+
+Evidence. `spikes/shell/src/visit.rs` tests the sentence rule. `spikes/shell/src/settings.rs` writes the offset and reads it back. The CI `test` job runs those tests. The Release `macos` job compiles, packages, signs, and notarizes. It does not run these tests. The page script reports the offset. That report is script generation, not a quit and a reopen.
+
+Not run. A Mac window, `nsh test`, quitting the app, the reveal on screen, and pdfium.
+
+## S3 chapter
+
+Goal. While a book is open, the contents control lists that book's chapters. Choosing one lands on that chapter. **返回** goes back to the sentence the reader was on.
+
+Scope. The list is the spine the reader already opened. One chapter uses the book title. The jump uses the existing reveal. A different chapter loads that spine item, then reveals its start. The place before the jump is kept for one return. A row that is not in the book does not move. The stored place keeps that spine item, and opening the book loads it before the sentence. A chapter choice drops a leftover opening-page turn.
+
+Non-goals. No new slide, no finger-following swipe, and no margin. A bookmark, a search result, an in-book link, and a footnote stay out. A PDF outline stays out. The blocked-turn bounce stays out.
+
+Done. Plain Essay is the fixture file. Choosing Netherfield in that chapter reveals that character and keeps page 4 offset 800. Return reveals 800. Choosing the second spine item loads that item at its start and keeps page 4. A missing row stays. A stored sentence of offset 0 is kept when the reveal asked for the chapter start. A pin from an earlier reveal does not replace it. An empty-href row for page 3 goes to page 3, and return goes to page 1. The same page and offset in a different spine item is a new place. An unknown spine item opens the first one. A chapter choice clears an opening target of page 4, and a choice that stays keeps it. A chapter command clears a leftover resume offset. A second choice before the first poll stores the return at that chapter's jump offset. A stored file keeps `/OEBPS/next.xhtml` across an open, and a later progress write replaces it. The shell shows the existing contents button while the book is open and hides it on the library.
+
+Evidence. `spikes/shell/src/visit.rs` tests the choice and the return. The CI `test` job runs that test. The Release `macos` job compiles, packages, signs, and notarizes. It does not run this test. The menu is AppKit. That wiring is not a delivered click.
+
+Not run. A Mac window, `nsh test`, the contents click itself, the reveal on screen, and pdfium.
+
+## S3 swipe
+
+Goal. On an EPUB page, a horizontal trackpad swipe follows the finger. Letting go before the page commits returns to the same page. Letting go after it commits turns one page. Progress changes only for that committed page.
+
+Scope. The finger and its inertia are AppKit `phase` and `momentumPhase` on the scroll-wheel monitor the shelf already uses. The page script paints the offset. A commit seeks one column. The commit distance is the existing 48 points. The return and the rest of the slide use the existing 160 ms. Keys, Space, Shift-Space, and an edge click keep that slide. A key, a contents choice, a return, a resize, a reopen, or another book drops the gesture that was in progress.
+
+Non-goals. A PDF keeps its scroll offset. No fit-page paging. No bounce drawing at the first or last page. The page does not move past that edge, and the stored place does not change. No margin, no S4, and no toolbar.
+
+Done. Ten points returns to page 4. A reversal back under 48 points returns. A reversal past 48 points turns back one page. Forty-eight points turns one page, and the inertia after that lift does not turn another. A second gesture turns one more page. Dropping the gesture for a key, a chapter, or a resize makes the lift a no-op. Space, an arrow, or an edge click during the 160 ms release waits for that committed page and then turns once. Shift-Space after that release still turns. A second lift during the commit, still past 48 points and not ignored by a key, queues one page and that page posts its own token. A key that arrives while that second finger is still down ignores the lift, so the lift does not turn, and a page key takes the one queue slot. An unrelated key does not take the slot. The first commit is not dropped. A cancelled second gesture does not turn. Dropping the gesture during the release does not seek. A key during the return still turns. A same-chapter reveal, a chapter jump, a return, a resize, a reopen, or another book during the release drops that glide, so it does not seek or post over the new place. Each commit the page accepts carries a token, either the glide it is running or the one queued page. A token the page refuses is not kept. The EPUB place lives in one reader. A message is parsed once. A shared apply writes `settings.json` only after that decision, and only then does the reader move. A failed write, including an empty book or page 0 where `record_progress` returns `Ok` and stores nothing, leaves the reader where it was. An accepted swipe, a key, or an edge (`kind: "turn"`) saves with `next_sentence` and ends the one resume walk. That walk lives on the reader. It ends when the shown column reaches it, and when a key, an edge, or a swipe is saved. A resize does not end it. The poll's walk posts `chase: true`. Those frames do not save. A layout sample does not save. A restore is not queued behind a commit. A key, an edge, or a swipe that has posted saves that column and ends the walk. One that has not posted returns to the last settled column, and the walk stays. A refused restore leaves the walk and does not hold the poll latch. A second lift's token stays queued. Shell left, right, Space, and Shift-Space, and a shell edge, eval the user command. The page script's own key and edge do too. `SPIKE_TURN` and `SPIKE_PLAY` are restores. A same-page sentence of 0 keeps the stored offset. A layout box does not save on its own. While a resume is pending it returns the reveal `poll_chapter` already returns. A pin that matches the awaited offset saves and clears it. A miss does not save, clears the await, and holds that page so a later box does not record the miss. A `{hold}` message does not write. A late pin after the await is already empty does not write. A dropped token is retired and a page or pin in that same body is ignored. Opening is leave, then the resume row. An offset above 0 stays pending. Leave cancels a gesture that has not posted and does not flush. A resize reads the caret. A confirmed miss, or a second timeout, moves the box to the new size and does not walk the saved page number. The draws after that do not cancel a gesture and do not schedule a chase. That loss does not measure the old page number at the new width. The first timeout keeps the old frame and reads the same column once more. A waiting draw does not cancel. The read is the first glyph in the column still on screen, and the scroll returns there. An image post reaches the draw without painting the footer. The element is kept for the next resize and is not stored as a character. A user turn or a new load drops it. Two lookups that miss the element, with no find between them, move the frame and do not write a caret. A find between them clears that count. A late sample from an older read is not the current character. A failed anchor write keeps that character and does not walk the page number. A hit stores that character and reveals it, and a later resize reveals the same character instead of measuring the old column at the new width. That reveal saves the new column. Character 0 is stored on the row. An old row with only a page and offset 0 still walks. While that read is in flight the poll does not chase. A commit that has not posted can be dropped. A commit that has posted is saved. Chapter and return use the reader's place. The footer page is paint. A PDF page stays on its own saved page and offset. An older token does not move the saved page backward. A post with no href still cannot tell an old document's pin from a new chapter at the same offset. That boundary is unchanged. A delayed reveal retires the finger and those tokens, so the lift and a post that already left the page do not replace the saved sentence. Retiring the post does not move the column back. A drop before the queued page finishes stops that page from posting; the reveal then seeks to the sentence. A resize drops it even when the fitted frame and zoom do not change. A key during the release still waits for the committed page. A direct file open does not engage the shelf, and the wheel monitor is installed anyway. Page 1 does not move backward. Page 10 does not move forward. A vertical wheel is not this gesture. A mouse-wheel notch under 48 points does not turn, and 48 points turns once. A backward notch on page 1 does not turn.
+
+Evidence. `spikes/shell/src/visit.rs` runs the gesture the monitor calls, including the release that stays open, the delayed reveal, and a key during a second finger. The page script runs the key, Space, edge, drop, return, reveal, and commit-token sequences. `a_finished_swipe_is_the_place_a_later_open_reads` writes a real temporary `settings.json` through `SettingsBook` and `handle_page`, leaves, and opens again at page 2 offset 50. It also covers a swipe that wins over a pending resume, a chapter jump, a refused token, a late pin, a key or edge (`kind: "turn"`), a `frames` sample that does not save, a box that only reveals, a miss, a swipe body that also carries `missed` and `pinned`, a failed write, and a drop. `a_page_resume_does_not_store_the_columns_it_crosses` resumes page 10 offset 0, including an empty href, through `resume_walk` and `resume_turn`. Each step evals `turn_command` and `handle_page`. Leaving before page 10, and arriving there, both keep page 10 offset 0. A key during the walk saves that page. `a_resume_walk_ends_when_the_reader_moves` continues polling after that key and after a step back from page 10. Neither poll chases. `poll_resume` is that test. A restore during a commit is refused, the remaining column matches the saved page, and a second lift's token is still posted. `a_taken_turn_is_the_page_the_resume_stops_on` walks an unattended page to 10 and keeps 10/0. A commit with an empty queue, a commit that already holds a token, a shell turn, a page key, and a swipe each leave the screen on the saved page, and later polls do not chase. A drop during a restore does not post that restore. A resize drops an animation that has not posted. It does not retire a commit that already posted, and it does not end the walk. A caret miss posts no offset. `layout_frame` is the draw `place_page` applies. After the miss it moves the box, the following draws cancel nothing and schedule nothing, and the walk stays. The file stays page 10 offset 0. A poll does not walk that page number. A later width moves the box and does not measure page 10. A key that those draws do not cancel posts `kind: "turn"`. A sample that arrives after that read was retired is not stored. The file staying put is not the text. A caret miss on the old frame reads the first glyph in that column. At width 400, page 10 is character 360, and the scroll returns to the column that was showing. Width 250 reveals character 360 on page 15. Width 180 reveals it on page 21. A caret that hits is kept. The file does not take page 10 at the new width, and it does not take the start of the text node. While the reveal frames are queued, a poll at a column past the old page does not clear the walk. A key that has not posted returns to the settled column. Columns crossed before the anchor stay page 10 offset 0. A failed anchor write keeps character 360, leaves the file at page 10 offset 0, and the poll does not walk page 10. The same post then saves. Character 0 is the first glyph of the visible column. Its reveal lands on page 1, writes offset 0 with the caret mark, and a new reader opens that character and keeps it on the next resize. A page-only row with offset 0 and no caret mark still walks. A user post marks the page. Reader sets one ack when it accepts or refuses that post. The next restore carries the ack and clears the mark. A restore built before the post does not seek. A refused write leaves the saved page and the walk unchanged, and the following acked restore still seeks. A restore or a drop from an older chapter document does not run. A user key does not carry that document id. Shell left, right, Space, Shift-Space, and both edges, plus the page script's key and edge, each save on their own. `a_second_commit_and_a_long_chapter_post_every_token` feeds the Node driver's own post objects, including `glide`, `queued`, and 128 commits, through that same `handle_page`. `a_finished_page_is_saved_before_chapter_or_resize` still calls `deliver_page`. It is not this wiring. The CI `test` job names `a_trackpad_swipe_follows_cancels_and_commits_once`, `a_key_during_the_release_still_turns`, `a_direct_file_arms_the_wheel_without_the_shelf`, `a_release_stays_open_until_chapter_or_resize_cancels_it`, `a_reveal_during_the_release_does_not_post`, `a_delayed_reveal_does_not_let_the_lift_replace_the_pin`, `a_second_finger_key_keeps_the_committed_page`, `a_commit_post_names_its_token_and_a_second_finger_key_does_not_drop_it`, `a_long_chapter_commit_is_never_dropped`, `a_second_commit_and_a_long_chapter_post_every_token`, `a_finished_page_is_saved_before_chapter_or_resize`, `a_finished_swipe_is_the_place_a_later_open_reads`, and `a_page_resume_does_not_store_the_columns_it_crosses`, `a_resume_walk_ends_when_the_reader_moves`, `a_taken_turn_is_the_page_the_resume_stops_on`, `a_resize_keeps_the_saved_page_until_the_anchor_lands`, and `a_hold_reads_the_column_character`. `a_direct_file_arms_the_wheel_without_the_shelf` runs the route functions. It does not install the monitor or run `sync`. The Release `macos` job compiles, packages, signs, and notarizes. It does not run these tests. WebKit did not run them either. This round did not change how `settings.json` is parsed or how a write reports its own I/O error.
+
+Not run. A Mac window, the trackpad, WebKit painting the follow, `nsh test`, the real library, frames, and animation. A post with no href against a new chapter at the same offset was not given a document generation and was not claimed fixed. The document id was not claimed to cover a user key. WebKit did not run the resize. The node harness ran the column cases: character 360, a caret hit at 368, a blank skipped to 363, a zero rect still 360, page 15 at width 250, page 21 at width 180, the same image after the width change, and a user turn during the reveal. `a_hold_reads_the_column_character` routes the page's img, svg, late probe, pageless figure, two missed aligns after the wait has ended, a find between two misses, user turn, and load through `layout_frame`. That test calls the mail predicate and does not call `place_page`. Clearing the wait and the mailbox in `place_page` was read in source and was not executed. That test was not executed on Linux. WebKit's caret and reflow did not run. The 128-commit canvas script was not re-run. Linux did not compile `spike-shell`.

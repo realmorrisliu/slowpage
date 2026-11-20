@@ -16,7 +16,7 @@ required-features = ["fixture"]
 
 [dependencies]
 png = "0.18"
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 spike-epub = { path = "../epub" }
 
 [dev-dependencies]
