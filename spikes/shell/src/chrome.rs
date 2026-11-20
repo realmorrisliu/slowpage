@@ -1121,11 +1121,15 @@ fn note_immersive(rt: &Runtime) {
 }
 
 fn note_fullscreen_hook(window: &NSWindow, rt: &Runtime) {
-    let Some(want) =
-        file_flag(crate::verify_session::VerifyHooks::from_env().scoped("bar-fullscreen"))
+    let Some(raw) = crate::verify_session::VerifyHooks::from_env().read_text("bar-fullscreen")
     else {
         return;
     };
+    let text = raw.trim();
+    if text.is_empty() {
+        return;
+    }
+    let want = text == "1";
     let is_full = window.styleMask().contains(NSWindowStyleMask::FullScreen);
     if want == is_full {
         rt.bar_fullscreen_sent.set(false);
@@ -1330,10 +1334,7 @@ fn expose_window(window: &NSWindow) {
 }
 
 fn pinned_frame() -> Option<(f64, f64)> {
-    let raw = std::fs::read_to_string(
-        crate::verify_session::VerifyHooks::from_env().scoped("shell-frame"),
-    )
-    .ok()?;
+    let raw = crate::verify_session::VerifyHooks::from_env().read_text("shell-frame")?;
     let mut parts = raw.split_whitespace();
     let width: f64 = parts.next()?.parse().ok()?;
     let height: f64 = parts.next()?.parse().ok()?;

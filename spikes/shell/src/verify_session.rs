@@ -25,17 +25,13 @@ pub fn session_id(raw: Option<&str>) -> Option<String> {
 }
 
 pub struct VerifyHooks {
-    base: PathBuf,
     root: Option<PathBuf>,
 }
 
 impl VerifyHooks {
     pub fn open(raw: Option<&str>, base: &Path) -> Self {
         let root = session_id(raw).map(|id| base.join(format!("verify-{id}")));
-        Self {
-            base: base.to_path_buf(),
-            root,
-        }
+        Self { root }
     }
 
     pub fn from_env() -> Self {
@@ -43,21 +39,28 @@ impl VerifyHooks {
         Self::open(raw.as_deref(), Path::new(SPIKE_ROOT))
     }
 
-    pub fn scoped(&self, name: &str) -> PathBuf {
-        match &self.root {
-            Some(root) => root.join(name),
-            None => self.base.join(name),
+    /// A hook path exists only for a valid session. No session has no path.
+    pub fn command(&self, name: &str) -> Option<PathBuf> {
+        if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+            return None;
         }
+        self.root.as_ref().map(|root| root.join(name))
+    }
+
+    pub fn read_text(&self, name: &str) -> Option<String> {
+        std::fs::read_to_string(self.command(name)?).ok()
     }
 
     pub fn should_resign(&self) -> bool {
-        self.root
-            .as_ref()
-            .is_some_and(|root| root.join("chrome-blur").is_file())
+        self.command("chrome-blur")
+            .is_some_and(|path| path.is_file())
     }
 
     pub fn append_status(&self, line: &str) -> bool {
-        let Some(root) = &self.root else {
+        let Some(path) = self.command("chrome-status.jsonl") else {
+            return false;
+        };
+        let Some(root) = path.parent() else {
             return false;
         };
         let extra = u64::try_from(line.len())
@@ -66,7 +69,6 @@ impl VerifyHooks {
         if extra > LOG_CAP_BYTES {
             return false;
         }
-        let path = root.join("chrome-status.jsonl");
         let existing = path.metadata().map(|meta| meta.len()).unwrap_or(0);
         if existing.saturating_add(extra) > LOG_CAP_BYTES {
             return false;
@@ -121,27 +123,26 @@ mod tests {
         let base = scratch("killed");
         let killed = VerifyHooks::open(Some("session-aaa1"), &base);
         assert!(killed.append_status("{\"reading\":true}"));
-        let blur = killed.scoped("chrome-blur");
+        let blur = killed.command("chrome-blur").unwrap();
         std::fs::write(&blur, b"1\n").unwrap();
-        let pin = killed.scoped("shell-frame");
+        let pin = killed.command("shell-frame").unwrap();
         std::fs::write(&pin, b"578 528\n").unwrap();
         assert!(killed.should_resign());
-        let log = killed.scoped("chrome-status.jsonl");
+        let log = killed.command("chrome-status.jsonl").unwrap();
         let before = std::fs::metadata(&log).unwrap().len();
 
         let plain = VerifyHooks::open(None, &base);
         assert!(!plain.should_resign());
         assert!(!plain.append_status("{\"reading\":true}"));
         assert_eq!(std::fs::metadata(&log).unwrap().len(), before);
-        assert_ne!(plain.scoped("shell-frame"), pin);
-        assert!(!plain.scoped("shell-frame").is_file());
-        assert!(!plain.scoped("chrome-blur").is_file());
+        assert!(plain.command("shell-frame").is_none());
+        assert!(plain.read_text("shell-frame").is_none());
 
         let next = VerifyHooks::open(Some("session-bbb2"), &base);
         assert!(!next.should_resign());
         assert!(next.append_status("{\"reading\":false}"));
         assert_eq!(std::fs::metadata(&log).unwrap().len(), before);
-        assert!(!next.scoped("shell-frame").is_file());
+        assert!(next.read_text("shell-frame").is_none());
         let _ = std::fs::remove_dir_all(base);
     }
 
@@ -156,7 +157,7 @@ mod tests {
             assert!(wrote < 100_000, "the cap did not stop the log");
         }
         assert!(wrote > 0);
-        let path = hooks.scoped("chrome-status.jsonl");
+        let path = hooks.command("chrome-status.jsonl").unwrap();
         let capped = std::fs::metadata(&path).unwrap().len();
         assert!(capped <= LOG_CAP_BYTES);
         assert!(!hooks.append_status(line));
@@ -171,6 +172,57 @@ mod tests {
         assert!(!hooks.should_resign());
         assert!(!hooks.append_status("{\"reading\":true}"));
         assert!(!base.join("chrome-status.jsonl").is_file());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_root_control_file_does_not_steer_a_launch_without_a_session() {
+        let base = scratch("root");
+        std::fs::write(base.join("shell-frame"), b"1100 800\n").unwrap();
+        std::fs::write(base.join("bar-fullscreen"), b"1\n").unwrap();
+        std::fs::write(base.join("chrome-blur"), b"1\n").unwrap();
+        for raw in [
+            None,
+            Some(""),
+            Some("short"),
+            Some("../session"),
+            Some("1"),
+            Some("bad id"),
+        ] {
+            let hooks = VerifyHooks::open(raw, &base);
+            assert!(hooks.command("shell-frame").is_none());
+            assert!(hooks.read_text("shell-frame").is_none());
+            assert!(hooks.read_text("bar-fullscreen").is_none());
+            assert!(!hooks.should_resign());
+            assert!(!hooks.append_status("{\"reading\":true}"));
+        }
+        assert_eq!(
+            std::fs::read_to_string(base.join("shell-frame")).unwrap(),
+            "1100 800\n"
+        );
+        assert!(!base.join("chrome-status.jsonl").is_file());
+
+        let session = VerifyHooks::open(Some("session-own1"), &base);
+        let frame = session.command("shell-frame").unwrap();
+        let full = session.command("bar-fullscreen").unwrap();
+        assert_ne!(frame, base.join("shell-frame"));
+        assert_ne!(full, base.join("bar-fullscreen"));
+        std::fs::create_dir_all(frame.parent().unwrap()).unwrap();
+        std::fs::write(&frame, b"900 700\n").unwrap();
+        std::fs::write(&full, b"0\n").unwrap();
+        assert_eq!(
+            session.read_text("shell-frame").as_deref(),
+            Some("900 700\n")
+        );
+        assert_eq!(session.read_text("bar-fullscreen").as_deref(), Some("0\n"));
+        assert_eq!(
+            std::fs::read_to_string(base.join("shell-frame")).unwrap(),
+            "1100 800\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(base.join("bar-fullscreen")).unwrap(),
+            "1\n"
+        );
         let _ = std::fs::remove_dir_all(base);
     }
 }

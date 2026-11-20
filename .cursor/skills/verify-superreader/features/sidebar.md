@@ -27,9 +27,9 @@ Preconditions:
 - `/tmp/superreader-spike/shell-frame`, `bar-immersive`, and `bar-fullscreen` are removed before the chrome shots.
 
 - **Centered.** Launch Pride at 1100 by 830. Hover the top edge so the buttons are visible. Read the button frames and the bar width. The gaps differ by at most 0.5 points. The page center matches the center of the area to the right of the bar within 0.5 points. The contents icon is 26pt after the zoom button and does not intersect the traffic lights.
-- **Resize.** Write `1280 830` to `shell-frame`. The bar width stays within 0.5 points, and the page stays centered in that area.
+- **Resize.** Write `1280 830` to `shell-frame` inside that process's verify session. The bar width stays within 0.5 points, and the page stays centered in that area. A file at `/tmp/superreader-spike/shell-frame` does not pin a launch that has no session.
 - **Immersive.** Write `1` to `bar-immersive`, then `0`. The width stays within 0.5 points, and the page is centered again after leaving immersive reading.
-- **Full screen.** Write `1` to `bar-fullscreen`, then `0`. The painted column matches the AppKit width within 0.5 points, and the AppKit gaps match. After leaving full screen, Accessibility reads the buttons and the width matches the windowed width within 0.5 points.
+- **Full screen.** Write `1` to `bar-fullscreen` inside that session, then `0`. The painted column matches the AppKit width within 0.5 points, and the AppKit gaps match. After leaving full screen, Accessibility reads the buttons and the width matches the windowed width within 0.5 points. A root `bar-fullscreen` file does not toggle a launch that has no session.
 - **Proof.** The pictures are `bar-window.png`, `bar-lights.png`, and `bar-fullscreen.png`. The full-screen crop labels the 9 pt gaps.
 
 ## Gotchas
@@ -37,6 +37,6 @@ Preconditions:
 - The width is not a constant. A check that types in 72 or 52 is wrong.
 - The buttons are hidden until the pointer is at the top. Measure them after the hover. In full screen the pointer has to sit on the screen's top edge, and the buttons may live on the menu bar rather than the window.
 - The bar rows read `/tmp/superreader-spike/chrome-<pid>.json`. A shared `chrome.json` from another shell is ignored.
-- `shell-frame` pins the window. Chrome shots must not inherit that file.
+- A root `shell-frame` is removed before the chrome shots and is not read without a verify session. Chrome shots must not inherit a session pin either.
 - Immersive reading's card, menu, and toolbar button are not this check. The flag only asks the bar to measure again.
 - The 2026-11-11 shell replaces this bar with a 220 point sidebar. Until S1 lands, these checks still score the measured-width bar. The replacement checks are in `shell.md`. Do not pass `shell-sidebar` from `sidebar-centered`.

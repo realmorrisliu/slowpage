@@ -9666,6 +9666,8 @@ def run_reading_chrome(out, session_id):
         )
         libs = FormLibraries(root)
         sweep_verify_sessions(session_id)
+        SHELL_FRAME.unlink(missing_ok=True)
+        BAR_FULLSCREEN.unlink(missing_ok=True)
         session_root = verify_session_root(session_id)
         session_root.mkdir(parents=True, exist_ok=True)
         window_tool = compile_window_id(out)
@@ -10908,14 +10910,21 @@ if !CGImageDestinationFinalize(dest) { exit(1) }
 
     mouse = compile_mouse(out)
     state = None
+    session_id = secrets.token_hex(8)
+    session_root = verify_session_root(session_id)
     try:
         clear_bar_hooks()
-        SHELL_FRAME.parent.mkdir(parents=True, exist_ok=True)
-        SHELL_FRAME.write_text("1100 830\n")
+        sweep_verify_sessions(session_id)
+        session_root.mkdir(parents=True, exist_ok=True)
+        (session_root / "shell-frame").write_text("1100 830\n")
         state = launch(
             out,
             "shell-bar",
-            child_env({"SPIKE_MODE": "webkit", "SPIKE_BOOK": "pride"}),
+            child_env({
+                "SPIKE_MODE": "webkit",
+                "SPIKE_BOOK": "pride",
+                "SUPERREADER_VERIFY_SESSION": session_id,
+            }),
             lambda names: False,
             40,
             lambda started: chrome_ready(started, "pride"),
@@ -10997,7 +11006,7 @@ if !CGImageDestinationFinalize(dest) { exit(1) }
                 shutil.copy(annotated, proof / "bar-lights.png")
         first_w = float(body.get("bar_w") or 0)
         first_gen = int(body.get("bar_gen") or 0)
-        SHELL_FRAME.write_text("1280 830\n")
+        (session_root / "shell-frame").write_text("1280 830\n")
         resized = wait_body(
             started,
             lambda item: (
@@ -11058,7 +11067,7 @@ if !CGImageDestinationFinalize(dest) { exit(1) }
                 f"page {back.get('page_x')} stage {back.get('stage_w')} "
                 f"left {left3:.1f} right {right3:.1f} gen {back.get('bar_gen')}",
             )
-        BAR_FULLSCREEN.write_text("1\n")
+        (session_root / "bar-fullscreen").write_text("1\n")
         wait_body(started, lambda item: item.get("fullscreen") is True, timeout=12, reader=own_body)
         point_at_lights(window_metrics(window_tool, pid), True)
         time.sleep(0.7)
@@ -11109,7 +11118,7 @@ if !CGImageDestinationFinalize(dest) { exit(1) }
         )
         if settled(fresh) and fresh.get("fullscreen") is True:
             full = fresh
-        BAR_FULLSCREEN.write_text("0\n")
+        (session_root / "bar-fullscreen").write_text("0\n")
         wait_body(started, lambda item: item.get("fullscreen") is False, timeout=12, reader=own_body)
         point_at_lights(window_metrics(window_tool, pid), False)
         time.sleep(0.5)
@@ -11160,6 +11169,7 @@ if !CGImageDestinationFinalize(dest) { exit(1) }
         if state:
             finish_launch(state)
         clear_bar_hooks()
+        shutil.rmtree(session_root, ignore_errors=True)
     return rows
 
 

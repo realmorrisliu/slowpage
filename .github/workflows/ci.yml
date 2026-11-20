@@ -101,6 +101,11 @@ jobs:
             a_blocked_page_eases_back_to_the_same_column \
             a_blocked_ease_leaves_the_stored_sentence \
             reading_chrome_follows_the_pointer_and_drops_a_stale_hide \
+            a_plain_launch_ignores_a_leftover_blur_file_and_writes_no_log \
+            a_killed_verify_session_does_not_reach_the_next_plain_launch \
+            the_status_log_stops_at_the_cap_and_stays_there \
+            a_session_id_with_a_path_is_not_a_session \
+            a_root_control_file_does_not_steer_a_launch_without_a_session \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
@@ -146,6 +151,11 @@ jobs:
             a_blocked_page_eases_back_to_the_same_column \
             a_blocked_ease_leaves_the_stored_sentence \
             reading_chrome_follows_the_pointer_and_drops_a_stale_hide \
+            a_plain_launch_ignores_a_leftover_blur_file_and_writes_no_log \
+            a_killed_verify_session_does_not_reach_the_next_plain_launch \
+            the_status_log_stops_at_the_cap_and_stays_there \
+            a_session_id_with_a_path_is_not_a_session \
+            a_root_control_file_does_not_steer_a_launch_without_a_session \
             chinese_footer_matches_the_books_line \
             space_and_shift_space_use_the_existing_page_turn \
             a_title_or_author_query_filters_the_shelf_and_clears \
