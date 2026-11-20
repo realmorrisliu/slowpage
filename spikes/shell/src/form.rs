@@ -3618,7 +3618,12 @@ mod tests {
         let above = reading_frame(818.0, 800.0, 0.0, 0.0, true);
         assert!(below.covers);
         assert!(!above.covers);
-        assert!((below.card.w - above.card.w - MARGIN_W).abs() < 0.1);
+        assert_eq!(
+            below.card,
+            reading_frame(817.0, 800.0, 0.0, 0.0, false).card
+        );
+        let above_hidden = reading_frame(818.0, 800.0, 0.0, 0.0, false);
+        assert!((above_hidden.card.w - above.card.w - MARGIN_W).abs() < 0.1);
         let wide_hidden = reading_frame(1440.0, 900.0, 0.0, 0.0, false);
         let wide_shown = reading_frame(1440.0, 900.0, 0.0, 0.0, true);
         assert!(wide_hidden.margin.is_none());

@@ -4120,7 +4120,8 @@ mod tests {
         assert!(covered.covers);
         let column = crate::form::reading_frame(818.0, 800.0, 0.0, 0.0, true);
         assert!(!column.covers);
-        assert!((hidden.card.w - column.card.w - crate::form::MARGIN_W).abs() < 0.1);
+        let column_hidden = crate::form::reading_frame(818.0, 800.0, 0.0, 0.0, false);
+        assert!((column_hidden.card.w - column.card.w - crate::form::MARGIN_W).abs() < 0.1);
         let returned = crate::form::reading_frame(817.0, 800.0, 0.0, 0.0, true);
         assert_eq!(returned.card, hidden.card);
         assert!(returned.covers);
