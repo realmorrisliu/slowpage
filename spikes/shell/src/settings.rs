@@ -4401,6 +4401,128 @@ mod tests {
     }
 
     #[test]
+    fn a_blocked_ease_leaves_the_stored_sentence() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-edge-ease-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        let chapter = "/OEBPS/chapter.xhtml";
+        let next = "/OEBPS/next.xhtml";
+        record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let bytes = std::fs::read(&file).unwrap();
+        let mut reader = crate::visit::Reader::default();
+        reader.place = crate::visit::ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        reader.back = Some(crate::visit::ReadingPlace {
+            href: next.to_string(),
+            page: 2,
+            offset: 40,
+        });
+        reader.fragment = Some("note".to_string());
+        reader.jump_href = next.to_string();
+        let mut store = SettingsBook { file: &file, book };
+        let pending = serde_json::json!({
+            "kind": "turn",
+            "edge": "prev",
+            "frames": [],
+            "page": 1,
+            "pages": 4,
+            "sentence": 0
+        });
+        let held = crate::visit::handle_page(&mut reader, &pending, next, &mut store);
+        assert!(held.accepted && !held.wrote);
+        assert_eq!(reader.fragment.as_deref(), Some("note"));
+        assert_eq!(reader.place.page, 4);
+        assert_eq!(reader.place.offset, 800);
+        assert_eq!(reader.place.href, chapter);
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+
+        reader.fragment = None;
+        reader.jump_href.clear();
+        let foreign = crate::visit::handle_page(&mut reader, &pending, next, &mut store);
+        assert!(foreign.accepted && !foreign.wrote);
+        assert_eq!(reader.place.offset, 800);
+        assert_eq!(reader.back.as_ref().map(|place| place.offset), Some(40));
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+
+        let down = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Down,
+            momentum: false,
+            dx: 80.0,
+            dy: 0.0,
+        };
+        let up = crate::visit::WheelTick {
+            finger: crate::visit::Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        assert_eq!(
+            reader.swipe.offer(down, 4, 10),
+            crate::visit::WheelMove::Follow(80.0)
+        );
+        assert_eq!(
+            reader.swipe.offer(up, 4, 10),
+            crate::visit::WheelMove::Commit(1)
+        );
+        let token = reader.swipe.commit_token().unwrap();
+        reader.swipe.note_answer(token, "glide");
+        let shown = serde_json::json!({
+            "kind": "turn",
+            "edge": "next",
+            "frames": [],
+            "page": 4,
+            "pages": 10,
+            "sentence": 0
+        });
+        let eased = crate::visit::handle_page(&mut reader, &shown, chapter, &mut store);
+        assert!(eased.accepted && !eased.wrote);
+        assert_eq!(reader.place.page, 4);
+        assert_eq!(reader.place.offset, 800);
+        assert_eq!(reader.place.href, chapter);
+        assert_eq!(
+            reader.back.as_ref().map(|place| place.href.as_str()),
+            Some(next)
+        );
+        assert!(reader.swipe.take_commit_post(token));
+        assert_eq!(resume_page(&file, book), 4);
+        assert_eq!(resume_offset(&file, book), 800);
+        assert_eq!(resume_href(&file, book), chapter);
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+
+        let marks = [
+            crate::visit::ChapterMark {
+                title: "Chapter".to_string(),
+                href: chapter.to_string(),
+                offset: 0,
+                page: 1,
+            },
+            crate::visit::ChapterMark {
+                title: "Next".to_string(),
+                href: next.to_string(),
+                offset: 0,
+                page: 1,
+            },
+        ];
+        let spine = vec![chapter.to_string(), next.to_string()];
+        let choice =
+            crate::visit::handle_chapter(&mut reader, 1, &marks, &spine, chapter, &mut store);
+        assert_eq!(
+            choice.go,
+            Some(crate::visit::ChapterMove::Chapter {
+                index: 1,
+                offset: 0
+            })
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn a_pending_fragment_keeps_the_origin_sentence() {
         let dir =
             std::env::temp_dir().join(format!("superreader-link-pending-{}", std::process::id()));
