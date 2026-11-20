@@ -30,7 +30,7 @@ Reading interactions, recorded 2026-11-17. The rule is `docs/design/reading-inte
 
 - Launch the app. Full shows the sidebar, the library card, and the chat panel.
 - Open a book from a cover or from **继续阅读**. The sidebar hides. The page is in the card. The right region is the annotation margin.
-- Press Control-Command-I, or use the View menu item, or use the toolbar button. The card goes edge to edge. Escape leaves that form.
+- Press Control-Command-I, or choose Immersive Reading in the View menu. The card goes edge to edge. Escape leaves that form. The toolbar button is not in this shell.
 - Choose **全部书籍** to return to the library and the chat panel.
 
 The reading checks stay pending. `docs/design/shell/spec.md` still marks the card-to-line gap unset. Do not draw note cards to fill it.

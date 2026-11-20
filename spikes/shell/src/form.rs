@@ -44,6 +44,8 @@ pub enum Form {
 pub enum Command {
     ToggleSidebar,
     TogglePanel,
+    ToggleImmersive,
+    LeaveImmersive,
 }
 
 pub fn launch() -> Form {
@@ -55,7 +57,15 @@ pub fn launch() -> Form {
 
 pub fn step(form: Form, command: Command) -> Form {
     match (form, command) {
+        (Form::PageAndPanel { .. }, Command::ToggleImmersive) => Form::Immersive,
+        (Form::Immersive, Command::ToggleImmersive | Command::LeaveImmersive) => {
+            Form::PageAndPanel {
+                sidebar: Presence::Hidden,
+                margin: Presence::Shown,
+            }
+        }
         (Form::Immersive, _) => Form::Immersive,
+        (_, Command::ToggleImmersive | Command::LeaveImmersive) => form,
         (Form::Full { sidebar, chat }, Command::ToggleSidebar) => Form::Full {
             sidebar: sidebar.flip(),
             chat,
@@ -73,6 +83,72 @@ pub fn step(form: Form, command: Command) -> Form {
             margin: margin.flip(),
         },
     }
+}
+
+fn reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
+    if !reading {
+        return form;
+    }
+    step(
+        form,
+        if leave_only {
+            Command::LeaveImmersive
+        } else {
+            Command::ToggleImmersive
+        },
+    )
+}
+
+/// The native stage. `ElementRef::command` is what marks the view dirty.
+/// NSH 0.5.1 does not let a unit test install the executor `element_ref`
+/// needs, so a test supplies this and the window supplies the real ref.
+pub trait StageCommand {
+    fn stage_command(&self, name: &str, args: nsh_core::JsonValue);
+}
+
+impl StageCommand for ElementRef {
+    fn stage_command(&self, name: &str, args: nsh_core::JsonValue) {
+        self.command(name, args);
+    }
+}
+
+/// The shortcut, the View menu, and Escape call this.
+/// An unchanged form does not touch the published flags.
+/// A change sends `immersive` to the stage, the same redraw a command gets.
+pub fn apply_immersive(
+    form: &Signal<Form>,
+    reading: bool,
+    leave_only: bool,
+    stage: &impl StageCommand,
+) -> Option<bool> {
+    let before = form.get();
+    let next = commit_reading_immersive(before, reading, leave_only);
+    form.set(next);
+    let notice = (next != before).then_some(matches!(next, Form::Immersive));
+    if let Some(on) = notice {
+        stage.stage_command("immersive", serde_json::json!(on));
+    }
+    notice
+}
+
+fn commit_reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
+    let next = reading_immersive(form, reading, leave_only);
+    if next == form {
+        return form;
+    }
+    match next {
+        Form::Immersive => publish_immersive(true),
+        Form::PageAndPanel { margin, .. } => {
+            publish_immersive(false);
+            publish_margin(margin.shown());
+        }
+        Form::Full { .. } => publish_immersive(false),
+    }
+    next
+}
+
+pub fn margin_chrome(form: Form) -> bool {
+    matches!(form, Form::PageAndPanel { .. })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -223,6 +299,16 @@ pub fn publish_margin(shown: bool) {
     MARGIN_SHOWN.store(shown, Ordering::Relaxed);
 }
 
+static IMMERSIVE: AtomicBool = AtomicBool::new(false);
+
+pub fn immersive_on() -> bool {
+    IMMERSIVE.load(Ordering::Relaxed)
+}
+
+pub fn publish_immersive(on: bool) {
+    IMMERSIVE.store(on, Ordering::Relaxed);
+}
+
 /// A shown margin is a column once the window can hold the minimum plus 240.
 pub fn margin_is_column(window_w: f64) -> bool {
     window_w >= crate::tokens::MIN_WINDOW_W + MARGIN_W
@@ -295,6 +381,49 @@ pub fn visible_page_span(page_x: f64, page_w: f64, frame: &ReadingFrame) -> (f64
     (page_x, (right - page_x).max(0.0))
 }
 
+/// The card meets every window edge. The margin is not on screen.
+pub fn immersive_frame(width: f64, height: f64) -> ReadingFrame {
+    ReadingFrame {
+        card: Rect {
+            x: 0.0,
+            y: 0.0,
+            w: width.max(1.0),
+            h: height.max(1.0),
+        },
+        margin: None,
+        covers: false,
+    }
+}
+
+/// The card the stage draws. Immersive reading uses the window. Otherwise the
+/// page card keeps the 6 point inset and the margin rule.
+pub fn page_frame(width: f64, height: f64, margin: bool, immersive: bool) -> ReadingFrame {
+    if immersive {
+        immersive_frame(width, height)
+    } else {
+        reading_frame(width, height, 0.0, 0.0, margin)
+    }
+}
+
+/// The card the stage paints and the card a click tests. `shell` is the
+/// reading window. The old bar ignores the immersive flag.
+pub fn stage_card(width: f64, height: f64, shell: bool) -> ReadingFrame {
+    page_frame(
+        width,
+        height,
+        shell && margin_shown(),
+        shell && immersive_on(),
+    )
+}
+
+pub fn card_radius(immersive: bool) -> f64 {
+    if immersive {
+        0.0
+    } else {
+        crate::tokens::CARD_RADIUS
+    }
+}
+
 pub fn show_reading(form: &Signal<Form>) {
     let margin = if margin_shown() {
         Presence::Shown
@@ -305,10 +434,12 @@ pub fn show_reading(form: &Signal<Form>) {
         sidebar: Presence::Hidden,
         margin,
     });
+    publish_immersive(false);
 }
 
 pub fn show_shelf(form: &Signal<Form>) {
     form.set(launch());
+    publish_immersive(false);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -370,7 +501,22 @@ pub fn place(input: &PlaceIn, library: &LibraryIn) -> Placement {
                 groups: groups(),
             };
         }
-        Form::Immersive => (0.0, 0.0, 0.0, 0.0, false, false),
+        Form::Immersive => {
+            return Placement {
+                gray: false,
+                sidebar: None,
+                card: CardBox::Placed {
+                    rect: immersive_frame(window.width, window.height).card,
+                    radius: 0.0,
+                    shadow: false,
+                },
+                chat: None,
+                chrome: input.chrome,
+                face: CardFace::Page,
+                rows: rows(library),
+                groups: groups(),
+            };
+        }
     };
     let top = f64::from(input.chrome.top.max(0.0));
     let rect = Rect {
@@ -1990,6 +2136,13 @@ pub fn reading_margin(
     chrome: Signal<crate::tokens::ChromeIn>,
     stage: ElementRef,
 ) -> AnyElement {
+    if !margin_chrome(form.get()) {
+        return view()
+            .absolute()
+            .size_full()
+            .pointer_events(PointerEvents::BoxNone)
+            .into_element();
+    }
     let shown = match form.get() {
         Form::PageAndPanel { margin, .. } => margin.shown(),
         _ => margin_shown(),

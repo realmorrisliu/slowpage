@@ -28,6 +28,9 @@ use nsh_core::prelude::*;
 use nsh_platform_macos::objc2::MainThreadMarker;
 use nsh_platform_macos::objc2_app_kit::NSModalResponseOK;
 use nsh_platform_macos::objc2_app_kit::NSOpenPanel;
+
+/// Control-Command-I. `cmd` stays Command in the menu parser and in the key parser.
+const IMMERSIVE_KEY: &str = "ctrl+cmd+i";
 use serde_json::json;
 use spike_library::{Catalog, Home, Scope, SourceName};
 
@@ -364,6 +367,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let notice = signal(String::new());
     let arrival = signal((0_u64, String::new()));
     let arrival_menu = arrival.clone();
+    let shell_form = signal(form::launch());
     effect({
         let trim_id = trim_id.clone();
         let bold_on = bold_on.clone();
@@ -371,15 +375,21 @@ pub fn SpikeApp() -> impl IntoElement {
         let catalog = catalog.clone();
         let epoch = epoch.clone();
         let arrival_menu = arrival_menu.clone();
+        let form_menu = shell_form.clone();
+        let visit_menu = visit.clone();
         move || {
             let current = trim_id.get();
             let bold = bold_on.get();
             let needs_folder = shelf_on && catalog.get().needs_folder();
+            let immersive = matches!(form_menu.get(), form::Form::Immersive);
             let stage_trim = stage.clone();
             let stage_bold = stage.clone();
             let bold_slot = bold_on.clone();
             let catalog_slot = catalog.clone();
             let epoch_slot = epoch.clone();
+            let form_pick = form_menu.clone();
+            let visit_pick = visit_menu.clone();
+            let stage_immersive = stage.clone();
             set_application_menu(reading_menu(
                 &current,
                 bold,
@@ -397,6 +407,11 @@ pub fn SpikeApp() -> impl IntoElement {
                     let arrival_pick = arrival_menu.clone();
                     move || choose_book(arrival_pick.clone())
                 },
+                immersive,
+                move || {
+                    let reading = visit_pick.get().surface == visit::Surface::Reading;
+                    form::apply_immersive(&form_pick, reading, false, &stage_immersive);
+                },
             ));
         }
     });
@@ -411,7 +426,6 @@ pub fn SpikeApp() -> impl IntoElement {
     let chrome_shared = signal(false);
     let footer_opacity = signal(1.0_f32);
     let shell_on = launches_full();
-    let shell_form = signal(form::launch());
     let shell_selected = signal(form::SelectId::default());
     let shell_window = signal(form::Window {
         width: 1280.0,
@@ -487,12 +501,27 @@ pub fn SpikeApp() -> impl IntoElement {
     on_key_with("escape", leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
-        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Escape)
+        let stage = stage.clone();
+        move |_| {
+            apply_leave(&visit, &shell_form, visit::LeaveKey::Escape, &stage);
+        }
     });
     on_key_with("mod+[", leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
-        move |_| apply_leave(&visit, &shell_form, visit::LeaveKey::Back)
+        let stage = stage.clone();
+        move |_| {
+            apply_leave(&visit, &shell_form, visit::LeaveKey::Back, &stage);
+        }
+    });
+    on_key_with(IMMERSIVE_KEY, leave_keys, {
+        let visit = visit.clone();
+        let shell_form = shell_form.clone();
+        let stage = stage.clone();
+        move |_| {
+            let reading = visit.get().surface == visit::Surface::Reading;
+            form::apply_immersive(&shell_form, reading, false, &stage);
+        }
     });
     let import_apple = {
         let catalog = catalog.clone();
@@ -1058,19 +1087,30 @@ fn commit_visit(slot: &Signal<visit::Visit>, next: visit::Visit) {
     slot.set(next);
 }
 
-fn apply_leave(visit: &Signal<visit::Visit>, form: &Signal<form::Form>, key: visit::LeaveKey) {
+fn apply_leave(
+    visit: &Signal<visit::Visit>,
+    form: &Signal<form::Form>,
+    key: visit::LeaveKey,
+    stage: &impl form::StageCommand,
+) -> Option<bool> {
     let immersion = if matches!(form.get(), form::Form::Immersive) {
         visit::Immersion::On
     } else {
         visit::Immersion::Off
     };
-    if visit::leave_key(key, visit::Focus::Idle, immersion, visit.get().surface)
-        == visit::KeyEffect::LeaveBook
-    {
-        let next = visit::leave_to_library(&visit.get());
-        form::restore_shelf_scroll(next.scroll);
-        form::show_shelf(form);
-        commit_visit(visit, next);
+    match visit::leave_key(key, visit::Focus::Idle, immersion, visit.get().surface) {
+        visit::KeyEffect::LeaveBook => {
+            let next = visit::leave_to_library(&visit.get());
+            form::restore_shelf_scroll(next.scroll);
+            form::show_shelf(form);
+            commit_visit(visit, next);
+            None
+        }
+        visit::KeyEffect::StayOnBook => {
+            let reading = visit.get().surface == visit::Surface::Reading;
+            form::apply_immersive(form, reading, true, stage)
+        }
+        visit::KeyEffect::None => None,
     }
 }
 
@@ -1105,6 +1145,8 @@ fn reading_menu(
     on_trim: impl Fn(String) + Clone + 'static,
     on_bold: impl Fn() + Clone + 'static,
     on_open: impl Fn() + Clone + 'static,
+    immersive: bool,
+    on_immersive: impl Fn() + Clone + 'static,
 ) -> Vec<MenuItem> {
     let mut menus = Vec::new();
     if os() == Os::MacOs {
@@ -1147,7 +1189,13 @@ fn reading_menu(
             MenuItem::role(MenuRole::Close),
         ],
     ));
-    let mut view_items = Vec::new();
+    let mut view_items = vec![
+        MenuItem::new("Immersive Reading")
+            .shortcut(IMMERSIVE_KEY)
+            .checked(immersive)
+            .on_select(on_immersive),
+        MenuItem::separator(),
+    ];
     for item in reading::TRIMS {
         let id = item.id.to_string();
         let on_trim = on_trim.clone();
@@ -1169,8 +1217,20 @@ fn reading_menu(
 
 #[cfg(test)]
 mod launch_tests {
-    use super::visit::{self, Surface, WheelOwner};
-    use super::{launch_target, LaunchTarget};
+    use super::form;
+    use super::visit::{self, PlaceFile, Surface, WheelOwner};
+    use super::{apply_leave, launch_target, LaunchTarget};
+    use nsh_core::element::reactive::signal;
+
+    struct Sent(std::cell::RefCell<Vec<(String, bool)>>);
+
+    impl form::StageCommand for Sent {
+        fn stage_command(&self, name: &str, args: nsh_core::JsonValue) {
+            self.0
+                .borrow_mut()
+                .push((name.to_string(), args.as_bool().expect("immersive")));
+        }
+    }
 
     #[test]
     fn a_stored_page_does_not_open_the_shelf_launch() {
@@ -1232,5 +1292,335 @@ mod launch_tests {
             WheelOwner::Page
         );
         visit::publish_surface(Surface::Library);
+    }
+
+    #[test]
+    fn immersive_reading_keeps_the_page_across_escape_resize_and_fullscreen() {
+        let prior_margin = form::margin_shown();
+        let prior_immersive = form::immersive_on();
+        let prior_surface = visit::on_library();
+        let dir =
+            std::env::temp_dir().join(format!("superreader-immersive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = "/books/field.pdf";
+        struct Clean {
+            dir: std::path::PathBuf,
+            margin: bool,
+            immersive: bool,
+            library: bool,
+        }
+        impl Drop for Clean {
+            fn drop(&mut self) {
+                form::publish_margin(self.margin);
+                form::publish_immersive(self.immersive);
+                visit::publish_surface(if self.library {
+                    Surface::Library
+                } else {
+                    Surface::Reading
+                });
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+        }
+        let _clean = Clean {
+            dir: dir.clone(),
+            margin: prior_margin,
+            immersive: prior_immersive,
+            library: prior_surface,
+        };
+
+        let chord = nsh_core::desktop::Shortcut::parse(super::IMMERSIVE_KEY, true).unwrap();
+        assert!(chord.ctrl && chord.meta && !chord.alt && !chord.shift);
+        assert_eq!(chord.key, nsh_core::desktop::Key::Char('i'));
+        let _menu = nsh_core::element::desktop::MenuItem::new("Immersive Reading")
+            .shortcut(super::IMMERSIVE_KEY);
+
+        crate::settings::record_open(&file, book, 4, Some(80), 1).unwrap();
+        crate::settings::record_progress(&file, book, 4, Some(80), 12, "ch.xhtml").unwrap();
+        form::publish_margin(false);
+        form::publish_immersive(false);
+
+        let runtime = nsh_core::element::reactive::Runtime::default();
+        let _entered = runtime.enter();
+        let (owner, _) = nsh_core::element::reactive::create_root(|| {
+            let sent = Sent(std::cell::RefCell::new(Vec::new()));
+            let toggle =
+                |form: &nsh_core::element::reactive::Signal<form::Form>,
+                 visit: &nsh_core::element::reactive::Signal<visit::Visit>| {
+                    form::apply_immersive(
+                        form,
+                        visit.get().surface == Surface::Reading,
+                        false,
+                        &sent,
+                    )
+                };
+            let shelf = signal(visit::Visit::shelf());
+            let form = signal(form::Form::PageAndPanel {
+                sidebar: form::Presence::Hidden,
+                margin: form::Presence::Hidden,
+            });
+            assert_eq!(toggle(&form, &shelf), None);
+            assert!(matches!(
+                form.get(),
+                form::Form::PageAndPanel {
+                    margin: form::Presence::Hidden,
+                    ..
+                }
+            ));
+            assert!(!form::immersive_on());
+            assert_eq!(crate::settings::resume_page(&file, book), 4);
+            assert_eq!(crate::settings::resume_offset(&file, book), 12);
+
+            let visit = signal(visit::open_cover(&visit::Visit::shelf(), book, 4));
+            assert_eq!(toggle(&form, &visit), Some(true));
+            assert_eq!(form.get(), form::Form::Immersive);
+            assert!(form::immersive_on());
+            assert!(!form::margin_chrome(form.get()));
+            assert_eq!(form::card_radius(true), 0.0);
+            assert_eq!(form::card_radius(false), crate::tokens::CARD_RADIUS);
+
+            let drawn =
+                |w: f64, h: f64| form::page_frame(w, h, form::margin_shown(), form::immersive_on());
+            assert_eq!(
+                drawn(818.0, 800.0).card,
+                form::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 818.0,
+                    h: 800.0
+                }
+            );
+            assert!(drawn(818.0, 800.0).margin.is_none());
+            assert!(!drawn(818.0, 800.0).covers);
+            assert_eq!(drawn(817.0, 800.0).card.w, 817.0);
+            assert_eq!(
+                drawn(1440.0, 900.0).card,
+                form::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1440.0,
+                    h: 900.0
+                }
+            );
+
+            let library = form::LibraryIn {
+                empty: true,
+                book_count: 0,
+                counts: form::LibraryCounts {
+                    all: 0,
+                    reading: 0,
+                    want: 0,
+                    done: 0,
+                    pdf: 0,
+                    notes: 0,
+                },
+                sources: Vec::new(),
+                selected: form::SelectId::AllBooks,
+                continue_reading: Vec::new(),
+                covers: Vec::new(),
+                lists: Vec::new(),
+                chat: Vec::new(),
+                notice: None,
+            };
+            for (width, height, top) in [(900.0, 700.0, 28.0), (1440.0, 900.0, 0.0)] {
+                let placed = form::place(
+                    &form::PlaceIn {
+                        form: form.get(),
+                        window: form::Window { width, height },
+                        chrome: crate::tokens::ChromeIn {
+                            lights: true,
+                            bar: 92.0,
+                            top,
+                        },
+                    },
+                    &library,
+                );
+                assert!(!placed.gray);
+                assert!(placed.sidebar.is_none());
+                assert!(placed.chat.is_none());
+                let form::CardBox::Placed {
+                    rect,
+                    radius,
+                    shadow,
+                } = placed.card
+                else {
+                    panic!("card");
+                };
+                assert_eq!((rect.x, rect.y, rect.w, rect.h), (0.0, 0.0, width, height));
+                assert_eq!(radius, 0.0);
+                assert!(!shadow);
+            }
+            assert_eq!(crate::reading::title_alpha(0), 1.0);
+            assert_eq!(crate::reading::title_alpha(900), 0.0);
+
+            let mut reader = visit::Reader::default();
+            let store = crate::settings::SettingsBook { file: &file, book };
+            visit::open_resume(&mut reader, &store);
+            let mut enter_tick = visit::FrameTick::new(false, true, true, true, true, false);
+            enter_tick.shown = 4;
+            enter_tick.pages = 20;
+            enter_tick.pages_known = true;
+            assert_eq!(
+                visit::place_step(false, true, true),
+                visit::PlaceStep::Cancel { reflow: true }
+            );
+            assert_eq!(
+                visit::layout_frame(&mut reader, enter_tick).draw,
+                visit::Draw::Move { reveal: Some(12) }
+            );
+            let mut resize_tick = visit::FrameTick::new(false, true, false, true, true, false);
+            resize_tick.shown = 4;
+            resize_tick.pages = 20;
+            resize_tick.pages_known = true;
+            assert_eq!(
+                visit::layout_frame(&mut reader, resize_tick).draw,
+                visit::Draw::Move { reveal: Some(12) }
+            );
+            assert!(visit::landed_progress(4, 12, 4).is_none());
+            assert_eq!(store.resume().page, 4);
+            assert_eq!(store.resume().offset, 12);
+
+            form::show_reading(&form);
+            assert!(!form::immersive_on());
+            assert!(matches!(
+                form.get(),
+                form::Form::PageAndPanel {
+                    sidebar: form::Presence::Hidden,
+                    margin: form::Presence::Hidden,
+                }
+            ));
+            assert_eq!(store.resume().page, 4);
+
+            assert_eq!(toggle(&form, &visit), Some(true));
+            assert_eq!(toggle(&form, &visit), Some(false));
+            assert!(matches!(
+                form.get(),
+                form::Form::PageAndPanel {
+                    sidebar: form::Presence::Hidden,
+                    margin: form::Presence::Shown,
+                }
+            ));
+            assert!(form::margin_shown());
+            assert_eq!(toggle(&form, &visit), Some(true));
+            assert_eq!(form.get(), form::Form::Immersive);
+            assert_eq!(store.resume().page, 4);
+            assert_eq!(store.resume().offset, 12);
+
+            let hit = |width: f64, height: f64, x_at: f64| {
+                let frame = form::stage_card(width, height, true);
+                let (x, y, w, h) = spike_report::fitted_pdf_page(
+                    frame.card.x,
+                    frame.card.y,
+                    frame.card.w,
+                    frame.card.h,
+                    612.0,
+                    792.0,
+                );
+                let point = x + w * x_at;
+                let immersive = visit::page_edge(point, y + h / 2.0, x, y, w, h);
+                let old = form::reading_frame(width, height, 0.0, 0.0, true);
+                let (ox, oy, ow, oh) = spike_report::fitted_pdf_page(
+                    old.card.x, old.card.y, old.card.w, old.card.h, 612.0, 792.0,
+                );
+                let (ox, spanned) = form::visible_page_span(ox, ow, &old);
+                let stale = visit::page_edge(point, y + h / 2.0, ox, oy, spanned, oh);
+                (frame, immersive, stale)
+            };
+            let (wide, wide_edge, wide_stale) = hit(900.0, 700.0, 0.9);
+            assert_eq!(
+                wide.card,
+                form::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 900.0,
+                    h: 700.0
+                }
+            );
+            assert_eq!(wide_edge, visit::PageEdge::Forward);
+            assert_eq!(wide_stale, visit::PageEdge::None);
+            let (narrow, narrow_edge, narrow_stale) = hit(700.0, 800.0, 0.9);
+            assert_eq!(narrow.card.w, 700.0);
+            assert_eq!(narrow_edge, visit::PageEdge::Forward);
+            assert_eq!(narrow_stale, visit::PageEdge::None);
+            let bare = form::stage_card(900.0, 700.0, false);
+            assert!((bare.card.x - crate::tokens::INSET).abs() < 0.01);
+            assert!((bare.card.w - (900.0 - crate::tokens::INSET * 2.0)).abs() < 0.01);
+
+            assert_eq!(
+                apply_leave(&visit, &form, visit::LeaveKey::Back, &sent),
+                None
+            );
+            assert_eq!(form.get(), form::Form::Immersive);
+            assert_eq!(visit.get().surface, Surface::Reading);
+            assert_eq!(visit.get().page, 4);
+
+            assert_eq!(
+                apply_leave(&visit, &form, visit::LeaveKey::Escape, &sent),
+                Some(false)
+            );
+            assert!(matches!(
+                form.get(),
+                form::Form::PageAndPanel {
+                    sidebar: form::Presence::Hidden,
+                    margin: form::Presence::Shown,
+                }
+            ));
+            assert!(!form::immersive_on());
+            assert!(form::margin_chrome(form.get()));
+            assert_eq!(visit.get().surface, Surface::Reading);
+            assert_eq!(visit.get().page, 4);
+            let column = drawn(818.0, 800.0);
+            let hidden = form::page_frame(818.0, 800.0, false, false);
+            assert!((hidden.card.w - column.card.w - form::MARGIN_W).abs() < 0.1);
+            assert!(!column.covers);
+            let covered = drawn(817.0, 800.0);
+            let covered_hidden = form::page_frame(817.0, 800.0, false, false);
+            assert_eq!(covered.card, covered_hidden.card);
+            assert!(covered.covers);
+            let reopened = crate::settings::SettingsBook { file: &file, book };
+            assert_eq!(reopened.resume().page, 4);
+            assert_eq!(reopened.resume().offset, 12);
+
+            assert_eq!(
+                apply_leave(&visit, &form, visit::LeaveKey::Escape, &sent),
+                None
+            );
+            assert_eq!(visit.get().surface, Surface::Library);
+            assert_eq!(form.get(), form::launch());
+            assert!(!form::immersive_on());
+            assert_eq!(toggle(&form, &visit), None);
+            assert_eq!(form.get(), form::launch());
+            assert_eq!(reopened.resume().page, 4);
+
+            let visit = signal(visit::open_cover(&visit::Visit::shelf(), book, 4));
+            form.set(form::Form::PageAndPanel {
+                sidebar: form::Presence::Hidden,
+                margin: form::Presence::Shown,
+            });
+            assert_eq!(toggle(&form, &visit), Some(true));
+            assert_eq!(
+                form::step(form.get(), form::Command::ToggleSidebar),
+                form::Form::Immersive
+            );
+            assert_eq!(
+                form::step(form.get(), form::Command::TogglePanel),
+                form::Form::Immersive
+            );
+            assert_eq!(reopened.resume().page, 4);
+            assert_eq!(reopened.resume().offset, 12);
+            assert_eq!(
+                sent.0.borrow().as_slice(),
+                [
+                    ("immersive".to_string(), true),
+                    ("immersive".to_string(), true),
+                    ("immersive".to_string(), false),
+                    ("immersive".to_string(), true),
+                    ("immersive".to_string(), false),
+                    ("immersive".to_string(), true),
+                ]
+            );
+        });
+        owner.dispose();
     }
 }

@@ -838,13 +838,12 @@ impl State {
     }
 
     fn card_frame(&self) -> crate::form::ReadingFrame {
-        let shown = crate::chrome::shell_on() && crate::form::margin_shown();
         let (width, height) = if self.stage_w > 2.0 {
             (self.stage_w, self.stage_h)
         } else {
             (self.shell_w, self.shell_h)
         };
-        crate::form::reading_frame(width, height, 0.0, 0.0, shown)
+        crate::form::stage_card(width, height, crate::chrome::shell_on())
     }
 
     fn draw_card_pdf(&mut self, ctx: &CGContext, bounds: NSRect) {
@@ -857,7 +856,7 @@ impl State {
             card.y,
             card.w,
             card.h,
-            crate::tokens::CARD_RADIUS,
+            crate::form::card_radius(crate::chrome::shell_on() && crate::form::immersive_on()),
         );
         let count = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0);
         if count == 0 {
@@ -1831,13 +1830,7 @@ impl State {
             let index = self.current_page().min(pdf.sizes.len() - 1);
             let (pw, ph) = pdf.sizes[index];
             let frame = if stage_w > 1.0 {
-                crate::form::reading_frame(
-                    stage_w,
-                    stage_h,
-                    0.0,
-                    0.0,
-                    crate::chrome::shell_on() && crate::form::margin_shown(),
-                )
+                crate::form::stage_card(stage_w, stage_h, crate::chrome::shell_on())
             } else {
                 self.card_frame()
             };
