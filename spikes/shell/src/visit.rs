@@ -174,6 +174,143 @@ pub fn margin_page_number(index: usize) -> u32 {
     (index as u32).saturating_add(1)
 }
 
+/// Measured EPUB selection. Offsets are Unicode scalars, not the UTF-16
+/// indexes the page script still uses to paint and resume.
+pub struct SelectionMeasure {
+    pub page: u32,
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub rects: Vec<(f64, f64, f64, f64)>,
+    pub text_right: f64,
+}
+
+pub fn selection_measure(value: &serde_json::Value) -> Option<SelectionMeasure> {
+    let page = value.get("page")?.as_u64()? as u32;
+    let start = value.get("scalar_start")?.as_u64()? as u32;
+    let end = value.get("scalar_end")?.as_u64()? as u32;
+    let text = value.get("text")?.as_str()?.to_string();
+    let text_right = value.get("text_right")?.as_f64()?;
+    let rects = value
+        .get("rects")?
+        .as_array()?
+        .iter()
+        .filter_map(|rect| {
+            Some((
+                rect.get("x")?.as_f64()?,
+                rect.get("y")?.as_f64()?,
+                rect.get("w")?.as_f64()?,
+                rect.get("h")?.as_f64()?,
+            ))
+        })
+        .collect();
+    Some(SelectionMeasure {
+        page,
+        start,
+        end,
+        text,
+        rects,
+        text_right,
+    })
+}
+
+pub fn fresh_measures(value: &serde_json::Value) -> Vec<spike_library::margin::FreshMeasure> {
+    let Some(rows) = value.as_array() else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let id = row.get("id")?.as_i64()?;
+            let page = row.get("page")?.as_u64()? as u32;
+            if page == 0 {
+                return None;
+            }
+            let text_right = row.get("text_right")?.as_f64()?;
+            if !text_right.is_finite() || text_right <= 0.0 {
+                return None;
+            }
+            let quads = row.get("rects")?.as_array()?.iter().filter_map(|rect| {
+                let x = rect.get("x")?.as_f64()?;
+                let y = rect.get("y")?.as_f64()?;
+                let w = rect.get("w")?.as_f64()?;
+                let h = rect.get("h")?.as_f64()?;
+                if ![x, y, w, h].iter().all(|n| n.is_finite()) || w <= 0.0 || h <= 0.0 {
+                    return None;
+                }
+                Some(spike_library::margin::Quad { x, y, w, h })
+            });
+            let quads: Vec<_> = quads.collect();
+            if quads.is_empty() {
+                return None;
+            }
+            Some(spike_library::margin::FreshMeasure {
+                id,
+                page,
+                quads,
+                text_right,
+            })
+        })
+        .collect()
+}
+
+pub fn passage_value(passage: Option<&spike_library::margin::Passage>) -> serde_json::Value {
+    let Some(passage) = passage else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "book": passage.book,
+        "gen": passage.gen,
+        "page": passage.page,
+        "spine": passage.spine,
+        "start": passage.start,
+        "end": passage.end,
+        "text": passage.text,
+        "quads": passage
+            .quads
+            .iter()
+            .map(|quad| [quad.x, quad.y, quad.w, quad.h])
+            .collect::<Vec<_>>(),
+        "text_right": passage.text_right,
+    })
+}
+
+pub fn passage_from_value(value: &serde_json::Value) -> Option<spike_library::margin::Passage> {
+    if value.is_null() {
+        return None;
+    }
+    let quads = value.get("quads")?.as_array().map(|rows| {
+        rows.iter()
+            .filter_map(|quad| {
+                let row = quad.as_array()?;
+                if row.len() != 4 {
+                    return None;
+                }
+                Some(spike_library::margin::Quad {
+                    x: row[0].as_f64()?,
+                    y: row[1].as_f64()?,
+                    w: row[2].as_f64()?,
+                    h: row[3].as_f64()?,
+                })
+            })
+            .collect()
+    })?;
+    spike_library::margin::passage_from(spike_library::margin::Selection {
+        book: value.get("book")?.as_str()?.to_string(),
+        gen: value.get("gen")?.as_u64()?,
+        page: value.get("page")?.as_u64()? as u32,
+        spine: value
+            .get("spine")
+            .and_then(|spine| spine.as_str())
+            .unwrap_or("")
+            .to_string(),
+        start: value.get("start")?.as_u64()? as u32,
+        end: value.get("end")?.as_u64()? as u32,
+        text: value.get("text")?.as_str()?.to_string(),
+        quads,
+        text_right: value.get("text_right")?.as_f64()?,
+    })
+}
+
 /// The scroll monitor is installed for a direct file as well as the shelf.
 /// `shell` is the shelf flag. It does not gate installation.
 pub fn arms_page_wheel(shell: bool) -> bool {
@@ -1186,6 +1323,34 @@ pub fn release_command(delta: i32, token: u64) -> String {
     format!(
         "(function(){{var answer=(window.spikeFollowEnd&&window.spikeFollowEnd({delta},{token}))||\"no\";return JSON.stringify({{answer:answer,swipe:{token}}});}})()"
     )
+}
+
+/// Where one script message goes. A selection names its column, so `page` on
+/// that message is not a column report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptRoute {
+    Breaks,
+    Link,
+    Selection,
+    Place,
+}
+
+pub fn script_route(value: &serde_json::Value) -> ScriptRoute {
+    if value["kind"] == "breaks" {
+        ScriptRoute::Breaks
+    } else if value["kind"] == "link" {
+        ScriptRoute::Link
+    } else if value["kind"] == "selection" {
+        ScriptRoute::Selection
+    } else if value.get("page").is_some()
+        || value.get("swipe").is_some()
+        || value.get("frames").is_some()
+        || value["kind"] == "turn"
+    {
+        ScriptRoute::Place
+    } else {
+        ScriptRoute::Selection
+    }
 }
 
 /// The script message, parsed once. Absent fields stay absent.
@@ -3022,6 +3187,33 @@ mod tests {
 
     fn scrolled(offset: f32) -> Visit {
         note_scroll(&Visit::shelf(), offset)
+    }
+
+    #[test]
+    fn a_selection_with_a_page_is_not_a_column_report() {
+        let selection = serde_json::json!({
+            "kind": "selection",
+            "start": 1,
+            "end": 4,
+            "scalar_start": 1,
+            "scalar_end": 4,
+            "text": "the",
+            "rects": [{ "x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0 }],
+            "text_right": 8.0,
+            "page": 2
+        });
+        assert_eq!(script_route(&selection), ScriptRoute::Selection);
+        let report = serde_json::json!({ "kind": "box", "page": 2, "pages": 9 });
+        assert_eq!(script_route(&report), ScriptRoute::Place);
+        let bare = serde_json::json!({ "start": 1, "end": 4, "text": "the" });
+        assert_eq!(script_route(&bare), ScriptRoute::Selection);
+        let fresh = fresh_measures(&serde_json::json!([
+            { "id": 4, "page": 3, "text_right": 140.0, "rects": [{ "x": 90.0, "y": 40.0, "w": 24.0, "h": 16.0 }] },
+            { "id": 5, "page": 3, "text_right": 10.0 }
+        ]));
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, 4);
+        assert!((fresh[0].quads[0].x - 90.0).abs() < 0.01);
     }
 
     #[test]

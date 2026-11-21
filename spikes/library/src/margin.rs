@@ -1,6 +1,6 @@
 //! Annotation cards. Geometry is the 2026-11-20 22:42 set. Storage is the
-//! local SQLite the route already assigned to SuperReader. This module does
-//! not call an agent and does not ship sample notes.
+//! local SQLite the route already assigned to SuperReader. `on_return` is the
+//! only save. This module does not call an agent and does not ship sample notes.
 
 use std::path::Path;
 
@@ -329,6 +329,7 @@ fn horizontal(from: f64, to: f64, y: f64, fade: bool) -> Option<Segment> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LivePage {
     pub book: String,
+    pub spine: String,
     pub page: u32,
     pub page_w: f64,
     pub page_h: f64,
@@ -339,6 +340,7 @@ impl Default for LivePage {
     fn default() -> Self {
         Self {
             book: String::new(),
+            spine: String::new(),
             page: 0,
             page_w: 0.0,
             page_h: 0.0,
@@ -350,6 +352,7 @@ impl Default for LivePage {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hold {
     pub book: String,
+    pub spine: String,
     pub page: u32,
     pub moving: bool,
     pub scroll: f64,
@@ -363,6 +366,7 @@ impl Hold {
     pub fn new() -> Self {
         Self {
             book: String::new(),
+            spine: String::new(),
             page: 0,
             moving: false,
             scroll: 0.0,
@@ -383,9 +387,10 @@ impl Default for Hold {
 /// While a page turn or an immersive trip is moving, keep the departing page.
 /// Landing takes the arrived page and returns the scroll to the lines.
 pub fn reconcile(hold: &Hold, live: &LivePage) -> Hold {
-    if hold.book != live.book {
+    if hold.book != live.book || hold.spine != live.spine {
         return Hold {
             book: live.book.clone(),
+            spine: live.spine.clone(),
             page: live.page,
             moving: live.moving,
             ..Hold::new()
@@ -401,6 +406,7 @@ pub fn reconcile(hold: &Hold, live: &LivePage) -> Hold {
     if hold.moving || hold.page != live.page {
         return Hold {
             book: live.book.clone(),
+            spine: live.spine.clone(),
             page: live.page,
             moving: false,
             ..Hold::new()
@@ -447,6 +453,301 @@ pub struct NewNote {
     pub text_right: f64,
 }
 
+/// The reader who typed the note. There is no account on this save.
+pub const LOCAL_AUTHOR: &str = "读者";
+
+pub const NOTICE_BLANK: &str = "先写一句笔记";
+pub const NOTICE_SELECT: &str = "先选中原文";
+pub const NOTICE_STALE: &str = "选区已经换了";
+
+/// One PDF glyph in page points. The index is a Unicode scalar offset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphBox {
+    pub index: u32,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// One measured EPUB line box, in the page's own points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeasuredRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// The selection captured with the book that was open. `gen` is that open's
+/// session token. It is not stored.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Passage {
+    pub book: String,
+    pub gen: u64,
+    pub page: u32,
+    pub spine: String,
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub quads: Vec<Quad>,
+    pub text_right: f64,
+}
+
+/// Unchecked geometry. [`passage_from`] is what makes it a [`Passage`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Selection {
+    pub book: String,
+    pub gen: u64,
+    pub page: u32,
+    pub spine: String,
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub quads: Vec<Quad>,
+    pub text_right: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fingerprint {
+    pub book: String,
+    pub page: u32,
+    pub start: u32,
+    pub end: u32,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveBook {
+    pub book: String,
+    pub gen: u64,
+}
+
+/// The page the reader is looking at. A note saves only while its passage is this page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Visible {
+    pub book: LiveBook,
+    pub page: u32,
+    pub spine: String,
+    pub moving: bool,
+}
+
+/// Line boxes measured from the current layout. Stored viewport pixels are not these.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FreshMeasure {
+    pub id: i64,
+    pub page: u32,
+    pub quads: Vec<Quad>,
+    pub text_right: f64,
+}
+
+/// A layout post is current when its generation is newer than the frame we invalidated.
+pub fn accept_layout(current: u64, hold: u64, gen: u64) -> bool {
+    gen > 0 && gen > hold && gen >= current
+}
+
+/// The webview frame moved. Old line boxes belong to the previous frame.
+pub fn frame_changed(prev_w: f64, prev_h: f64, next_w: f64, next_h: f64) -> bool {
+    (prev_w - next_w).abs() >= 1.0 || (prev_h - next_h).abs() >= 1.0
+}
+
+/// Line boxes from a held generation stay hidden until a newer post arrives.
+pub fn measures_ready(hold: u64, gen: u64) -> bool {
+    !(gen > 0 && hold >= gen)
+}
+
+/// CSS viewport of a webview frame. `setPageZoom` scales both axes.
+pub fn target_viewport(page_w: f64, page_h: f64, zoom: f64) -> Option<(f64, f64)> {
+    if page_w < 1.0 || page_h < 1.0 {
+        return None;
+    }
+    let zoom = if zoom.is_finite() && zoom > 0.01 {
+        zoom
+    } else {
+        1.0
+    };
+    Some((page_w / zoom, page_h / zoom))
+}
+
+/// The native target changed, including the first valid frame. A generation measured earlier is not this frame.
+pub fn layout_moved(
+    prev_w: f64,
+    prev_h: f64,
+    prev_zoom: f64,
+    next_w: f64,
+    next_h: f64,
+    next_zoom: f64,
+) -> bool {
+    if prev_w < 1.0 || prev_h < 1.0 {
+        return next_w >= 1.0 && next_h >= 1.0;
+    }
+    let prev_zoom = if prev_zoom.is_finite() && prev_zoom > 0.01 {
+        prev_zoom
+    } else {
+        1.0
+    };
+    let next_zoom = if next_zoom.is_finite() && next_zoom > 0.01 {
+        next_zoom
+    } else {
+        1.0
+    };
+    frame_changed(prev_w, prev_h, next_w, next_h) || (prev_zoom - next_zoom).abs() >= 0.01
+}
+
+pub fn hold_layout(gen: u64, hold: &mut u64, measures: &mut Vec<FreshMeasure>) {
+    if gen > 0 {
+        *hold = gen;
+        measures.clear();
+    }
+}
+
+pub fn claim_document(
+    doc: &mut u64,
+    gen: &mut u64,
+    hold: &mut u64,
+    measures: &mut Vec<FreshMeasure>,
+) {
+    *doc = doc.saturating_add(1);
+    *gen = 0;
+    *hold = 0;
+    measures.clear();
+}
+
+/// A place message measured for this document and this webview frame.
+pub fn place_belongs(
+    doc: u64,
+    post_doc: u64,
+    page_w: f64,
+    page_h: f64,
+    zoom: f64,
+    view_w: f64,
+    view_h: f64,
+) -> bool {
+    if doc > 0 && post_doc != doc {
+        return false;
+    }
+    match target_viewport(page_w, page_h, zoom) {
+        None => false,
+        Some((width, height)) => (view_w - width).abs() < 1.0 && (view_h - height).abs() < 1.0,
+    }
+}
+
+/// The webview frame a place message has to belong to.
+pub struct LayoutFrame {
+    pub doc: u64,
+    pub page_w: f64,
+    pub page_h: f64,
+    pub zoom: f64,
+}
+
+/// One place message from the page script.
+pub struct LayoutPost {
+    pub doc: u64,
+    pub gen: Option<u64>,
+    pub view_w: f64,
+    pub view_h: f64,
+    pub anchors: Option<Vec<FreshMeasure>>,
+}
+
+/// The message handler's layout update. `anchors` is `Some` when the post has that key.
+pub fn take_place(
+    frame: &LayoutFrame,
+    gen: &mut u64,
+    hold: u64,
+    measures: &mut Vec<FreshMeasure>,
+    post: LayoutPost,
+) -> bool {
+    if !place_belongs(
+        frame.doc,
+        post.doc,
+        frame.page_w,
+        frame.page_h,
+        frame.zoom,
+        post.view_w,
+        post.view_h,
+    ) {
+        return false;
+    }
+    match post.gen {
+        Some(posted) if accept_layout(*gen, hold, posted) => {
+            *gen = posted;
+            *measures = post.anchors.unwrap_or_default();
+        }
+        Some(_) => {}
+        None => {
+            if let Some(next) = post.anchors {
+                *measures = next;
+            }
+        }
+    }
+    true
+}
+
+pub fn published_measures(hold: u64, gen: u64, measures: &[FreshMeasure]) -> &[FreshMeasure] {
+    if measures_ready(hold, gen) {
+        measures
+    } else {
+        &[]
+    }
+}
+
+/// Width, height, or a newer layout generation means the selection's lines moved.
+pub fn selection_reflowed(
+    saved_w: f64,
+    saved_h: f64,
+    saved_gen: u64,
+    view_w: f64,
+    view_h: f64,
+    gen: u64,
+    hold: u64,
+) -> bool {
+    (saved_w > 1.0 && view_w > 1.0 && (view_w - saved_w).abs() >= 1.0)
+        || (saved_h > 1.0 && view_h > 1.0 && (view_h - saved_h).abs() >= 1.0)
+        || (saved_gen > 0 && gen > saved_gen)
+        || !measures_ready(hold, gen)
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NoteField {
+    pub body: String,
+    pub composing: bool,
+    pub passage: Option<Passage>,
+    pub fingerprint: Option<Fingerprint>,
+    pub notice: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReturnKind {
+    Key,
+    Blur,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unsaved {
+    Composing,
+    Blank,
+    Unselected,
+    Stale,
+    Duplicate,
+}
+
+impl Unsaved {
+    pub fn notice(self) -> Option<&'static str> {
+        match self {
+            Unsaved::Composing | Unsaved::Duplicate => None,
+            Unsaved::Blank => Some(NOTICE_BLANK),
+            Unsaved::Unselected => Some(NOTICE_SELECT),
+            Unsaved::Stale => Some(NOTICE_STALE),
+        }
+    }
+}
+
+pub enum Submit {
+    Saved { id: i64, fingerprint: Fingerprint },
+    Kept { hold: Unsaved },
+    Failed { notice: String },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredNote {
     pub id: i64,
@@ -472,7 +773,10 @@ impl Notes {
             std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
         let conn = Connection::open(path).map_err(|err| err.to_string())?;
-        conn.execute_batch(
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| err.to_string())?;
+        tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY,
                 book TEXT NOT NULL,
@@ -494,6 +798,8 @@ impl Notes {
             CREATE INDEX IF NOT EXISTS notes_book_page ON notes(book, page);",
         )
         .map_err(|err| err.to_string())?;
+        add_spine_if_missing(&tx)?;
+        tx.commit().map_err(|err| err.to_string())?;
         Ok(Self { conn })
     }
 
@@ -507,25 +813,30 @@ impl Notes {
         if note.author.trim().is_empty() {
             return Err("note needs an author".into());
         }
-        self.conn
-            .execute(
-                "INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    note.book,
-                    note.page,
-                    note.spine,
-                    note.start,
-                    note.end,
-                    note.passage,
-                    note.body,
-                    note.author,
-                    encode_quads(&note.quads),
-                    note.text_right,
-                ],
-            )
+        let tx = self
+            .conn
+            .unchecked_transaction()
             .map_err(|err| err.to_string())?;
-        Ok(self.conn.last_insert_rowid())
+        tx.execute(
+            "INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                note.book,
+                note.page,
+                note.spine,
+                note.start,
+                note.end,
+                note.passage,
+                note.body,
+                note.author,
+                encode_quads(&note.quads),
+                note.text_right,
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+        let id = tx.last_insert_rowid();
+        tx.commit().map_err(|err| err.to_string())?;
+        Ok(id)
     }
 
     pub fn reply(&self, note_id: i64, body: &str) -> Result<i64, String> {
@@ -552,16 +863,33 @@ impl Notes {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn list(&self, book: &str, page: u32) -> Result<Vec<StoredNote>, String> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, page, spine, start_at, end_at, passage, body, author, quads, text_right
-                 FROM notes WHERE book = ?1 AND page = ?2 ORDER BY id",
-            )
-            .map_err(|err| err.to_string())?;
+    pub fn list_spine(&self, book: &str, spine: &str) -> Result<Vec<StoredNote>, String> {
+        if book.is_empty() || spine.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.collect(
+            "SELECT id, page, spine, start_at, end_at, passage, body, author, quads, text_right
+             FROM notes WHERE book = ?1 AND spine = ?2 ORDER BY id",
+            (book, spine),
+        )
+    }
+
+    pub fn list(&self, book: &str, page: u32, spine: &str) -> Result<Vec<StoredNote>, String> {
+        self.collect(
+            "SELECT id, page, spine, start_at, end_at, passage, body, author, quads, text_right
+             FROM notes WHERE book = ?1 AND page = ?2 AND spine = ?3 ORDER BY id",
+            (book, page, spine),
+        )
+    }
+
+    fn collect<P: rusqlite::Params>(
+        &self,
+        sql: &str,
+        params: P,
+    ) -> Result<Vec<StoredNote>, String> {
+        let mut stmt = self.conn.prepare(sql).map_err(|err| err.to_string())?;
         let rows = stmt
-            .query_map(params![book, page], |row| {
+            .query_map(params, |row| {
                 Ok(StoredNote {
                     id: row.get(0)?,
                     page: row.get(1)?,
@@ -597,6 +925,293 @@ impl Notes {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.to_string())
     }
+}
+
+fn add_spine_if_missing(tx: &rusqlite::Transaction<'_>) -> Result<(), String> {
+    let has_spine = {
+        let mut stmt = tx
+            .prepare("PRAGMA table_info(notes)")
+            .map_err(|err| err.to_string())?;
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|err| err.to_string())?;
+        let mut found = false;
+        for name in names {
+            if name.map_err(|err| err.to_string())? == "spine" {
+                found = true;
+            }
+        }
+        found
+    };
+    if has_spine {
+        return Ok(());
+    }
+    tx.execute(
+        "ALTER TABLE notes ADD COLUMN spine TEXT NOT NULL DEFAULT ''",
+        [],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+const LINE_SLACK: f64 = 5.0;
+
+/// Right edge of the first selected line. Glyphs on that line outside the
+/// selection count. The next line does not.
+pub fn pdf_line_end(glyphs: &[GlyphBox], start: u32, end: u32) -> Option<f64> {
+    let first = glyphs
+        .iter()
+        .find(|glyph| glyph.index >= start && glyph.index < end)?;
+    if !first.y.is_finite() {
+        return None;
+    }
+    let mut right = f64::NEG_INFINITY;
+    for glyph in glyphs {
+        if (glyph.y - first.y).abs() > LINE_SLACK {
+            continue;
+        }
+        let edge = glyph.x + glyph.w;
+        if edge.is_finite() {
+            right = right.max(edge);
+        }
+    }
+    if right.is_finite() && right > 0.0 {
+        Some(right)
+    } else {
+        None
+    }
+}
+
+/// Keep rects that were actually measured. A zero box is not a line.
+pub fn measured_quads(rects: &[MeasuredRect]) -> Vec<Quad> {
+    rects
+        .iter()
+        .filter(|rect| {
+            rect.x.is_finite()
+                && rect.y.is_finite()
+                && rect.w.is_finite()
+                && rect.h.is_finite()
+                && rect.w > 0.0
+                && rect.h > 0.0
+        })
+        .map(|rect| Quad {
+            x: rect.x,
+            y: rect.y,
+            w: rect.w,
+            h: rect.h,
+        })
+        .collect()
+}
+
+/// The placed EPUB view's point size. Zero stays unmapped so a card is not drawn.
+pub fn epub_page_size(page_w: f64, page_h: f64) -> (f64, f64) {
+    if page_w.is_finite() && page_h.is_finite() && page_w >= 1.0 && page_h >= 1.0 {
+        (page_w, page_h)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+pub fn passage_from(selection: Selection) -> Option<Passage> {
+    if selection.gen == 0 || selection.book.is_empty() || selection.page == 0 {
+        return None;
+    }
+    if selection.end <= selection.start {
+        return None;
+    }
+    if selection.text.chars().count() != (selection.end - selection.start) as usize {
+        return None;
+    }
+    if selection.text.trim().is_empty() {
+        return None;
+    }
+    if !selection.text_right.is_finite() || selection.text_right <= 0.0 {
+        return None;
+    }
+    if selection.quads.is_empty() || selection.quads.iter().any(|quad| !quad_live(quad)) {
+        return None;
+    }
+    Some(Passage {
+        book: selection.book,
+        gen: selection.gen,
+        page: selection.page,
+        spine: selection.spine,
+        start: selection.start,
+        end: selection.end,
+        text: selection.text,
+        quads: selection.quads,
+        text_right: selection.text_right,
+    })
+}
+
+fn quad_live(quad: &Quad) -> bool {
+    quad.x.is_finite()
+        && quad.y.is_finite()
+        && quad.w.is_finite()
+        && quad.h.is_finite()
+        && quad.w > 0.0
+        && quad.h > 0.0
+}
+
+pub fn take_passage(published: Option<Passage>, live: &LiveBook) -> Option<Passage> {
+    let passage = published?;
+    if passage.book.is_empty() || passage.book != live.book || passage.gen != live.gen {
+        None
+    } else {
+        Some(passage)
+    }
+}
+
+/// A keystroke replaces the draft. The last save no longer applies to it.
+pub fn note_typed(field: &NoteField, text: &str) -> NoteField {
+    if field.body == text {
+        return field.clone();
+    }
+    NoteField {
+        body: text.to_string(),
+        fingerprint: None,
+        notice: String::new(),
+        ..field.clone()
+    }
+}
+
+pub fn prepare_save(
+    draft: &str,
+    passage: Option<&Passage>,
+    visible: &Visible,
+    last: Option<&Fingerprint>,
+    composing: bool,
+) -> Result<NewNote, Unsaved> {
+    if composing {
+        return Err(Unsaved::Composing);
+    }
+    let Some(passage) = passage else {
+        return Err(Unsaved::Unselected);
+    };
+    if visible.moving
+        || passage.book != visible.book.book
+        || passage.gen != visible.book.gen
+        || passage.page != visible.page
+        || passage.spine != visible.spine
+    {
+        return Err(Unsaved::Stale);
+    }
+    let body = draft.trim();
+    if body.is_empty() {
+        return Err(Unsaved::Blank);
+    }
+    let fingerprint = Fingerprint {
+        book: passage.book.clone(),
+        page: passage.page,
+        start: passage.start,
+        end: passage.end,
+        body: body.to_string(),
+    };
+    // A second Return with no new keystrokes matches this and does not write.
+    // Typing the same words clears it in `note_typed` and saves again.
+    if last.is_some_and(|saved| saved == &fingerprint) {
+        return Err(Unsaved::Duplicate);
+    }
+    Ok(NewNote {
+        book: passage.book.clone(),
+        page: passage.page,
+        spine: passage.spine.clone(),
+        start: passage.start,
+        end: passage.end,
+        passage: passage.text.clone(),
+        body: body.to_string(),
+        author: LOCAL_AUTHOR.into(),
+        quads: passage.quads.clone(),
+        text_right: passage.text_right,
+    })
+}
+
+pub fn submit_note(
+    path: &Path,
+    draft: &str,
+    passage: Option<&Passage>,
+    visible: &Visible,
+    last: Option<&Fingerprint>,
+    composing: bool,
+) -> Submit {
+    let note = match prepare_save(draft, passage, visible, last, composing) {
+        Ok(note) => note,
+        Err(hold) => return Submit::Kept { hold },
+    };
+    match Notes::open(path).and_then(|notes| notes.insert(&note)) {
+        Ok(id) => Submit::Saved {
+            id,
+            fingerprint: Fingerprint {
+                book: note.book,
+                page: note.page,
+                start: note.start,
+                end: note.end,
+                body: note.body,
+            },
+        },
+        Err(notice) => Submit::Failed { notice },
+    }
+}
+
+pub fn on_return(
+    kind: ReturnKind,
+    field: &NoteField,
+    submitted: &str,
+    visible: &Visible,
+    path: &Path,
+) -> NoteField {
+    if kind == ReturnKind::Blur {
+        return field.clone();
+    }
+    let mut next = field.clone();
+    match submit_note(
+        path,
+        submitted,
+        field.passage.as_ref(),
+        visible,
+        field.fingerprint.as_ref(),
+        field.composing,
+    ) {
+        Submit::Saved { fingerprint, .. } => {
+            next.body.clear();
+            next.notice.clear();
+            next.fingerprint = Some(fingerprint);
+        }
+        Submit::Kept {
+            hold: Unsaved::Duplicate | Unsaved::Composing,
+        } => {}
+        Submit::Kept { hold } => {
+            next.body = submitted.to_string();
+            if let Some(text) = hold.notice() {
+                next.notice = text.to_string();
+            }
+        }
+        Submit::Failed { notice } => {
+            next.body = submitted.to_string();
+            next.notice = notice;
+        }
+    }
+    next
+}
+
+/// Cards for one EPUB column. A stored viewport box is not a line in the current layout.
+pub fn epub_shown(notes: &[StoredNote], measures: &[FreshMeasure], page: u32) -> Vec<StoredNote> {
+    if page == 0 {
+        return Vec::new();
+    }
+    notes
+        .iter()
+        .filter_map(|note| {
+            let fresh = measures
+                .iter()
+                .find(|measure| measure.id == note.id && measure.page == page)?;
+            let mut shown = note.clone();
+            shown.page = page;
+            shown.quads = fresh.quads.clone();
+            shown.text_right = fresh.text_right;
+            Some(shown)
+        })
+        .collect()
 }
 
 pub fn cards_from(notes: &[StoredNote], fit: Fit) -> Vec<CardIn> {
@@ -884,6 +1499,7 @@ mod tests {
         };
         let moving = LivePage {
             book: "a.epub".into(),
+            spine: String::new(),
             page: 4,
             page_w: 600.0,
             page_h: 800.0,
@@ -917,6 +1533,7 @@ mod tests {
             &hold,
             &LivePage {
                 book: "b.pdf".into(),
+                spine: String::new(),
                 page: 1,
                 page_w: 100.0,
                 page_h: 100.0,
@@ -926,6 +1543,83 @@ mod tests {
         assert_eq!(next.book, "b.pdf");
         assert_eq!(next.page, 1);
         assert_eq!(next.selected, None);
+    }
+
+    #[test]
+    fn the_same_column_in_another_chapter_stays_on_its_spine() {
+        let path = std::env::temp_dir().join(format!("margin-spine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        let live = LiveBook {
+            book: "/books/a.epub".into(),
+            gen: 3,
+        };
+        let mut one = sample_selection();
+        one.book = live.book.clone();
+        one.gen = live.gen;
+        one.page = 1;
+        one.spine = "ch1.xhtml".into();
+        one.text = "甲".into();
+        one.start = 0;
+        one.end = 1;
+        let mut two = one.clone();
+        two.spine = "ch2.xhtml".into();
+        two.text = "乙".into();
+        let first = passage_from(one).unwrap();
+        let second = passage_from(two).unwrap();
+        let saved = on_return(
+            ReturnKind::Key,
+            &field_of(first.clone(), "一"),
+            "一",
+            &shown(&live, &first),
+            &file,
+        );
+        assert!(saved.body.is_empty());
+        let saved = on_return(
+            ReturnKind::Key,
+            &field_of(second.clone(), "二"),
+            "二",
+            &shown(&live, &second),
+            &file,
+        );
+        assert!(saved.body.is_empty());
+        let notes = Notes::open(&file).unwrap();
+        let chapter = notes.list(&live.book, 1, "ch1.xhtml").unwrap();
+        assert_eq!(chapter.len(), 1);
+        assert_eq!(chapter[0].body, "一");
+        assert_eq!(chapter[0].passage, "甲");
+        let other = notes.list(&live.book, 1, "ch2.xhtml").unwrap();
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].body, "二");
+        drop(notes);
+        let reopened = Notes::open(&file).unwrap();
+        assert_eq!(
+            reopened.list(&live.book, 1, "ch1.xhtml").unwrap()[0].body,
+            "一"
+        );
+        let hold = Hold {
+            book: live.book.clone(),
+            spine: "ch1.xhtml".into(),
+            page: 1,
+            selected: Some(chapter[0].id),
+            ..Hold::new()
+        };
+        let next = reconcile(
+            &hold,
+            &LivePage {
+                book: live.book,
+                spine: "ch2.xhtml".into(),
+                page: 1,
+                page_w: 400.0,
+                page_h: 600.0,
+                moving: false,
+            },
+        );
+        assert_eq!(next.spine, "ch2.xhtml");
+        assert_eq!(next.page, 1);
+        assert_eq!(next.selected, None);
+        let _ = std::fs::remove_dir_all(&path);
     }
 
     #[test]
@@ -970,13 +1664,14 @@ mod tests {
                     text_right: 0.0,
                 })
                 .unwrap();
-            assert!(notes.list("a.epub", 1).unwrap().is_empty());
-            assert_eq!(notes.list("a.epub", 2).unwrap().len(), 1);
-            assert_eq!(notes.list("b.epub", 2).unwrap()[0].body, "other book");
+            assert!(notes.list("a.epub", 1, "chapter.xhtml").unwrap().is_empty());
+            assert_eq!(notes.list("a.epub", 2, "chapter.xhtml").unwrap().len(), 1);
+            assert!(notes.list("a.epub", 2, "other.xhtml").unwrap().is_empty());
+            assert_eq!(notes.list("b.epub", 2, "").unwrap()[0].body, "other book");
             id
         };
         let notes = Notes::open(&path).unwrap();
-        let stored = notes.list("a.epub", 2).unwrap();
+        let stored = notes.list("a.epub", 2, "chapter.xhtml").unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].id, id);
         assert_eq!(stored[0].replies, vec!["a stored reply".to_string()]);
@@ -1169,7 +1864,7 @@ mod tests {
             .unwrap();
         drop(notes);
         let notes = Notes::open(&file).unwrap();
-        let stored = notes.list("book", 1).unwrap();
+        let stored = notes.list("book", 1, "").unwrap();
         let cards = cards_from(
             &stored,
             Fit {
@@ -1194,6 +1889,791 @@ mod tests {
         let seg = &scene.cards[0].segments[0];
         assert!((seg.x - 1136.0).abs() < 0.01);
         assert!(seg.x > 56.0);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn sample_selection() -> Selection {
+        Selection {
+            book: "/books/a.pdf".into(),
+            gen: 4,
+            page: 3,
+            spine: String::new(),
+            start: 0,
+            end: 2,
+            text: "你😀".into(),
+            quads: vec![Quad {
+                x: 12.0,
+                y: 30.0,
+                w: 40.0,
+                h: 16.0,
+            }],
+            text_right: 80.0,
+        }
+    }
+
+    fn shown(live: &LiveBook, passage: &Passage) -> Visible {
+        Visible {
+            book: live.clone(),
+            page: passage.page,
+            spine: passage.spine.clone(),
+            moving: false,
+        }
+    }
+
+    fn field_of(passage: Passage, body: &str) -> NoteField {
+        NoteField {
+            body: body.into(),
+            passage: Some(passage),
+            ..NoteField::default()
+        }
+    }
+
+    #[test]
+    fn pdf_line_end_stops_at_the_first_line() {
+        let glyphs = [
+            GlyphBox {
+                index: 0,
+                x: 10.0,
+                y: 20.0,
+                w: 8.0,
+                h: 10.0,
+            },
+            GlyphBox {
+                index: 1,
+                x: 20.0,
+                y: 20.0,
+                w: 8.0,
+                h: 10.0,
+            },
+            GlyphBox {
+                index: 2,
+                x: 40.0,
+                y: 20.0,
+                w: 6.0,
+                h: 10.0,
+            },
+            GlyphBox {
+                index: 3,
+                x: 10.0,
+                y: 40.0,
+                w: 30.0,
+                h: 10.0,
+            },
+        ];
+        let right = pdf_line_end(&glyphs, 0, 2).unwrap();
+        assert!((right - 46.0).abs() < 0.01);
+        assert!(pdf_line_end(&glyphs, 9, 10).is_none());
+    }
+
+    #[test]
+    fn an_epub_measure_keeps_real_rects_and_rejects_a_utf16_span() {
+        let quads = measured_quads(&[
+            MeasuredRect {
+                x: 12.0,
+                y: 30.0,
+                w: 40.0,
+                h: 16.0,
+            },
+            MeasuredRect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 10.0,
+            },
+            MeasuredRect {
+                x: 8.0,
+                y: 50.0,
+                w: 20.0,
+                h: 16.0,
+            },
+        ]);
+        assert_eq!(quads.len(), 2);
+        let mut selection = sample_selection();
+        selection.quads = quads;
+        selection.spine = "chapter.xhtml".into();
+        let passage = passage_from(selection.clone()).unwrap();
+        assert_eq!(passage.end - passage.start, 2);
+        assert_eq!(passage.quads.len(), 2);
+        selection.end = 3;
+        assert!(passage_from(selection).is_none());
+        assert_eq!(epub_page_size(0.0, 800.0), (0.0, 0.0));
+        assert_eq!(epub_page_size(640.0, 800.0), (640.0, 800.0));
+    }
+
+    #[test]
+    fn return_saves_reopens_and_keeps_the_other_book_empty() {
+        let path =
+            std::env::temp_dir().join(format!("margin-return-{}-{}", std::process::id(), "save"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let saved = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "  一句  "),
+            "  一句  ",
+            &shown(&live, &passage),
+            &file,
+        );
+        assert!(saved.body.is_empty());
+        assert!(saved.notice.is_empty());
+        assert_eq!(saved.fingerprint.as_ref().unwrap().body, "一句");
+        let again = on_return(
+            ReturnKind::Key,
+            &saved,
+            "  一句  ",
+            &shown(&live, &passage),
+            &file,
+        );
+        assert!(again.body.is_empty());
+        let notes = Notes::open(&file).unwrap();
+        let stored = notes
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].body, "一句");
+        assert_eq!(stored[0].passage, "你😀");
+        assert_eq!(stored[0].start, 0);
+        assert_eq!(stored[0].end, 2);
+        assert!((stored[0].text_right - 80.0).abs() < 0.01);
+        assert!(notes
+            .list(&passage.book, 5, &passage.spine)
+            .unwrap()
+            .is_empty());
+        assert!(notes
+            .list("/books/b.epub", passage.page, &passage.spine)
+            .unwrap()
+            .is_empty());
+        drop(notes);
+        let reopened = Notes::open(&file).unwrap();
+        let cards = cards_from(
+            &reopened
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap(),
+            Fit {
+                origin_x: 0.0,
+                origin_y: 0.0,
+                scale: 1.0,
+            },
+        );
+        assert_eq!(cards.len(), 1);
+        assert!((cards[0].line.top - 30.0).abs() < 0.01);
+        assert!((cards[0].line.text_right - 80.0).abs() < 0.01);
+        let typed = note_typed(&again, "一句");
+        assert!(typed.fingerprint.is_none());
+        let second = on_return(
+            ReturnKind::Key,
+            &typed,
+            "一句",
+            &shown(&live, &passage),
+            &file,
+        );
+        assert!(second.body.is_empty());
+        assert_eq!(
+            reopened
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap()
+                .len(),
+            2
+        );
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn a_blank_missing_stale_composing_or_blur_keeps_the_draft() {
+        let path =
+            std::env::temp_dir().join(format!("margin-return-{}-{}", std::process::id(), "keep"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let blank = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "   "),
+            "   ",
+            &shown(&live, &passage),
+            &file,
+        );
+        assert_eq!(blank.body, "   ");
+        assert_eq!(blank.notice, NOTICE_BLANK);
+        let missing = on_return(
+            ReturnKind::Key,
+            &NoteField {
+                body: "留下".into(),
+                ..NoteField::default()
+            },
+            "留下",
+            &shown(&live, &passage),
+            &file,
+        );
+        assert_eq!(missing.body, "留下");
+        assert_eq!(missing.notice, NOTICE_SELECT);
+        let other = LiveBook {
+            book: "/books/b.epub".into(),
+            gen: live.gen,
+        };
+        let stale = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "摘录"),
+            "摘录",
+            &shown(&other, &passage),
+            &file,
+        );
+        assert_eq!(stale.body, "摘录");
+        assert_eq!(stale.notice, NOTICE_STALE);
+        let reopened = LiveBook {
+            book: live.book.clone(),
+            gen: live.gen + 1,
+        };
+        let old_token = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "摘录"),
+            "摘录",
+            &shown(&reopened, &passage),
+            &file,
+        );
+        assert_eq!(old_token.body, "摘录");
+        assert_eq!(old_token.notice, NOTICE_STALE);
+        assert!(take_passage(Some(passage.clone()), &reopened).is_none());
+        let mut composing = field_of(passage.clone(), "ni");
+        composing.composing = true;
+        let held = on_return(
+            ReturnKind::Key,
+            &composing,
+            "ni",
+            &shown(&live, &passage),
+            &file,
+        );
+        assert_eq!(held.body, "ni");
+        assert!(held.notice.is_empty());
+        let ready = field_of(passage.clone(), "ni");
+        let blurred = on_return(
+            ReturnKind::Blur,
+            &ready,
+            "ni",
+            &shown(&live, &passage),
+            &file,
+        );
+        assert_eq!(blurred.body, "ni");
+        assert!(blurred.notice.is_empty());
+        assert!(Notes::open(&file)
+            .unwrap()
+            .list(&live.book, passage.page, &passage.spine)
+            .unwrap()
+            .is_empty());
+        let mut left = shown(&live, &passage);
+        left.page += 1;
+        let departed = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "留下"),
+            "留下",
+            &left,
+            &file,
+        );
+        assert_eq!(departed.body, "留下");
+        assert_eq!(departed.notice, NOTICE_STALE);
+        let mut other_chapter = shown(&live, &passage);
+        other_chapter.spine = "other.xhtml".into();
+        let jumped = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "留下"),
+            "留下",
+            &other_chapter,
+            &file,
+        );
+        assert_eq!(jumped.body, "留下");
+        assert_eq!(jumped.notice, NOTICE_STALE);
+        let mut turning = shown(&live, &passage);
+        turning.moving = true;
+        let kept_page = passage.page;
+        let kept_spine = passage.spine.clone();
+        let mid = on_return(
+            ReturnKind::Key,
+            &field_of(passage, "留下"),
+            "留下",
+            &turning,
+            &file,
+        );
+        assert_eq!(mid.body, "留下");
+        assert_eq!(mid.notice, NOTICE_STALE);
+        assert!(Notes::open(&file)
+            .unwrap()
+            .list(&live.book, kept_page, &kept_spine)
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn an_epub_card_uses_the_fresh_line_and_not_the_stored_box() {
+        let stored = StoredNote {
+            id: 4,
+            page: 1,
+            spine: "ch1.xhtml".into(),
+            start: 0,
+            end: 2,
+            passage: "甲".into(),
+            body: "一".into(),
+            author: "读者".into(),
+            quads: vec![Quad {
+                x: 1.0,
+                y: 1.0,
+                w: 8.0,
+                h: 8.0,
+            }],
+            text_right: 20.0,
+            replies: Vec::new(),
+        };
+        let fresh = FreshMeasure {
+            id: 4,
+            page: 3,
+            quads: vec![Quad {
+                x: 90.0,
+                y: 40.0,
+                w: 24.0,
+                h: 16.0,
+            }],
+            text_right: 140.0,
+        };
+        assert!(epub_shown(
+            std::slice::from_ref(&stored),
+            std::slice::from_ref(&fresh),
+            1
+        )
+        .is_empty());
+        assert!(epub_shown(std::slice::from_ref(&stored), &[], 3).is_empty());
+        let shown = epub_shown(
+            std::slice::from_ref(&stored),
+            std::slice::from_ref(&fresh),
+            3,
+        );
+        assert_eq!(shown.len(), 1);
+        assert!((shown[0].quads[0].x - 90.0).abs() < 0.01);
+        assert!((shown[0].text_right - 140.0).abs() < 0.01);
+        assert_eq!(shown[0].page, 3);
+        assert!(!accept_layout(5, 5, 5));
+        assert!(accept_layout(5, 5, 6));
+        assert!(accept_layout(6, 5, 6));
+        assert!(!accept_layout(6, 5, 4));
+        assert!(frame_changed(400.0, 800.0, 400.0, 900.0));
+        assert!(frame_changed(400.0, 800.0, 818.0, 800.0));
+        assert!(!frame_changed(400.0, 800.0, 400.4, 800.2));
+        assert!(!measures_ready(5, 5));
+        assert!(measures_ready(5, 6));
+        assert!(measures_ready(0, 0));
+        assert!(selection_reflowed(400.0, 800.0, 2, 400.0, 900.0, 2, 0));
+        assert!(selection_reflowed(400.0, 800.0, 2, 400.0, 800.0, 3, 0));
+        assert!(selection_reflowed(400.0, 800.0, 2, 400.0, 800.0, 2, 2));
+        assert!(!selection_reflowed(400.0, 800.0, 2, 400.0, 800.0, 2, 0));
+    }
+
+    #[test]
+    fn an_existing_notes_table_gains_spine_and_keeps_its_rows() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("margin-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("annotations.sqlite");
+        // Merged #78 creates `spine`. A table from before that column is what
+        // CREATE TABLE IF NOT EXISTS does not alter. Both must open in place.
+        let older = rusqlite::Connection::open(&file).unwrap();
+        older
+            .execute_batch(
+                "CREATE TABLE notes (
+                    id INTEGER PRIMARY KEY,
+                    book TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    start_at INTEGER NOT NULL,
+                    end_at INTEGER NOT NULL,
+                    passage TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    author TEXT NOT NULL,
+                    quads TEXT NOT NULL,
+                    text_right REAL NOT NULL
+                );
+                CREATE TABLE replies (
+                    id INTEGER PRIMARY KEY,
+                    note_id INTEGER NOT NULL,
+                    body TEXT NOT NULL
+                );
+                INSERT INTO notes (book, page, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/a.pdf', 2, 0, 3, 'ink', '甲', '读者', '[]', 40.0);
+                INSERT INTO replies (note_id, body) VALUES (1, '回');
+                INSERT INTO notes (book, page, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/b.pdf', 2, 0, 3, 'other', '乙', '读者', '[]', 12.0);",
+            )
+            .unwrap();
+        drop(older);
+        let mut perms = std::fs::metadata(&file).unwrap().permissions();
+        perms.set_mode(0o444);
+        std::fs::set_permissions(&file, perms).unwrap();
+        assert!(Notes::open(&file).is_err());
+        let mut perms = std::fs::metadata(&file).unwrap().permissions();
+        perms.set_mode(0o644);
+        std::fs::set_permissions(&file, perms).unwrap();
+        let still = rusqlite::Connection::open(&file).unwrap();
+        let cols: i64 = still
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = 'spine'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cols, 0);
+        let kept: String = still
+            .query_row(
+                "SELECT body FROM notes WHERE book = '/books/a.pdf'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, "甲");
+        drop(still);
+        let notes = Notes::open(&file).unwrap();
+        let again = Notes::open(&file).unwrap();
+        drop(again);
+        let loaded = notes.list("/books/a.pdf", 2, "").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].body, "甲");
+        assert_eq!(loaded[0].passage, "ink");
+        assert_eq!(loaded[0].spine, "");
+        assert_eq!(loaded[0].replies, vec!["回".to_string()]);
+        assert!(notes.list("/books/b.pdf", 2, "").unwrap().len() == 1);
+        assert!(notes
+            .list("/books/a.pdf", 2, "ch.xhtml")
+            .unwrap()
+            .is_empty());
+        let epub = NewNote {
+            book: "/books/a.epub".into(),
+            page: 1,
+            spine: "ch1.xhtml".into(),
+            start: 0,
+            end: 1,
+            passage: "句".into(),
+            body: "丙".into(),
+            author: "读者".into(),
+            quads: Vec::new(),
+            text_right: 8.0,
+        };
+        notes.insert(&epub).unwrap();
+        drop(notes);
+        let reopened = Notes::open(&file).unwrap();
+        assert_eq!(reopened.list("/books/a.pdf", 2, "").unwrap()[0].body, "甲");
+        assert_eq!(
+            reopened.list_spine("/books/a.epub", "ch1.xhtml").unwrap()[0].body,
+            "丙"
+        );
+        assert!(reopened
+            .list("/books/b.pdf", 2, "ch1.xhtml")
+            .unwrap()
+            .is_empty());
+        let shipped = rusqlite::Connection::open(&file).unwrap();
+        shipped
+            .execute(
+                "INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+                 VALUES ('/books/c.pdf', 4, 'kept', 1, 2, 'pdf', '丁', '读者', '[]', 9.0)",
+                [],
+            )
+            .unwrap();
+        drop(shipped);
+        let third = Notes::open(&file).unwrap();
+        let pdf = third.list("/books/c.pdf", 4, "kept").unwrap();
+        assert_eq!(pdf.len(), 1);
+        assert_eq!(pdf[0].spine, "kept");
+        assert_eq!(pdf[0].body, "丁");
+        let shipped_file = path.join("annotations-78.sqlite");
+        let shipped_db = rusqlite::Connection::open(&shipped_file).unwrap();
+        shipped_db
+            .execute_batch(
+                "CREATE TABLE notes (
+                    id INTEGER PRIMARY KEY,
+                    book TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    spine TEXT NOT NULL,
+                    start_at INTEGER NOT NULL,
+                    end_at INTEGER NOT NULL,
+                    passage TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    author TEXT NOT NULL,
+                    quads TEXT NOT NULL,
+                    text_right REAL NOT NULL
+                );
+                CREATE TABLE replies (
+                    id INTEGER PRIMARY KEY,
+                    note_id INTEGER NOT NULL,
+                    body TEXT NOT NULL
+                );
+                CREATE INDEX notes_book_page ON notes(book, page);
+                INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/a.pdf', 2, '', 0, 3, 'ink', '甲', '读者', '[]', 40.0);
+                INSERT INTO replies (note_id, body) VALUES (1, '回');
+                INSERT INTO notes (book, page, spine, start_at, end_at, passage, body, author, quads, text_right)
+                    VALUES ('/books/a.epub', 1, 'ch1.xhtml', 0, 1, '句', '丙', '读者', '[]', 8.0);",
+            )
+            .unwrap();
+        drop(shipped_db);
+        let opened = Notes::open(&shipped_file).unwrap();
+        let again = Notes::open(&shipped_file).unwrap();
+        drop(again);
+        let pdf_note = opened.list("/books/a.pdf", 2, "").unwrap();
+        assert_eq!(pdf_note.len(), 1);
+        assert_eq!(pdf_note[0].body, "甲");
+        assert_eq!(pdf_note[0].spine, "");
+        assert_eq!(pdf_note[0].replies, vec!["回".to_string()]);
+        assert_eq!(
+            opened.list_spine("/books/a.epub", "ch1.xhtml").unwrap()[0].body,
+            "丙"
+        );
+        opened
+            .insert(&NewNote {
+                book: "/books/b.pdf".into(),
+                page: 3,
+                spine: String::new(),
+                start: 1,
+                end: 2,
+                passage: "more".into(),
+                body: "戊".into(),
+                author: "读者".into(),
+                quads: Vec::new(),
+                text_right: 4.0,
+            })
+            .unwrap();
+        drop(opened);
+        let reread = Notes::open(&shipped_file).unwrap();
+        assert_eq!(reread.list("/books/a.pdf", 2, "").unwrap()[0].body, "甲");
+        assert_eq!(reread.list("/books/b.pdf", 3, "").unwrap()[0].body, "戊");
+        assert_eq!(
+            reread.list_spine("/books/a.epub", "ch1.xhtml").unwrap()[0].spine,
+            "ch1.xhtml"
+        );
+        assert!(reread
+            .list("/books/a.pdf", 2, "ch1.xhtml")
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn box_at(x: f64) -> FreshMeasure {
+        FreshMeasure {
+            id: 7,
+            page: 1,
+            quads: vec![Quad {
+                x,
+                y: 44.0,
+                w: 20.0,
+                h: 16.0,
+            }],
+            text_right: x + 20.0,
+        }
+    }
+
+    fn post_at(doc: u64, gen: u64, view_w: f64, view_h: f64, x: f64) -> LayoutPost {
+        LayoutPost {
+            doc,
+            gen: Some(gen),
+            view_w,
+            view_h,
+            anchors: Some(vec![box_at(x)]),
+        }
+    }
+
+    #[test]
+    fn a_late_post_from_the_old_frame_is_not_published() {
+        let mut gen = 1_u64;
+        let mut hold = 0_u64;
+        let mut frame = LayoutFrame {
+            doc: 1,
+            page_w: 400.0,
+            page_h: 800.0,
+            zoom: 1.0,
+        };
+        let mut measures = vec![box_at(10.0)];
+        if layout_moved(frame.page_w, frame.page_h, frame.zoom, 818.0, 900.0, 1.0) {
+            hold_layout(gen, &mut hold, &mut measures);
+        }
+        frame.page_w = 818.0;
+        frame.page_h = 900.0;
+        let late = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 2, 400.0, 800.0, 12.0),
+        );
+        assert!(!late);
+        assert_eq!(gen, 1);
+        assert!(published_measures(hold, gen, &measures).is_empty());
+        let fresh = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 818.0, 900.0, 18.0),
+        );
+        assert!(fresh);
+        assert_eq!(gen, 3);
+        let shown = published_measures(hold, gen, &measures);
+        assert_eq!(shown.len(), 1);
+        assert!((shown[0].quads[0].x - 18.0).abs() < 0.01);
+        let turned = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 818.0, 900.0, 30.0),
+        );
+        assert!(turned);
+        assert!((published_measures(hold, gen, &measures)[0].quads[0].x - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_late_post_from_the_old_zoom_is_not_published() {
+        let mut gen = 1_u64;
+        let mut hold = 0_u64;
+        let mut frame = LayoutFrame {
+            doc: 1,
+            page_w: 800.0,
+            page_h: 1000.0,
+            zoom: 1.0,
+        };
+        let mut measures = vec![box_at(10.0)];
+        if layout_moved(
+            frame.page_w,
+            frame.page_h,
+            frame.zoom,
+            frame.page_w,
+            frame.page_h,
+            2.0,
+        ) {
+            hold_layout(gen, &mut hold, &mut measures);
+        }
+        frame.zoom = 2.0;
+        assert!(!take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 2, 800.0, 1000.0, 12.0),
+        ));
+        assert!(published_measures(hold, gen, &measures).is_empty());
+        assert!(take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 400.0, 500.0, 18.0),
+        ));
+        assert!((published_measures(hold, gen, &measures)[0].quads[0].x - 18.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_late_post_from_the_previous_document_is_not_published() {
+        let mut gen = 4_u64;
+        let mut hold = 0_u64;
+        let mut doc = 1_u64;
+        let mut measures = vec![box_at(10.0)];
+        claim_document(&mut doc, &mut gen, &mut hold, &mut measures);
+        assert_eq!(doc, 2);
+        let frame = LayoutFrame {
+            doc,
+            page_w: 400.0,
+            page_h: 800.0,
+            zoom: 1.0,
+        };
+        assert!(!take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 5, 400.0, 800.0, 12.0),
+        ));
+        assert!(published_measures(hold, gen, &measures).is_empty());
+        assert!(take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(2, 1, 400.0, 800.0, 18.0),
+        ));
+        assert!((published_measures(hold, gen, &measures)[0].quads[0].x - 18.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_first_valid_frame_does_not_keep_a_zero_frame_box() {
+        let mut gen = 2_u64;
+        let mut hold = 0_u64;
+        let mut frame = LayoutFrame {
+            doc: 1,
+            page_w: 0.0,
+            page_h: 0.0,
+            zoom: 0.0,
+        };
+        let mut measures = vec![box_at(12.0)];
+        let first_frame_moved =
+            layout_moved(frame.page_w, frame.page_h, frame.zoom, 818.0, 900.0, 1.0);
+        let zero_accepted = take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 2, 0.0, 0.0, 99.0),
+        );
+        let kept_zero_box =
+            !zero_accepted && measures.len() == 1 && (measures[0].quads[0].x - 12.0).abs() < 0.01;
+        if first_frame_moved {
+            hold_layout(gen, &mut hold, &mut measures);
+        }
+        frame.page_w = 818.0;
+        frame.page_h = 900.0;
+        frame.zoom = 1.0;
+        let published_after = published_measures(hold, gen, &measures).len();
+        assert!(
+            !zero_accepted && first_frame_moved && kept_zero_box && published_after == 0,
+            "first_frame_moved={first_frame_moved} zero_accepted={zero_accepted} published_after_record={published_after}"
+        );
+        assert!(take_place(
+            &frame,
+            &mut gen,
+            hold,
+            &mut measures,
+            post_at(1, 3, 818.0, 900.0, 18.0),
+        ));
+        let shown = published_measures(hold, gen, &measures);
+        assert_eq!(shown.len(), 1);
+        assert!((shown[0].quads[0].x - 18.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_failed_store_keeps_the_draft() {
+        let path =
+            std::env::temp_dir().join(format!("margin-return-{}-{}", std::process::id(), "fail"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let blocker = path.join("blocked");
+        std::fs::write(&blocker, b"x").unwrap();
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let failed = on_return(
+            ReturnKind::Key,
+            &field_of(passage.clone(), "别丢"),
+            "别丢",
+            &shown(&live, &passage),
+            &blocker.join("annotations.sqlite"),
+        );
+        assert_eq!(failed.body, "别丢");
+        assert!(!failed.notice.is_empty());
+        assert!(failed.fingerprint.is_none());
         let _ = std::fs::remove_dir_all(path);
     }
 }

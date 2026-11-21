@@ -533,6 +533,47 @@ mod tests {
     }
 
     #[test]
+    fn select_points_keeps_glyphs_on_both_lines() {
+        let glyph = |index, ch, x, y| Glyph {
+            index,
+            ch,
+            quad: Quad {
+                x,
+                y,
+                w: 8.0,
+                h: 10.0,
+            },
+            advance: 8.0,
+        };
+        let text = PageText {
+            plain: "Recne".into(),
+            glyphs: vec![
+                glyph(0, 'R', 10.0, 10.0),
+                glyph(1, 'e', 20.0, 10.0),
+                glyph(2, 'c', 30.0, 10.0),
+                glyph(3, 'n', 10.0, 30.0),
+                glyph(4, 'e', 20.0, 30.0),
+            ],
+        };
+        let Some(spike_report::Anchor::Pdf {
+            start,
+            end,
+            text,
+            quads,
+            ..
+        }) = select_points(&text, (14.0, 15.0), (14.0, 35.0))
+        else {
+            panic!("two lines");
+        };
+        assert_eq!(start, 0);
+        assert_eq!(end, 4);
+        assert_eq!(text, "Recn");
+        assert_eq!(quads.len(), 4);
+        assert!((quads[0].y - 10.0).abs() < 0.01);
+        assert!((quads[3].y - 30.0).abs() < 0.01);
+    }
+
+    #[test]
     fn hayro_word_gap_recovers_the_title_phrase() {
         let path = spike_report::gpt3_path();
         if !std::path::Path::new(&path).exists() {

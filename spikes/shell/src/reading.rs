@@ -602,11 +602,15 @@ const SCRIPT: &str = r#"
     document.documentElement.style.setProperty('overflow', 'hidden', 'important');
     document.documentElement.style.setProperty('clip-path', 'inset(0)', 'important');
   }
+  let layoutGen = 1;
   function reflowPage() {
     fitColumns();
     if (flying !== "restore") snapSettled();
     if (justifyReady && window.spikeJustify) window.spikeJustify.onPageBoxChanged();
+    layoutGen++;
+    post();
   }
+  window.reflowPage = reflowPage;
   function ensureFooter() {
     let bar = document.getElementById('spike-footer');
     if (!bar) {
@@ -773,7 +777,7 @@ const SCRIPT: &str = r#"
   function post(extra) {
     const box = column();
     const fill = columnFill();
-    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
+    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, view_h: window.innerHeight, layout_gen: layoutGen, doc: window.spikeDoc|0, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
     body.fill_gap = fill.fill_gap;
     body.line_h = fill.line_h;
     body.content_bottom = fill.content_bottom;
@@ -806,6 +810,20 @@ const SCRIPT: &str = r#"
     body.bold_prefixes = [];
     var probeRoot = document.getElementById("sr-bold-probes");
     if (probeRoot) body.bold_prefixes = Array.from(probeRoot.querySelectorAll(".sr-word-start")).map(function (el) { return el.textContent; });
+    if (Array.isArray(window.spikeAnchors)) {
+      body.anchors = [];
+      window.spikeAnchors.forEach(function (item) {
+        if (!item) return;
+        const measured = measureScalars(item.start, item.end);
+        if (!measured) return;
+        body.anchors.push({
+          id: item.id,
+          page: measured.page,
+          rects: measured.rects,
+          text_right: measured.text_right
+        });
+      });
+    }
     window.webkit.messageHandlers.spike.postMessage(JSON.stringify(body));
   }
   function locate(offset) {
@@ -1256,6 +1274,91 @@ const SCRIPT: &str = r#"
     }
     requestAnimationFrame(frame);
   }
+  function scalarsUntil(utf16) {
+    const body = document.body.textContent || "";
+    const stop = Math.max(0, Math.min(utf16 | 0, body.length));
+    let scalars = 0;
+    for (let i = 0; i < stop; i++) {
+      const code = body.charCodeAt(i);
+      if (code >= 0xD800 && code <= 0xDBFF && i + 1 < body.length) {
+        const next = body.charCodeAt(i + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) i++;
+      }
+      scalars++;
+    }
+    return scalars;
+  }
+  function selectionBoxes(range) {
+    const list = range.getClientRects();
+    const rects = [];
+    for (let i = 0; i < list.length; i++) {
+      const rect = list[i];
+      if (!intersectsColumn(rect)) continue;
+      rects.push({ x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+    }
+    if (!rects.length) return null;
+    rects.sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+    const line = rects[0];
+    const slack = Math.max(line.h, 1);
+    let right = line.x + line.w;
+    const y = line.y + line.h * 0.5;
+    const stride = columnStride();
+    const step = Math.max(4, line.h * 0.5);
+    for (let x = line.x + line.w; x < stride; x += step) {
+      const caret = document.caretRangeFromPoint(x, y);
+      if (!caret || !caret.startContainer || caret.startContainer.nodeType !== 3) continue;
+      const len = (caret.startContainer.textContent || "").length;
+      const at = Math.min(caret.startOffset || 0, Math.max(0, len - 1));
+      const hit = charRect(caret.startContainer, at);
+      if (!liveRect(hit) || !intersectsColumn(hit)) continue;
+      if (Math.abs(hit.top - line.y) > slack) continue;
+      if (hit.right > right) right = hit.right;
+    }
+    return { rects: rects, text_right: right };
+  }
+  function utf16Until(scalars) {
+    const body = document.body.textContent || "";
+    let seen = 0;
+    let i = 0;
+    const stop = Math.max(0, scalars | 0);
+    while (i < body.length && seen < stop) {
+      const code = body.charCodeAt(i);
+      if (code >= 0xD800 && code <= 0xDBFF && i + 1 < body.length) {
+        const next = body.charCodeAt(i + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) i++;
+      }
+      i++;
+      seen++;
+    }
+    return i;
+  }
+  function locateEnd(offset) {
+    const hit = locate(offset);
+    if (hit) return hit;
+    const body = document.body.textContent || "";
+    if (offset !== body.length) return null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let last = null;
+    while (walker.nextNode()) last = walker.currentNode;
+    if (!last) return null;
+    return { node: last, off: (last.textContent || "").length };
+  }
+  function measureScalars(start, end) {
+    const lo = utf16Until(start);
+    const hi = utf16Until(end);
+    if (hi <= lo) return null;
+    const a = locateEnd(lo);
+    const b = locateEnd(hi);
+    if (!a || !b) return null;
+    const range = document.createRange();
+    range.setStart(a.node, a.off);
+    range.setEnd(b.node, b.off);
+    const boxes = selectionBoxes(range);
+    if (!boxes) return null;
+    return { page: column().page, rects: boxes.rects, text_right: boxes.text_right };
+  }
+  window.spikeMeasure = measureScalars;
+  window.spikeReport = function () { post(); };
   document.addEventListener("mouseup", function () {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
@@ -1264,10 +1367,22 @@ const SCRIPT: &str = r#"
     if (!range.endContainer || range.endContainer.nodeType !== 3) return;
     const start = offsetOf(range.startContainer, range.startOffset || 0);
     const end = offsetOf(range.endContainer, range.endOffset || 0);
-    const text = (document.body.textContent || "").slice(Math.min(start, end), Math.max(start, end));
+    const lo = Math.min(start, end);
+    const hi = Math.max(start, end);
+    const text = (document.body.textContent || "").slice(lo, hi);
     if (!text.trim()) return;
+    const boxes = selectionBoxes(range);
+    if (!boxes) return;
     window.webkit.messageHandlers.spike.postMessage(JSON.stringify({
-      kind: "selection", start: start, end: end, text: text
+      kind: "selection",
+      start: start,
+      end: end,
+      scalar_start: scalarsUntil(lo),
+      scalar_end: scalarsUntil(hi),
+      text: text,
+      rects: boxes.rects,
+      text_right: boxes.text_right,
+      page: column().page
     }));
   }, true);
   window.spikeSeekLast = function () {
@@ -1584,8 +1699,9 @@ const SCRIPT: &str = r#"
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(function () {
       measured = false;
+      layoutGen++;
       if (window.spikeJustify) window.spikeJustify.onPageBoxChanged();
-      else post();
+      post();
     });
   }
   if (window.__spikeFragment) {
@@ -2459,6 +2575,57 @@ mod tests {
         assert!(!lower.contains("night"));
         assert!(!lower.contains("theme"));
         assert!(!lower.contains("spread"));
+    }
+
+    /// Node runs the production page script. It is not WebKit.
+    #[test]
+    fn a_node_selection_posts_scalars_and_a_reflow_remeasures() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join(format!("superreader-select-{}.js", std::process::id()));
+        let drive = dir.join(format!(
+            "superreader-select-drive-{}.js",
+            std::process::id()
+        ));
+        std::fs::write(&page, &script).unwrap();
+        std::fs::write(&drive, super::SELECTION_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["posted"]["kind"], "selection");
+        assert_eq!(v["posted"]["start"], 0);
+        assert_eq!(v["posted"]["end"], 4);
+        assert_eq!(v["posted"]["scalar_start"], 0);
+        assert_eq!(v["posted"]["scalar_end"], 3);
+        assert_eq!(v["posted"]["text"], "A😀B");
+        assert_eq!(v["posted"]["page"], 1);
+        assert_eq!(v["first"]["page"], 1);
+        assert!((v["first"]["rects"][0]["x"].as_f64().unwrap() - 10.0).abs() < 0.01);
+        assert!((v["moved"]["rects"][0]["x"].as_f64().unwrap() - 80.0).abs() < 0.01);
+        assert!(v["off"].is_null());
+        assert!(v["tall"]["gen"].as_u64().unwrap() > 1);
+        assert_eq!(v["tall"]["view_w"], 400.0);
+        assert_eq!(v["tall"]["view_h"], 900.0);
+        assert_eq!(v["tall"]["anchor"]["id"], 7);
+        assert!((v["tall"]["anchor"]["rects"][0]["y"].as_f64().unwrap() - 44.0).abs() < 0.01);
+        assert!(v["font"]["gen"].as_u64().unwrap() > v["tall"]["gen"].as_u64().unwrap());
+        assert_eq!(v["font"]["view_w"], 400.0);
+        assert_eq!(v["font"]["view_h"], 900.0);
+        assert!((v["font"]["anchor"]["rects"][0]["y"].as_f64().unwrap() - 44.0).abs() < 0.01);
+        assert!(v["wide"]["gen"].as_u64().unwrap() > v["font"]["gen"].as_u64().unwrap());
+        assert_eq!(v["wide"]["view_w"], 818.0);
+        assert!((v["wide"]["anchor"]["rects"][0]["x"].as_f64().unwrap() - 18.0).abs() < 0.01);
     }
 }
 
@@ -3388,4 +3555,145 @@ const ease = {
 };
 
 console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease }));
+"#;
+
+/// Node is not WebKit. This drive records the production script's mouseup and remeasure.
+const SELECTION_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+const text = {
+  nodeType: 3,
+  textContent: 'A😀B',
+  nodeValue: 'A😀B',
+  parentElement: null,
+  parentNode: null,
+};
+let box = { left: 10, top: 20, width: 30, height: 16, right: 40, bottom: 36 };
+function rectList() {
+  return { length: 1, 0: box };
+}
+function makeRange() {
+  const range = {
+    startContainer: text,
+    endContainer: text,
+    startOffset: 0,
+    endOffset: 4,
+    setStart(node, off) { range.startContainer = node; range.startOffset = off; },
+    setEnd(node, off) { range.endContainer = node; range.endOffset = off; },
+    selectNodeContents(node) { range.startContainer = node; range.endContainer = node; range.startOffset = 0; range.endOffset = (node.textContent || '').length; },
+    getClientRects: rectList,
+    getBoundingClientRect() { return box; },
+  };
+  return range;
+}
+function el() {
+  return {
+    id: '', style: { setProperty(){}, transform: '', cssText: '' },
+    textContent: '', innerHTML: '', innerText: '', lang: '',
+    scrollLeft: 0, scrollWidth: 400,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return null; },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getContext(){ return { measureText(){ return { width: 8 }; }, fillText(){} }; },
+    getBoundingClientRect(){ return { left: 0, right: 400, top: 0, bottom: 800, width: 400, height: 800 }; },
+    closest(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: '',
+  };
+}
+const body = el();
+body.textContent = 'A😀B';
+body.innerText = 'A😀B';
+body.nodeValue = 'A😀B';
+text.parentElement = body;
+text.parentNode = body;
+const rootEl = el();
+const footer = el();
+footer.id = 'spike-footer';
+const docListeners = {};
+global.document = {
+  createElement() { return el(); },
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll() { return []; },
+  querySelector() { return null; },
+  getElementById(id) { return id === 'spike-footer' ? footer : null; },
+  createTreeWalker() {
+    let pending = text;
+    const walker = {
+      currentNode: text,
+      nextNode() {
+        if (!pending) return null;
+        walker.currentNode = pending;
+        pending = null;
+        return walker.currentNode;
+      },
+    };
+    return walker;
+  },
+  addEventListener(type, fn) { (docListeners[type] = docListeners[type] || []).push(fn); },
+  caretRangeFromPoint() { return null; },
+  createRange: makeRange,
+};
+let releaseFonts;
+global.document.fonts = { ready: new Promise((resolve) => { releaseFonts = resolve; }) };
+global.NodeFilter = { SHOW_TEXT: 4 };
+global.getComputedStyle = () => new Proxy({
+  position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px',
+  fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal',
+  display: 'block', visibility: 'visible',
+}, { get(target, key) { return key in target ? target[key] : '0px'; } });
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => 0 };
+const winListeners = {};
+global.addEventListener = (type, fn) => { (winListeners[type] = winListeners[type] || []).push(fn); };
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.getSelection = () => ({
+  rangeCount: 1,
+  isCollapsed: false,
+  getRangeAt() {
+    const range = makeRange();
+    range.startOffset = 0;
+    range.endOffset = 4;
+    return range;
+  },
+});
+window.webkit = { messageHandlers: { spike: { postMessage(raw) { posts.push(JSON.parse(raw)); } } } };
+eval(script);
+window.spikeReport = function () { throw new Error("reflow must post from reflowPage"); };
+(async () => {
+  for (const fn of raf.splice(0)) fn(0);
+  posts.length = 0;
+  for (const fn of docListeners.mouseup || []) fn({});
+  const posted = posts.find((item) => item.kind === 'selection');
+  const first = window.spikeMeasure(0, 3);
+  box = { left: 80, top: 20, width: 20, height: 16, right: 100, bottom: 36 };
+  const moved = window.spikeMeasure(0, 3);
+  box = { left: 400, top: 20, width: 20, height: 16, right: 420, bottom: 36 };
+  const off = window.spikeMeasure(0, 3);
+  if (!(winListeners.resize || []).length) throw new Error("resize listener missing");
+  if (winListeners.resize[0] !== window.reflowPage) throw new Error("resize is not reflowPage");
+  window.spikeAnchors = [{ id: 7, start: 0, end: 3 }];
+  box = { left: 12, top: 44, width: 28, height: 18, right: 40, bottom: 62 };
+  window.innerHeight = 900;
+  posts.length = 0;
+  for (const fn of winListeners.resize) fn({});
+  const tallPost = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+  posts.length = 0;
+  releaseFonts();
+  await new Promise((resolve) => setImmediate(resolve));
+  const fontPost = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+  box = { left: 18, top: 44, width: 22, height: 18, right: 40, bottom: 62 };
+  window.innerWidth = 818;
+  posts.length = 0;
+  window.reflowPage();
+  const widePost = posts.find((item) => Array.isArray(item.anchors) && item.anchors.length);
+  const pack = (item) => item ? { gen: item.layout_gen, view_w: item.view_w, view_h: item.view_h, anchor: item.anchors[0] } : null;
+  console.log(JSON.stringify({ posted, first, moved, off, tall: pack(tallPost), font: pack(fontPost), wide: pack(widePost) }));
+})().catch((err) => { console.error(err); process.exit(1); });
 "#;

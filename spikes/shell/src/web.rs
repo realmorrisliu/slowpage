@@ -155,6 +155,20 @@ pub struct Inbox {
     pub cjk_gap: u32,
     pub scroll: f64,
     pub anchor: Option<Anchor>,
+    pub selection_token: u64,
+    pub selection_ready: bool,
+    pub selection_page: u32,
+    pub selection_start: u32,
+    pub selection_end: u32,
+    pub selection_text: String,
+    pub selection_rects: Vec<(f64, f64, f64, f64)>,
+    pub selection_right: f64,
+    pub measures: Vec<spike_library::margin::FreshMeasure>,
+    pub layout_gen: u64,
+    pub layout_hold: u64,
+    pub layout_zoom: f64,
+    pub doc: u64,
+    pub view_h: f64,
     pub ready: bool,
     pub reload: bool,
     pub did_reload: bool,
@@ -222,6 +236,37 @@ impl Inbox {
     pub(crate) fn clear_figure(&mut self) {
         crate::visit::drop_figure_mail(&mut self.figure, &mut self.figure_lost);
     }
+
+    pub(crate) fn claim_document(&mut self) {
+        spike_library::margin::claim_document(
+            &mut self.doc,
+            &mut self.layout_gen,
+            &mut self.layout_hold,
+            &mut self.measures,
+        );
+    }
+
+    pub(crate) fn hold_layout(&mut self) {
+        let gen = self.layout_gen;
+        spike_library::margin::hold_layout(gen, &mut self.layout_hold, &mut self.measures);
+    }
+
+    pub(crate) fn take_place(&mut self, post: spike_library::margin::LayoutPost) -> bool {
+        let frame = spike_library::margin::LayoutFrame {
+            doc: self.doc,
+            page_w: self.page_w,
+            page_h: self.page_h,
+            zoom: self.layout_zoom,
+        };
+        let hold = self.layout_hold;
+        spike_library::margin::take_place(
+            &frame,
+            &mut self.layout_gen,
+            hold,
+            &mut self.measures,
+            post,
+        )
+    }
 }
 
 define_class!(
@@ -256,7 +301,8 @@ define_class!(
                     let href = self.ivars().href.borrow().clone();
                     let breaks = self.ivars().breaks.borrow().slice_json(&href);
                     let on = crate::settings::bold_word_starts(&crate::settings::path());
-                    inject(&bytes, &self.ivars().language, &breaks, on)
+                    let doc = self.ivars().inbox.borrow().doc;
+                    inject(&bytes, &self.ivars().language, &breaks, on, doc)
                 } else {
                     bytes
                 };
@@ -295,17 +341,28 @@ define_class!(
                 if !self.ivars().reports.get() {
                     return;
                 }
-                if value["kind"] == "link" {
+                let route = crate::visit::script_route(&value);
+                if route == crate::visit::ScriptRoute::Link {
                     if let Some(hook) = self.ivars().hook.borrow().clone() {
                         hook(&value);
                     }
                     return;
                 }
-                let place_message = value.get("page").is_some()
-                    || value.get("swipe").is_some()
-                    || value.get("frames").is_some()
-                    || value["kind"] == "turn";
-                if place_message {
+                if route == crate::visit::ScriptRoute::Selection {
+                    let href = self.ivars().href.borrow().clone();
+                    let wrote = {
+                        let mut inbox = self.ivars().inbox.borrow_mut();
+                        record_epub_selection(&mut inbox, &href, &value)
+                    };
+                    if wrote {
+                        write_inbox(&self.ivars().inbox.borrow(), &href);
+                    }
+                    return;
+                }
+                if route != crate::visit::ScriptRoute::Place {
+                    return;
+                }
+                {
                     let href = self.ivars().href.borrow().clone();
                     let report = crate::visit::page_report(&value);
                     let applied = handle_script(&value, &href);
@@ -321,12 +378,30 @@ define_class!(
                         return;
                     }
                     let turn = report.token.is_some() || (report.kind == "turn" && !report.chase);
-                    if let (Some(page), Some(pages)) =
+                        if let (Some(page), Some(pages)) =
                         (value["page"].as_u64(), value["pages"].as_u64())
                     {
                         let mut inbox = self.ivars().inbox.borrow_mut();
                         let previous = inbox.pages;
                         inbox.pages = Some((page as usize, pages as usize));
+                        let view_w = value["view_w"].as_f64().unwrap_or(0.0);
+                        let view_h = value["view_h"].as_f64().unwrap_or(0.0);
+                        let post = spike_library::margin::LayoutPost {
+                            doc: value["doc"].as_u64().unwrap_or(0),
+                            gen: value["layout_gen"].as_u64(),
+                            view_w,
+                            view_h,
+                            anchors: value.get("anchors").map(crate::visit::fresh_measures),
+                        };
+                        let taken = inbox.take_place(post);
+                        if taken {
+                            if view_w > 0.0 {
+                                inbox.view_w = view_w;
+                            }
+                            if view_h > 0.0 {
+                                inbox.view_h = view_h;
+                            }
+                        }
                         inbox.sentence = value["sentence"].as_u64().map(|offset| offset as u32);
                         if !turn {
                             if let Some(missed) = value["missed"].as_bool() {
@@ -378,9 +453,6 @@ define_class!(
                             inbox.layout = Some(value["layout"].clone());
                         } else if let Some(ratio) = value["gap_ratio"].as_f64() {
                             inbox.gap_ratio = Some(ratio);
-                        }
-                        if let Some(view_w) = value["view_w"].as_f64() {
-                            inbox.view_w = view_w;
                         }
                         if inbox.page_ready_ms.is_none()
                             && value["layout"]["ready"] == true
@@ -441,24 +513,6 @@ define_class!(
                         return;
                     }
                     return;
-                }
-                let start = value["start"].as_u64().unwrap_or(0) as u32;
-                let end = value["end"].as_u64().unwrap_or(0) as u32;
-                let selected = value["text"].as_str().unwrap_or("").to_string();
-                if !selected.trim().is_empty() {
-                    let mut inbox = self.ivars().inbox.borrow_mut();
-                    inbox.anchor = Some(Anchor::Epub {
-                        spine_href: self.ivars().href.borrow().clone(),
-                        start,
-                        end,
-                        text: selected,
-                    });
-                    if std::env::var("SPIKE_RELOAD").as_deref() == Ok("1") && !inbox.did_reload {
-                        inbox.reload = true;
-                    }
-                    drop(inbox);
-                    let href = self.ivars().href.borrow().clone();
-                    write_inbox(&self.ivars().inbox.borrow(), &href);
                 }
             }
         }
@@ -553,6 +607,47 @@ define_class!(
         }
     }
 );
+
+fn record_epub_selection(inbox: &mut Inbox, href: &str, value: &serde_json::Value) -> bool {
+    let start = value["start"].as_u64().unwrap_or(0) as u32;
+    let end = value["end"].as_u64().unwrap_or(0) as u32;
+    let selected = value["text"].as_str().unwrap_or("").to_string();
+    if selected.trim().is_empty() {
+        return false;
+    }
+    inbox.anchor = Some(Anchor::Epub {
+        spine_href: href.to_string(),
+        start,
+        end,
+        text: selected,
+    });
+    note_selection(inbox, value);
+    if std::env::var("SPIKE_RELOAD").as_deref() == Ok("1") && !inbox.did_reload {
+        inbox.reload = true;
+    }
+    true
+}
+
+fn note_selection(inbox: &mut Inbox, value: &serde_json::Value) {
+    inbox.selection_token = inbox.selection_token.wrapping_add(1);
+    if let Some(measure) = crate::visit::selection_measure(value) {
+        inbox.selection_ready = true;
+        inbox.selection_page = measure.page;
+        inbox.selection_start = measure.start;
+        inbox.selection_end = measure.end;
+        inbox.selection_text = measure.text;
+        inbox.selection_rects = measure.rects;
+        inbox.selection_right = measure.text_right;
+    } else {
+        inbox.selection_ready = false;
+        inbox.selection_page = 0;
+        inbox.selection_start = 0;
+        inbox.selection_end = 0;
+        inbox.selection_text.clear();
+        inbox.selection_rects.clear();
+        inbox.selection_right = 0.0;
+    }
+}
 
 pub(crate) fn write_inbox(inbox: &Inbox, href: &str) {
     if inbox.open_ms.is_none() && inbox.pages.is_none() && inbox.anchor.is_none() {
@@ -657,6 +752,7 @@ fn eval(web: &AnyObject, js: &str, inbox: Rc<RefCell<Inbox>>, href: String, turn
                     end: parsed["end"].as_u64().unwrap_or(0) as u32,
                     text: text.to_string(),
                 });
+                note_selection(&mut inbox, &parsed);
                 if std::env::var("SPIKE_RELOAD").as_deref() == Ok("1") && !inbox.did_reload {
                     inbox.reload = true;
                 }
@@ -698,7 +794,7 @@ fn paint_web_backing(web: &AnyObject) {
     }
 }
 
-fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool) -> Vec<u8> {
+fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool, doc: u64) -> Vec<u8> {
     let html = spike_epub::normalize_chapter(&String::from_utf8_lossy(bytes));
     let html = crate::reading::prepare_html(&html, language);
     let mut html = crate::bold_word::decorate(&html, bold);
@@ -714,7 +810,7 @@ fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool) -> Vec<u8> {
     });
     let fragment = serde_json::to_string(&fragment).unwrap_or_else(|_| "\"\"".to_string());
     let script = format!(
-        "<script>window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};window.__spikeFragment={fragment};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
+        "<script>window.spikeDoc={doc};window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};window.__spikeFragment={fragment};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
         crate::reading::page_script(language)
     );
     if let Some(at) = html.to_ascii_lowercase().rfind("</body>") {
@@ -831,6 +927,10 @@ impl WebChapter {
             let _: () = msg_send![&web, setNavigationDelegate: &*handler];
             let _: () = msg_send![parent, addSubview: &*web];
             let _: () = msg_send![parent, addSubview: &*edge];
+            {
+                let mut inbox = inbox.borrow_mut();
+                inbox.claim_document();
+            }
             let url = NSString::from_str(&format!("epub://book{href}"));
             let nsurl = objc2_foundation::NSURL::URLWithString(&url).ok_or("url")?;
             let request: Retained<AnyObject> =
@@ -1017,6 +1117,17 @@ impl WebChapter {
         );
     }
 
+    pub fn set_anchors(&self, payload: &str) {
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeAnchors={payload};if(window.spikeReport)window.spikeReport();"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
     pub fn set_footer(&self, num: &str, rest: &str) {
         let num = serde_json::to_string(num).unwrap_or_else(|_| "\"\"".to_string());
         let rest = serde_json::to_string(rest).unwrap_or_else(|_| "\"\"".to_string());
@@ -1048,6 +1159,8 @@ impl WebChapter {
             handler.ivars().href.replace(href.clone());
             let mut inbox = slot.inbox.borrow_mut();
             inbox.pages = None;
+            inbox.claim_document();
+            inbox.view_h = 0.0;
             inbox.pinned = None;
             inbox.pin_missed = false;
             inbox.await_nav = true;
@@ -1119,6 +1232,8 @@ impl WebChapter {
     pub fn reload_source(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
+            inbox.claim_document();
+            inbox.view_h = 0.0;
             inbox.clear_figure();
         }
         let (web, _, href) = self.shown();
@@ -1136,6 +1251,8 @@ impl WebChapter {
     pub fn reload(&self) {
         {
             let mut inbox = self.inbox.borrow_mut();
+            inbox.claim_document();
+            inbox.view_h = 0.0;
             inbox.clear_figure();
         }
         let (web, _, _) = self.shown();
@@ -1159,7 +1276,7 @@ impl WebChapter {
 
 fn page_target_js(width: f64) -> String {
     format!(
-        "window.spikePageW={width};if(window.spikeJustify)window.spikeJustify.onPageBoxChanged()"
+        "window.spikePageW={width};if(window.reflowPage)window.reflowPage();else if(window.spikeJustify)window.spikeJustify.onPageBoxChanged()"
     )
 }
 
@@ -1279,6 +1396,7 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                             let mut inbox = handler.ivars().inbox.borrow_mut();
                             inbox.chapter_ms = None;
                             inbox.clear_figure();
+                            inbox.claim_document();
                         }
                         launch = Some((web, href));
                     }
