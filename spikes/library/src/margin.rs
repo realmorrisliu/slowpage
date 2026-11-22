@@ -1328,8 +1328,8 @@ fn clear_new_body(field: &mut NoteField) {
 }
 
 /// Open a card editor. An existing draft for this note and kind continues.
-/// The live new-note text is stashed once. An empty bottom field does not
-/// replace a stash already held.
+/// The live new-note text is stashed once. A stash already held stays, and a
+/// second live draft does not replace it or get dropped to open the editor.
 pub fn begin_card(ink: &MarginInk, key: CardKey, seed: &str) -> MarginInk {
     if matches!(&ink.face, Face::Card(current) if current == &key) {
         return ink.clone();
@@ -1339,6 +1339,13 @@ pub fn begin_card(ink: &MarginInk, key: CardKey, seed: &str) -> MarginInk {
         end_composition(&mut next.drafts, &previous);
     }
     if matches!(next.face, Face::New) && !next.new_note.body.trim().is_empty() {
+        let held = next
+            .parked
+            .as_ref()
+            .is_some_and(|parked| !parked.body.trim().is_empty());
+        if held {
+            return ink.clone();
+        }
         let mut parked = next.new_note.clone();
         parked.composing = false;
         next.parked = Some(parked);
@@ -1391,8 +1398,9 @@ pub fn cancel_card(ink: &MarginInk, key: &CardKey) -> MarginInk {
 }
 
 /// Put the stashed new-note draft back and ask the field to take focus.
+/// Text already in the field stays. The stash stays until that field is empty.
 pub fn restore_new(ink: &MarginInk) -> MarginInk {
-    if !matches!(ink.face, Face::New) {
+    if !matches!(ink.face, Face::New) || !ink.new_note.body.trim().is_empty() {
         return ink.clone();
     }
     let Some(parked) = ink.parked.clone() else {
@@ -3255,6 +3263,20 @@ mod tests {
         let other = retarget(&continued, "other.epub", "", 1);
         assert!(matches!(other.face, Face::New));
         assert_eq!(other.draft(&key).unwrap().key.book, passage.book);
+        let mut second = cancelled.clone();
+        second.new_note.body = "第二条".into();
+        let refused = begin_card(&second, key.clone(), "种子");
+        assert!(matches!(refused.face, Face::New));
+        assert_eq!(refused.new_note.body, "第二条");
+        assert_eq!(refused.parked.as_ref().unwrap().body, "未发送");
+        let kept = restore_new(&refused);
+        assert_eq!(kept.new_note.body, "第二条");
+        assert_eq!(kept.parked.as_ref().unwrap().body, "未发送");
+        let mut cleared = kept.clone();
+        cleared.new_note.body.clear();
+        let opened = begin_card(&cleared, key, "种子");
+        assert!(matches!(opened.face, Face::Card(_)));
+        assert_eq!(opened.parked.as_ref().unwrap().body, "未发送");
         let _ = std::fs::remove_dir_all(dir);
     }
 
