@@ -1,6 +1,7 @@
 //! Annotation cards. Geometry is the 2026-11-20 22:42 set. Storage is the
-//! local SQLite the route already assigned to SuperReader. `on_return` is the
-//! only save. This module does not call an agent and does not ship sample notes.
+//! local SQLite the route already assigned to SuperReader. A new note saves
+//! through `on_return`. A card edit and a card reply save through `submit_card`.
+//! This module does not call an agent and does not ship sample notes.
 
 use std::path::Path;
 
@@ -459,6 +460,7 @@ pub const LOCAL_AUTHOR: &str = "读者";
 pub const NOTICE_BLANK: &str = "先写一句笔记";
 pub const NOTICE_SELECT: &str = "先选中原文";
 pub const NOTICE_STALE: &str = "选区已经换了";
+pub const NOTICE_KEPT: &str = "未能保存，草稿仍在此，未丢失";
 
 /// One PDF glyph in page points. The index is a Unicode scalar offset.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -863,6 +865,51 @@ impl Notes {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Replace the body of one note in one book. A matching id in another book stays.
+    pub fn update_body(&self, book: &str, id: i64, body: &str) -> Result<(), String> {
+        let body = body.trim();
+        if book.is_empty() || body.is_empty() {
+            return Err("note needs a book and a body".into());
+        }
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE notes SET body = ?1 WHERE id = ?2 AND book = ?3",
+                params![body, id, book],
+            )
+            .map_err(|err| err.to_string())?;
+        if changed == 0 {
+            return Err("no such note".into());
+        }
+        Ok(())
+    }
+
+    /// Insert a reply only when the note id belongs to this book.
+    pub fn reply_in(&self, book: &str, note_id: i64, body: &str) -> Result<i64, String> {
+        let body = body.trim();
+        if book.is_empty() || body.is_empty() {
+            return Err("reply is empty".into());
+        }
+        let found: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE id = ?1 AND book = ?2",
+                params![note_id, book],
+                |row| row.get(0),
+            )
+            .map_err(|err| err.to_string())?;
+        if found == 0 {
+            return Err("no such note".into());
+        }
+        self.conn
+            .execute(
+                "INSERT INTO replies (note_id, body) VALUES (?1, ?2)",
+                params![note_id, body],
+            )
+            .map_err(|err| err.to_string())?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     pub fn list_spine(&self, book: &str, spine: &str) -> Result<Vec<StoredNote>, String> {
         if book.is_empty() || spine.is_empty() {
             return Ok(Vec::new());
@@ -1192,6 +1239,363 @@ pub fn on_return(
         }
     }
     next
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardKind {
+    Edit,
+    Reply,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CardKey {
+    pub book: String,
+    pub note_id: i64,
+    pub kind: CardKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CardDraft {
+    pub key: CardKey,
+    pub body: String,
+    pub composing: bool,
+    pub notice: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Face {
+    New,
+    Card(CardKey),
+}
+
+/// One margin writer. `New` is the bottom field. `Card` is the only other
+/// input, and the bottom field is not live while it is open. `parked` is the
+/// new-note draft stashed on entry. It is not loaded again until `restore_new`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MarginInk {
+    pub face: Face,
+    pub new_note: NoteField,
+    pub parked: Option<NoteField>,
+    pub drafts: Vec<CardDraft>,
+    pub focus_new: u64,
+    pub place_book: String,
+    pub place_spine: String,
+    pub place_page: u32,
+}
+
+impl Default for MarginInk {
+    fn default() -> Self {
+        Self {
+            face: Face::New,
+            new_note: NoteField::default(),
+            parked: None,
+            drafts: Vec::new(),
+            focus_new: 0,
+            place_book: String::new(),
+            place_spine: String::new(),
+            place_page: 0,
+        }
+    }
+}
+
+impl MarginInk {
+    pub fn notice_line(&self) -> String {
+        match &self.face {
+            Face::Card(key) => self
+                .drafts
+                .iter()
+                .find(|draft| &draft.key == key)
+                .map(|draft| draft.notice.clone())
+                .unwrap_or_default(),
+            Face::New => self.new_note.notice.clone(),
+        }
+    }
+
+    pub fn draft(&self, key: &CardKey) -> Option<&CardDraft> {
+        self.drafts.iter().find(|draft| &draft.key == key)
+    }
+}
+
+fn draft_at(drafts: &[CardDraft], key: &CardKey) -> Option<usize> {
+    drafts.iter().position(|draft| &draft.key == key)
+}
+
+fn clear_new_body(field: &mut NoteField) {
+    field.body.clear();
+    field.composing = false;
+    field.notice.clear();
+    field.fingerprint = None;
+}
+
+/// Open a card editor. An existing draft for this note and kind continues.
+/// The live new-note text is stashed once. An empty bottom field does not
+/// replace a stash already held.
+pub fn begin_card(ink: &MarginInk, key: CardKey, seed: &str) -> MarginInk {
+    if matches!(&ink.face, Face::Card(current) if current == &key) {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    if let Face::Card(previous) = next.face.clone() {
+        end_composition(&mut next.drafts, &previous);
+    }
+    if matches!(next.face, Face::New) && !next.new_note.body.trim().is_empty() {
+        let mut parked = next.new_note.clone();
+        parked.composing = false;
+        next.parked = Some(parked);
+        clear_new_body(&mut next.new_note);
+    } else if matches!(next.face, Face::New) {
+        clear_new_body(&mut next.new_note);
+    }
+    if draft_at(&next.drafts, &key).is_none() {
+        next.drafts.push(CardDraft {
+            key: key.clone(),
+            body: seed.to_string(),
+            composing: false,
+            notice: String::new(),
+        });
+    }
+    next.face = Face::Card(key);
+    next
+}
+
+/// Leave the card editor without dropping its draft. A later open of that note continues.
+pub fn park_card(ink: &MarginInk) -> MarginInk {
+    if !matches!(ink.face, Face::Card(_)) {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    if let Face::Card(key) = next.face.clone() {
+        end_composition(&mut next.drafts, &key);
+    }
+    next.face = Face::New;
+    clear_new_body(&mut next.new_note);
+    next
+}
+
+fn end_composition(drafts: &mut [CardDraft], key: &CardKey) {
+    if let Some(index) = draft_at(drafts, key) {
+        drafts[index].composing = false;
+    }
+}
+
+/// Esc and 取消 drop this card draft and write nothing.
+pub fn cancel_card(ink: &MarginInk, key: &CardKey) -> MarginInk {
+    if !matches!(&ink.face, Face::Card(current) if current == key) {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    next.drafts.retain(|draft| &draft.key != key);
+    next.face = Face::New;
+    clear_new_body(&mut next.new_note);
+    next
+}
+
+/// Put the stashed new-note draft back and ask the field to take focus.
+pub fn restore_new(ink: &MarginInk) -> MarginInk {
+    if !matches!(ink.face, Face::New) {
+        return ink.clone();
+    }
+    let Some(parked) = ink.parked.clone() else {
+        return ink.clone();
+    };
+    let mut next = ink.clone();
+    next.new_note = parked;
+    next.parked = None;
+    next.focus_new = next.focus_new.saturating_add(1);
+    next
+}
+
+/// A page, chapter, or book change leaves the card editor without writing.
+/// The draft stays under its original note and book.
+pub fn retarget(ink: &MarginInk, book: &str, spine: &str, page: u32) -> MarginInk {
+    if ink.place_book == book && ink.place_spine == spine && ink.place_page == page {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    let had_place = !ink.place_book.is_empty() || ink.place_page != 0;
+    if had_place && matches!(next.face, Face::Card(_)) {
+        if let Face::Card(key) = next.face.clone() {
+            end_composition(&mut next.drafts, &key);
+        }
+        next.face = Face::New;
+        clear_new_body(&mut next.new_note);
+    }
+    if had_place && ink.place_book != book {
+        next.new_note.passage = None;
+        next.new_note.fingerprint = None;
+    }
+    next.place_book = book.to_string();
+    next.place_spine = spine.to_string();
+    next.place_page = page;
+    next
+}
+
+pub fn type_new(ink: &MarginInk, text: &str) -> MarginInk {
+    if !matches!(ink.face, Face::New) {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    next.new_note = note_typed(&ink.new_note, text);
+    next
+}
+
+pub fn compose_new(ink: &MarginInk, composing: bool) -> MarginInk {
+    if !composing {
+        let mut next = ink.clone();
+        let mut changed = false;
+        if next.new_note.composing {
+            next.new_note.composing = false;
+            changed = true;
+        }
+        if let Some(parked) = next.parked.as_mut() {
+            if parked.composing {
+                parked.composing = false;
+                changed = true;
+            }
+        }
+        return if changed { next } else { ink.clone() };
+    }
+    if !matches!(ink.face, Face::New) || ink.new_note.composing {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    next.new_note.composing = true;
+    next
+}
+
+pub fn type_card(ink: &MarginInk, key: &CardKey, text: &str) -> MarginInk {
+    if !matches!(&ink.face, Face::Card(current) if current == key) {
+        return ink.clone();
+    }
+    let Some(index) = draft_at(&ink.drafts, key) else {
+        return ink.clone();
+    };
+    if ink.drafts[index].body == text {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    next.drafts[index].body = text.to_string();
+    next.drafts[index].notice.clear();
+    next
+}
+
+pub fn compose_card(ink: &MarginInk, key: &CardKey, composing: bool) -> MarginInk {
+    let Some(index) = draft_at(&ink.drafts, key) else {
+        return ink.clone();
+    };
+    if !composing {
+        if !ink.drafts[index].composing {
+            return ink.clone();
+        }
+        let mut next = ink.clone();
+        next.drafts[index].composing = false;
+        return next;
+    }
+    if !matches!(&ink.face, Face::Card(current) if current == key) {
+        return ink.clone();
+    }
+    if ink.drafts[index].composing {
+        return ink.clone();
+    }
+    let mut next = ink.clone();
+    next.drafts[index].composing = true;
+    next
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CardWrite {
+    Saved,
+    Kept,
+    Failed,
+    Ignored,
+}
+
+/// Save the card that is open. A submit for any other card, or after the
+/// editor has closed, does not write.
+pub fn submit_card(
+    ink: &MarginInk,
+    key: &CardKey,
+    submitted: &str,
+    path: &Path,
+) -> (MarginInk, CardWrite) {
+    if !matches!(&ink.face, Face::Card(current) if current == key) {
+        return (ink.clone(), CardWrite::Ignored);
+    }
+    let Some(index) = draft_at(&ink.drafts, key) else {
+        return (ink.clone(), CardWrite::Ignored);
+    };
+    if ink.drafts[index].composing {
+        return (ink.clone(), CardWrite::Kept);
+    }
+    let body = submitted.trim();
+    if body.is_empty() {
+        let mut next = ink.clone();
+        next.drafts[index].body = submitted.to_string();
+        next.drafts[index].notice = NOTICE_BLANK.to_string();
+        return (next, CardWrite::Kept);
+    }
+    let write = match key.kind {
+        CardKind::Edit => {
+            Notes::open(path).and_then(|notes| notes.update_body(&key.book, key.note_id, body))
+        }
+        CardKind::Reply => Notes::open(path)
+            .and_then(|notes| notes.reply_in(&key.book, key.note_id, body))
+            .map(|_| ()),
+    };
+    match write {
+        Ok(()) => {
+            let mut next = ink.clone();
+            next.drafts.retain(|draft| &draft.key != key);
+            next.face = Face::New;
+            clear_new_body(&mut next.new_note);
+            (next, CardWrite::Saved)
+        }
+        Err(_) => {
+            let mut next = ink.clone();
+            next.drafts[index].body = submitted.to_string();
+            next.drafts[index].notice = NOTICE_KEPT.to_string();
+            (next, CardWrite::Failed)
+        }
+    }
+}
+
+/// The bottom field writes only while it is the live input. A stashed draft
+/// is not a submit, and an empty event does not wipe a draft just restored.
+pub fn submit_new(ink: &MarginInk, submitted: &str, visible: &Visible, path: &Path) -> MarginInk {
+    if !matches!(ink.face, Face::New) {
+        return ink.clone();
+    }
+    if submitted.trim().is_empty() && !ink.new_note.body.trim().is_empty() {
+        return ink.clone();
+    }
+    if ink.new_note.body.trim().is_empty() {
+        if let Some(parked) = &ink.parked {
+            if !parked.body.trim().is_empty() && submitted.trim() == parked.body.trim() {
+                return ink.clone();
+            }
+        }
+    }
+    let mut next = ink.clone();
+    next.new_note = on_return(ReturnKind::Key, &ink.new_note, submitted, visible, path);
+    next
+}
+
+/// The in-card field. Long text stays inside this cap. The card band scrolls the card.
+pub fn editor_field_h(body: &str) -> f64 {
+    ((wrap_lines(body) as f64) * LINE_H).clamp(36.0, 160.0)
+}
+
+/// Extra card height for the in-card field and its 保存 row. The card stays 208 wide.
+pub fn editor_block(body: &str) -> f64 {
+    GAP + editor_field_h(body) + LINE_H + GAP
+}
+
+pub fn edit_card_h(quote: &str, draft: &str) -> f64 {
+    PAD_Y + LINE_H + (wrap_lines(quote).max(1) as f64) * LINE_H + editor_block(draft) + PAD_Y
+}
+
+pub fn reply_card_h(quote: &str, replies: &[String], draft: &str) -> f64 {
+    open_height(quote, replies) + LINE_H + editor_block(draft)
 }
 
 /// Cards for one EPUB column. A stored viewport box is not a line in the current layout.
@@ -2675,5 +3079,301 @@ mod tests {
         assert!(!failed.notice.is_empty());
         assert!(failed.fingerprint.is_none());
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn ink_place(book: &str, page: u32) -> MarginInk {
+        retarget(&MarginInk::default(), book, "", page)
+    }
+
+    #[test]
+    fn an_edit_updates_that_book_and_a_reply_is_still_there_after_reopen() {
+        let dir = std::env::temp_dir().join(format!("margin-card-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("annotations.sqlite");
+        let notes = Notes::open(&path).unwrap();
+        let id = notes
+            .insert(&NewNote {
+                book: "a.epub".into(),
+                page: 2,
+                spine: "ch.xhtml".into(),
+                start: 0,
+                end: 4,
+                passage: "原文".into(),
+                body: "旧批注".into(),
+                author: LOCAL_AUTHOR.into(),
+                quads: vec![Quad {
+                    x: 1.0,
+                    y: 2.0,
+                    w: 3.0,
+                    h: 4.0,
+                }],
+                text_right: 8.0,
+            })
+            .unwrap();
+        notes
+            .insert(&NewNote {
+                book: "b.epub".into(),
+                page: 2,
+                spine: String::new(),
+                start: 0,
+                end: 1,
+                passage: "乙".into(),
+                body: "别本书".into(),
+                author: LOCAL_AUTHOR.into(),
+                quads: vec![Quad {
+                    x: 1.0,
+                    y: 2.0,
+                    w: 3.0,
+                    h: 4.0,
+                }],
+                text_right: 8.0,
+            })
+            .unwrap();
+        drop(notes);
+        let key = CardKey {
+            book: "a.epub".into(),
+            note_id: id,
+            kind: CardKind::Edit,
+        };
+        let ink = begin_card(&ink_place("a.epub", 2), key.clone(), "旧批注");
+        let (saved, wrote) = submit_card(&ink, &key, "新批注", &path);
+        assert_eq!(wrote, CardWrite::Saved);
+        assert!(matches!(saved.face, Face::New));
+        let (again, second) = submit_card(&saved, &key, "新批注", &path);
+        assert_eq!(second, CardWrite::Ignored);
+        assert_eq!(again.face, saved.face);
+        let notes = Notes::open(&path).unwrap();
+        assert_eq!(
+            notes.list("a.epub", 2, "ch.xhtml").unwrap()[0].body,
+            "新批注"
+        );
+        assert_eq!(notes.list("b.epub", 2, "").unwrap()[0].body, "别本书");
+        let wrong = CardKey {
+            book: "b.epub".into(),
+            note_id: id,
+            kind: CardKind::Edit,
+        };
+        let crossed = begin_card(&ink_place("b.epub", 2), wrong.clone(), "别本书");
+        let (kept, failed) = submit_card(&crossed, &wrong, "写到乙书", &path);
+        assert_eq!(failed, CardWrite::Failed);
+        assert_eq!(kept.draft(&wrong).unwrap().body, "写到乙书");
+        assert_eq!(kept.draft(&wrong).unwrap().notice, NOTICE_KEPT);
+        assert_eq!(
+            notes.list("a.epub", 2, "ch.xhtml").unwrap()[0].body,
+            "新批注"
+        );
+        let reply_key = CardKey {
+            book: "a.epub".into(),
+            note_id: id,
+            kind: CardKind::Reply,
+        };
+        let replying = begin_card(&ink_place("a.epub", 2), reply_key.clone(), "");
+        let (once, first) = submit_card(&replying, &reply_key, "一条回复", &path);
+        assert_eq!(first, CardWrite::Saved);
+        let (_twice, echo) = submit_card(&once, &reply_key, "一条回复", &path);
+        assert_eq!(echo, CardWrite::Ignored);
+        drop(notes);
+        let notes = Notes::open(&path).unwrap();
+        let stored = notes.list("a.epub", 2, "ch.xhtml").unwrap();
+        assert_eq!(stored[0].replies, vec!["一条回复".to_string()]);
+        let empty = begin_card(&once, reply_key.clone(), "");
+        let (blank, held) = submit_card(&empty, &reply_key, "  ", &path);
+        assert_eq!(held, CardWrite::Kept);
+        assert_eq!(blank.draft(&reply_key).unwrap().notice, NOTICE_BLANK);
+        assert_eq!(
+            notes.list("a.epub", 2, "ch.xhtml").unwrap()[0]
+                .replies
+                .len(),
+            1
+        );
+        let composing = compose_card(&empty, &reply_key, true);
+        let (_still, mid) = submit_card(&composing, &reply_key, "组合", &path);
+        assert_eq!(mid, CardWrite::Kept);
+        assert!(notes.reply_in("b.epub", id, "跨书").is_err());
+        drop(notes);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_stashed_new_draft_returns_only_through_restore_and_cannot_submit_itself() {
+        let dir = std::env::temp_dir().join(format!("margin-card-stash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("annotations.sqlite");
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let visible = shown(&live, &passage);
+        let mut ink = ink_place(&passage.book, passage.page);
+        ink.new_note = field_of(passage.clone(), "未发送");
+        let key = CardKey {
+            book: passage.book.clone(),
+            note_id: 7,
+            kind: CardKind::Edit,
+        };
+        let editing = begin_card(&ink, key.clone(), "卡内");
+        assert_eq!(editing.parked.as_ref().unwrap().body, "未发送");
+        assert!(editing.new_note.body.is_empty());
+        assert!(matches!(editing.face, Face::Card(_)));
+        let late = submit_new(&editing, "未发送", &visible, &path);
+        assert!(matches!(late.face, Face::Card(_)));
+        assert!(
+            !path.exists()
+                || Notes::open(&path)
+                    .unwrap()
+                    .list(&passage.book, passage.page, &passage.spine)
+                    .unwrap()
+                    .is_empty()
+        );
+        let parked_card = park_card(&editing);
+        assert!(matches!(parked_card.face, Face::New));
+        assert_eq!(parked_card.draft(&key).unwrap().body, "卡内");
+        let resumed = begin_card(&parked_card, key.clone(), "不该覆盖");
+        assert_eq!(resumed.draft(&key).unwrap().body, "卡内");
+        let cancelled = cancel_card(&resumed, &key);
+        assert!(matches!(cancelled.face, Face::New));
+        assert!(cancelled.new_note.body.is_empty());
+        assert_eq!(cancelled.parked.as_ref().unwrap().body, "未发送");
+        assert!(cancelled.draft(&key).is_none());
+        let parked_submit = submit_new(&cancelled, "未发送", &visible, &path);
+        assert!(parked_submit.new_note.body.is_empty());
+        assert!(parked_submit.parked.is_some());
+        let restored = restore_new(&parked_submit);
+        assert_eq!(restored.new_note.body, "未发送");
+        assert!(restored.parked.is_none());
+        assert_eq!(restored.focus_new, 1);
+        let stale_empty = submit_new(&restored, "", &visible, &path);
+        assert_eq!(stale_empty.new_note.body, "未发送");
+        let turned = retarget(&editing, &passage.book, &passage.spine, passage.page + 1);
+        assert!(matches!(turned.face, Face::New));
+        assert_eq!(turned.draft(&key).unwrap().body, "卡内");
+        let continued = begin_card(&turned, key.clone(), "不该覆盖");
+        assert_eq!(continued.draft(&key).unwrap().body, "卡内");
+        let other = retarget(&continued, "other.epub", "", 1);
+        assert!(matches!(other.face, Face::New));
+        assert_eq!(other.draft(&key).unwrap().key.book, passage.book);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_editor_taller_than_the_band_stays_208_wide_and_can_scroll_to_its_end() {
+        let quote = "这一句才把走路的理由说出来。";
+        let draft = "信\n".repeat(40);
+        let h = edit_card_h(quote, &draft);
+        let mut tall = card(1, 80.0, 400.0);
+        tall.selected_h = h;
+        for window_h in [900.0, 528.0, 1440.0] {
+            let scene = place(
+                &[tall.clone()],
+                Focus {
+                    hover: None,
+                    selected: Some(1),
+                },
+                window_h,
+                1200.0,
+                f64::MAX,
+            );
+            let bottom = band_bottom(window_h);
+            let placed = &scene.cards[0];
+            assert!((placed.h - h).abs() < 0.01, "{window_h}");
+            assert!(placed.y + placed.h <= bottom + 0.01, "{window_h}");
+            if h > bottom - BAND_TOP {
+                assert!(
+                    (placed.y + placed.h - (bottom - GAP)).abs() < 0.01,
+                    "{window_h}"
+                );
+            }
+        }
+        assert!((CARD_W - 208.0).abs() < 0.01);
+        assert!((MARGIN_W - 240.0).abs() < 0.01);
+        let reply_h = reply_card_h("正文", &["已有回复".into()], "再写一行");
+        assert!(reply_h > open_height("正文", &["已有回复".into()]));
+    }
+
+    #[test]
+    fn a_closed_composition_does_not_stick_on_the_draft() {
+        let dir = std::env::temp_dir().join(format!("margin-compose-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("annotations.sqlite");
+        let notes = Notes::open(&path).unwrap();
+        let id = notes
+            .insert(&NewNote {
+                book: "a.epub".into(),
+                page: 2,
+                spine: "ch.xhtml".into(),
+                start: 0,
+                end: 4,
+                passage: "原文".into(),
+                body: "旧批注".into(),
+                author: LOCAL_AUTHOR.into(),
+                quads: vec![Quad {
+                    x: 1.0,
+                    y: 2.0,
+                    w: 3.0,
+                    h: 4.0,
+                }],
+                text_right: 8.0,
+            })
+            .unwrap();
+        drop(notes);
+        let key = CardKey {
+            book: "a.epub".into(),
+            note_id: id,
+            kind: CardKind::Edit,
+        };
+        let editing = compose_card(
+            &begin_card(&ink_place("a.epub", 2), key.clone(), "编写中"),
+            &key,
+            true,
+        );
+        let parked = park_card(&editing);
+        assert!(!parked.draft(&key).unwrap().composing);
+        let reopened = compose_card(&begin_card(&parked, key.clone(), "编写中"), &key, true);
+        let turned = retarget(&reopened, "a.epub", "", 3);
+        assert!(!turned.draft(&key).unwrap().composing);
+        let ended = compose_card(&turned, &key, false);
+        let again = type_card(&begin_card(&ended, key.clone(), "不该覆盖"), &key, "写完了");
+        let (saved, wrote) = submit_card(&again, &key, "写完了", &path);
+        assert_eq!(wrote, CardWrite::Saved);
+        assert!(matches!(saved.face, Face::New));
+        let notes = Notes::open(&path).unwrap();
+        assert_eq!(
+            notes.list("a.epub", 2, "ch.xhtml").unwrap()[0].body,
+            "写完了"
+        );
+        let passage = passage_from(sample_selection()).unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let mut ink = ink_place(&passage.book, passage.page);
+        ink.new_note = field_of(passage.clone(), "未发送");
+        ink.new_note.composing = true;
+        let stashed = begin_card(&ink, key.clone(), "卡内");
+        assert!(!stashed.parked.as_ref().unwrap().composing);
+        let left = cancel_card(&stashed, &key);
+        let mut stuck = left.clone();
+        stuck.parked.as_mut().unwrap().composing = true;
+        let cleared = compose_new(&stuck, false);
+        assert!(!cleared.parked.as_ref().unwrap().composing);
+        let quiet = compose_new(&left, false);
+        let restored = restore_new(&quiet);
+        assert!(!restored.new_note.composing);
+        assert_eq!(restored.new_note.body, "未发送");
+        let written = submit_new(&restored, "未发送", &shown(&live, &passage), &path);
+        assert!(written.new_note.body.is_empty());
+        assert_eq!(
+            Notes::open(&path)
+                .unwrap()
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap()
+                .len(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

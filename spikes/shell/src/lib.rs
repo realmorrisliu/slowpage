@@ -436,7 +436,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let margin_live = signal(spike_library::margin::LivePage::default());
     let margin_hold = signal(spike_library::margin::Hold::default());
     let margin_fault = signal(String::new());
-    let margin_note = signal(spike_library::margin::NoteField::default());
+    let margin_note = signal(spike_library::margin::MarginInk::default());
     let margin_gen = signal(0_u64);
     let margin_measures = signal(Vec::<spike_library::margin::FreshMeasure>::new());
     let shell_chrome = signal(form::chrome_off());
@@ -506,6 +506,25 @@ pub fn SpikeApp() -> impl IntoElement {
         when: nsh_core::keymap::When::NotEditing,
         ..KeyOptions::default()
     };
+    // Older than the leave binding, so it wins only while a field is focused.
+    // It passes the key on. A new-note field still receives Escape.
+    on_key_with(
+        "escape",
+        KeyOptions {
+            when: nsh_core::keymap::When::Always,
+            pass_through: true,
+            ..KeyOptions::default()
+        },
+        {
+            let margin_note = margin_note.clone();
+            move |_| {
+                let current = margin_note.get();
+                if let spike_library::margin::Face::Card(key) = current.face.clone() {
+                    margin_note.set(spike_library::margin::cancel_card(&current, &key));
+                }
+            }
+        },
+    );
     on_key_with("escape", leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
@@ -710,7 +729,8 @@ pub fn SpikeApp() -> impl IntoElement {
                 move || {
                     let reading = visit.get().surface == visit::Surface::Reading;
                     !notice.get().is_empty()
-                        || (reading && (!fault.get().is_empty() || !note.get().notice.is_empty()))
+                        || (reading
+                            && (!fault.get().is_empty() || !note.get().notice_line().is_empty()))
                 }
             },
             {
@@ -723,7 +743,7 @@ pub fn SpikeApp() -> impl IntoElement {
                         if !open.is_empty() {
                             open
                         } else {
-                            let save = note.get().notice;
+                            let save = note.get().notice_line();
                             if !save.is_empty() {
                                 save
                             } else {
@@ -883,10 +903,10 @@ pub fn SpikeApp() -> impl IntoElement {
                                 if margin_measures.get() != next_measures {
                                     margin_measures.set(next_measures);
                                 }
-                                let updated = form::note_from_status(
+                                let updated = form::absorb_margin(
                                     &margin_note.get(),
                                     &event.data,
-                                    &next_live.book,
+                                    &next_live,
                                 );
                                 if updated != margin_note.get() {
                                     margin_note.set(updated);
