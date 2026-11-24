@@ -2295,7 +2295,12 @@ pub fn reading_margin(
         ));
     }
     if frame.panel_toggle {
-        root = root.child(margin_toggle(form.clone(), row, stage.clone()));
+        root = root.child(margin_toggle(
+            form.clone(),
+            row,
+            stage.clone(),
+            note.clone(),
+        ));
     }
     root = root.child(immersive_button(
         form,
@@ -2382,6 +2387,32 @@ pub(crate) fn commit_margin(
         visible,
         &path,
     )
+}
+
+/// The annotation column is on screen, so its inputs are in the tree.
+pub(crate) fn margin_column_open(form: Form) -> bool {
+    matches!(
+        form,
+        Form::PageAndPanel {
+            margin: Presence::Shown,
+            ..
+        }
+    )
+}
+
+/// What the 批注 button does to the form and the drafts. Hiding the column
+/// ends composition. The text stays.
+pub(crate) fn press_margin_toggle(
+    form: Form,
+    ink: &spike_library::margin::MarginInk,
+) -> (Form, spike_library::margin::MarginInk) {
+    let next = step(form, Command::TogglePanel);
+    let ink = if margin_column_open(form) && !margin_column_open(next) {
+        spike_library::margin::release_composition(ink)
+    } else {
+        ink.clone()
+    };
+    (next, ink)
 }
 
 pub(crate) fn commit_ink(
@@ -3032,6 +3063,7 @@ fn margin_toggle(
     form: Signal<Form>,
     chrome: crate::tokens::ChromeIn,
     stage: ElementRef,
+    note: Signal<spike_library::margin::MarginInk>,
 ) -> AnyElement {
     let top = chrome.top.max(0.0) + crate::tokens::TOGGLE_TOP;
     let mut button = view()
@@ -3047,14 +3079,11 @@ fn margin_toggle(
         .accessible(true)
         .label("批注")
         .on_press(move || {
-            let next = step(form.get(), Command::TogglePanel);
-            let shown = matches!(
-                next,
-                Form::PageAndPanel {
-                    margin: Presence::Shown,
-                    ..
-                }
-            );
+            let (next, released) = press_margin_toggle(form.get(), &note.get());
+            if released != note.get() {
+                note.set(released);
+            }
+            let shown = margin_column_open(next);
             form.set(next);
             publish_margin(shown);
             stage.command("margin", serde_json::json!(shown));

@@ -1458,6 +1458,33 @@ pub fn type_new(ink: &MarginInk, text: &str) -> MarginInk {
     next
 }
 
+/// The margin inputs left the tree. An open composition ends. The text stays.
+pub fn release_composition(ink: &MarginInk) -> MarginInk {
+    let mut next = ink.clone();
+    let mut changed = false;
+    if next.new_note.composing {
+        next.new_note.composing = false;
+        changed = true;
+    }
+    if let Some(parked) = next.parked.as_mut() {
+        if parked.composing {
+            parked.composing = false;
+            changed = true;
+        }
+    }
+    for draft in &mut next.drafts {
+        if draft.composing {
+            draft.composing = false;
+            changed = true;
+        }
+    }
+    if changed {
+        next
+    } else {
+        ink.clone()
+    }
+}
+
 pub fn compose_new(ink: &MarginInk, composing: bool) -> MarginInk {
     if !composing {
         let mut next = ink.clone();
@@ -3512,6 +3539,115 @@ mod tests {
                 .len(),
             1
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_same_page_reopen_leaves_composition_until_release() {
+        let dir = std::env::temp_dir().join(format!("margin-leave-state-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("annotations.sqlite");
+        let passage = Passage {
+            book: "a.epub".into(),
+            gen: 1,
+            page: 2,
+            spine: "ch.xhtml".into(),
+            start: 0,
+            end: 4,
+            text: "原文".into(),
+            quads: vec![Quad {
+                x: 1.0,
+                y: 2.0,
+                w: 3.0,
+                h: 4.0,
+            }],
+            text_right: 8.0,
+        };
+        let id = Notes::open(&path)
+            .unwrap()
+            .insert(&NewNote {
+                book: passage.book.clone(),
+                page: passage.page,
+                spine: passage.spine.clone(),
+                start: passage.start,
+                end: passage.end,
+                passage: passage.text.clone(),
+                body: "旧批注".into(),
+                author: LOCAL_AUTHOR.into(),
+                quads: passage.quads.clone(),
+                text_right: passage.text_right,
+            })
+            .unwrap();
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let visible = shown(&live, &passage);
+        let mut ink = ink_place(&passage.book, passage.page);
+        ink.new_note = field_of(passage.clone(), "还在");
+        ink.new_note.composing = true;
+        let blocked = submit_new(&ink, "还在", &visible, &path);
+        assert!(blocked.new_note.composing);
+        assert_eq!(blocked.new_note.body, "还在");
+        assert_eq!(
+            Notes::open(&path)
+                .unwrap()
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap()
+                .len(),
+            1
+        );
+        let stuck = retarget(&blocked, &passage.book, "", passage.page);
+        assert!(stuck.new_note.composing);
+        assert_eq!(stuck.new_note.body, "还在");
+        let released = release_composition(&stuck);
+        let reopened = retarget(&released, &passage.book, "", passage.page);
+        assert!(!reopened.new_note.composing);
+        assert_eq!(reopened.new_note.body, "还在");
+        let saved = submit_new(&reopened, "还在", &visible, &path);
+        assert!(saved.new_note.body.is_empty());
+        let notes = Notes::open(&path).unwrap();
+        let stored = notes
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap();
+        assert!(stored.iter().any(|note| note.body == "还在"));
+        let key = CardKey {
+            book: passage.book.clone(),
+            note_id: id,
+            kind: CardKind::Edit,
+        };
+        let editing = compose_card(
+            &type_card(&begin_card(&saved, key.clone(), "旧批注"), &key, "改过"),
+            &key,
+            true,
+        );
+        let (kept, held) = submit_card(&editing, &key, "改过", &path);
+        assert_eq!(held, CardWrite::Kept);
+        assert!(kept.draft(&key).unwrap().composing);
+        assert_eq!(kept.draft(&key).unwrap().body, "改过");
+        let same = retarget(&kept, &passage.book, "", passage.page);
+        assert!(same.draft(&key).unwrap().composing);
+        let before = notes
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap();
+        assert!(before
+            .iter()
+            .any(|note| note.id == id && note.body == "旧批注"));
+        let cleared = release_composition(&same);
+        let continued = retarget(&cleared, &passage.book, "", passage.page);
+        assert!(!continued.draft(&key).unwrap().composing);
+        assert_eq!(continued.draft(&key).unwrap().body, "改过");
+        let (written, wrote) = submit_card(&continued, &key, "改过", &path);
+        assert_eq!(wrote, CardWrite::Saved);
+        assert!(matches!(written.face, Face::New));
+        drop(notes);
+        let notes = Notes::open(&path).unwrap();
+        let stored = notes
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap();
+        assert!(stored.iter().any(|note| note.body == "改过"));
+        assert!(stored.iter().any(|note| note.body == "还在"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

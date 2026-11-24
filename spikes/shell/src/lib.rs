@@ -529,16 +529,30 @@ pub fn SpikeApp() -> impl IntoElement {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
         let stage = stage.clone();
+        let margin_note = margin_note.clone();
         move |_| {
-            apply_leave(&visit, &shell_form, visit::LeaveKey::Escape, &stage);
+            apply_leave(
+                &visit,
+                &shell_form,
+                &margin_note,
+                visit::LeaveKey::Escape,
+                &stage,
+            );
         }
     });
     on_key_with("mod+[", leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
         let stage = stage.clone();
+        let margin_note = margin_note.clone();
         move |_| {
-            apply_leave(&visit, &shell_form, visit::LeaveKey::Back, &stage);
+            apply_leave(
+                &visit,
+                &shell_form,
+                &margin_note,
+                visit::LeaveKey::Back,
+                &stage,
+            );
         }
     });
     on_key_with(IMMERSIVE_KEY, leave_keys, {
@@ -1206,6 +1220,7 @@ fn commit_visit(slot: &Signal<visit::Visit>, next: visit::Visit) {
 fn apply_leave(
     visit: &Signal<visit::Visit>,
     form: &Signal<form::Form>,
+    note: &Signal<spike_library::margin::MarginInk>,
     key: visit::LeaveKey,
     stage: &impl form::StageCommand,
 ) -> Option<bool> {
@@ -1216,6 +1231,10 @@ fn apply_leave(
     };
     match visit::leave_key(key, visit::Focus::Idle, immersion, visit.get().surface) {
         visit::KeyEffect::LeaveBook => {
+            let released = spike_library::margin::release_composition(&note.get());
+            if released != note.get() {
+                note.set(released);
+            }
             let next = visit::leave_to_library(&visit.get());
             form::restore_shelf_scroll(next.scroll);
             form::show_shelf(form);
@@ -1665,7 +1684,13 @@ mod launch_tests {
             assert!((bare.card.w - (900.0 - crate::tokens::INSET * 2.0)).abs() < 0.01);
 
             assert_eq!(
-                apply_leave(&visit, &form, visit::LeaveKey::Back, &sent),
+                apply_leave(
+                    &visit,
+                    &form,
+                    &signal(spike_library::margin::MarginInk::default()),
+                    visit::LeaveKey::Back,
+                    &sent,
+                ),
                 None
             );
             assert_eq!(form.get(), form::Form::Immersive);
@@ -1673,7 +1698,13 @@ mod launch_tests {
             assert_eq!(visit.get().page, 4);
 
             assert_eq!(
-                apply_leave(&visit, &form, visit::LeaveKey::Escape, &sent),
+                apply_leave(
+                    &visit,
+                    &form,
+                    &signal(spike_library::margin::MarginInk::default()),
+                    visit::LeaveKey::Escape,
+                    &sent,
+                ),
                 Some(false)
             );
             assert!(matches!(
@@ -1700,7 +1731,13 @@ mod launch_tests {
             assert_eq!(reopened.resume().offset, 12);
 
             assert_eq!(
-                apply_leave(&visit, &form, visit::LeaveKey::Escape, &sent),
+                apply_leave(
+                    &visit,
+                    &form,
+                    &signal(spike_library::margin::MarginInk::default()),
+                    visit::LeaveKey::Escape,
+                    &sent,
+                ),
                 None
             );
             assert_eq!(visit.get().surface, Surface::Library);
@@ -1739,5 +1776,162 @@ mod launch_tests {
             );
         });
         owner.dispose();
+    }
+
+    #[test]
+    fn a_closed_drawer_or_the_shelf_ends_composition_and_return_saves() {
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+                    None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+                }
+            }
+        }
+        let restore = Restore(std::env::var("SUPERREADER_SUPPORT_DIR").ok());
+        let dir = std::env::temp_dir().join(format!("margin-leave-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
+        let passage = spike_library::margin::Passage {
+            book: "/books/a.pdf".into(),
+            gen: 1,
+            page: 4,
+            spine: String::new(),
+            start: 0,
+            end: 3,
+            text: "ink".into(),
+            quads: vec![spike_library::margin::Quad {
+                x: 1.0,
+                y: 2.0,
+                w: 3.0,
+                h: 4.0,
+            }],
+            text_right: 8.0,
+        };
+        let id = spike_library::margin::Notes::open(&dir.join("annotations.sqlite"))
+            .unwrap()
+            .insert(&spike_library::margin::NewNote {
+                book: passage.book.clone(),
+                page: passage.page,
+                spine: passage.spine.clone(),
+                start: passage.start,
+                end: passage.end,
+                passage: passage.text.clone(),
+                body: "旧批注".into(),
+                author: "读者".into(),
+                quads: passage.quads.clone(),
+                text_right: passage.text_right,
+            })
+            .unwrap();
+        let visible = spike_library::margin::Visible {
+            book: spike_library::margin::LiveBook {
+                book: passage.book.clone(),
+                gen: passage.gen,
+            },
+            page: passage.page,
+            spine: passage.spine.clone(),
+            moving: false,
+        };
+        let mut ink = spike_library::margin::retarget(
+            &spike_library::margin::MarginInk::default(),
+            &passage.book,
+            "",
+            passage.page,
+        );
+        ink.new_note.body = "还在".into();
+        ink.new_note.passage = Some(passage.clone());
+        ink.new_note.composing = true;
+        let blocked = form::commit_ink(&ink, "还在", &visible);
+        assert!(blocked.new_note.composing);
+        assert_eq!(blocked.new_note.body, "还在");
+        assert_eq!(
+            spike_library::margin::Notes::open(&dir.join("annotations.sqlite"))
+                .unwrap()
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap()
+                .len(),
+            1
+        );
+        let hidden = form::Form::PageAndPanel {
+            sidebar: form::Presence::Hidden,
+            margin: form::Presence::Hidden,
+        };
+        let (shown, held) = form::press_margin_toggle(hidden, &blocked);
+        assert!(form::margin_column_open(shown));
+        assert!(held.new_note.composing);
+        assert_eq!(held.new_note.body, "还在");
+        let (closed, released) = form::press_margin_toggle(shown, &held);
+        assert!(!form::margin_column_open(closed));
+        assert!(!released.new_note.composing);
+        assert_eq!(released.new_note.body, "还在");
+        let reopened = spike_library::margin::retarget(&released, &passage.book, "", passage.page);
+        assert!(!reopened.new_note.composing);
+        assert_eq!(reopened.new_note.body, "还在");
+        let saved = form::commit_ink(&reopened, "还在", &visible);
+        assert!(saved.new_note.body.is_empty());
+        let notes = spike_library::margin::Notes::open(&dir.join("annotations.sqlite")).unwrap();
+        let stored = notes
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap();
+        assert!(stored.iter().any(|note| note.body == "还在"));
+        let key = spike_library::margin::CardKey {
+            book: passage.book.clone(),
+            note_id: id,
+            kind: spike_library::margin::CardKind::Edit,
+        };
+        let editing = spike_library::margin::compose_card(
+            &spike_library::margin::type_card(
+                &spike_library::margin::begin_card(&saved, key.clone(), "旧批注"),
+                &key,
+                "改过",
+            ),
+            &key,
+            true,
+        );
+        let kept = form::commit_card(&editing, &key, "改过");
+        assert!(matches!(kept.face, spike_library::margin::Face::Card(_)));
+        assert!(kept.draft(&key).unwrap().composing);
+        assert_eq!(kept.draft(&key).unwrap().body, "改过");
+        let same = spike_library::margin::retarget(&kept, &passage.book, "", passage.page);
+        assert!(same.draft(&key).unwrap().composing);
+        assert!(
+            notes
+                .list(&passage.book, passage.page, &passage.spine)
+                .unwrap()
+                .iter()
+                .any(|note| note.id == id && note.body == "旧批注")
+        );
+        let note = signal(same);
+        let visit = signal(visit::open_cover(
+            &visit::Visit::shelf(),
+            &passage.book,
+            passage.page,
+        ));
+        let shell_form = signal(closed);
+        let sent = Sent(std::cell::RefCell::new(Vec::new()));
+        assert_eq!(
+            apply_leave(&visit, &shell_form, &note, visit::LeaveKey::Escape, &sent),
+            None
+        );
+        assert_eq!(visit.get().surface, Surface::Library);
+        assert!(!note.get().draft(&key).unwrap().composing);
+        assert_eq!(note.get().draft(&key).unwrap().body, "改过");
+        let continued =
+            spike_library::margin::retarget(&note.get(), &passage.book, "", passage.page);
+        assert!(!continued.draft(&key).unwrap().composing);
+        assert_eq!(continued.draft(&key).unwrap().body, "改过");
+        let written = form::commit_card(&continued, &key, "改过");
+        assert!(matches!(written.face, spike_library::margin::Face::New));
+        drop(notes);
+        let stored = spike_library::margin::Notes::open(&dir.join("annotations.sqlite"))
+            .unwrap()
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap();
+        assert!(stored.iter().any(|note| note.id == id && note.body == "改过"));
+        assert!(stored.iter().any(|note| note.body == "还在"));
+        drop(restore);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
