@@ -2163,7 +2163,7 @@ pub fn reading_margin(
     live: Signal<spike_library::margin::LivePage>,
     hold: Signal<spike_library::margin::Hold>,
     fault: Signal<String>,
-    note: Signal<spike_library::margin::NoteField>,
+    note: Signal<spike_library::margin::MarginInk>,
     book_gen: Signal<u64>,
     measures: Signal<Vec<spike_library::margin::FreshMeasure>>,
 ) -> AnyElement {
@@ -2196,6 +2196,8 @@ pub fn reading_margin(
         fault.set(error);
     }
     let margin_x = frame.margin.map(|rect| rect.x).unwrap_or(0.0);
+    let ink_now = note.get();
+    let editor = card_editor_height(&ink_now, &notes, &page_hold.book);
     let settled = settle_margin(
         &hold.get(),
         &live_now,
@@ -2204,6 +2206,7 @@ pub fn reading_margin(
         margin_x,
         size.height,
         &notes,
+        editor,
     );
     if hold.get() != settled.hold {
         hold.set(settled.hold);
@@ -2269,41 +2272,35 @@ pub fn reading_margin(
                     }
                 }
             });
+        let ink_signal = note.clone();
         for placed in &scene.cards {
-            if let Some(note) = notes.iter().find(|note| note.id == placed.id) {
-                clip = clip.child(margin_card(note, placed, hold.clone()));
+            if let Some(stored) = notes.iter().find(|stored| stored.id == placed.id) {
+                clip = clip.child(margin_card(
+                    stored,
+                    placed,
+                    hold.clone(),
+                    ink_signal.clone(),
+                    &page_hold.book,
+                ));
             }
         }
         root = root.child(clip);
         let composer_top = band;
-        root = root.child(
-            view()
-                .absolute()
-                .left(px(
-                    (rect.x + f64::from(crate::tokens::COMPOSER_INSET)) as f32
-                ))
-                .top(px(composer_top as f32))
-                .w(px(
-                    (rect.w - f64::from(crate::tokens::COMPOSER_INSET) * 2.0).max(1.0) as f32,
-                ))
-                .h(px(crate::tokens::MARGIN_COMPOSER_H))
-                .rounded(px(crate::tokens::COMPOSER_RADIUS))
-                .bg(rgb(crate::tokens::CARD).to_hsla())
-                .shadow(crate::tokens::margin_ring())
-                .pointer_events(PointerEvents::Auto)
-                .flex()
-                .flex_row()
-                .items_center()
-                .px(px(crate::tokens::COMPOSER_PAD))
-                .child(margin_note_input(
-                    note.clone(),
-                    live.clone(),
-                    book_gen.clone(),
-                )),
-        );
+        root = root.child(margin_composer(
+            note.clone(),
+            live.clone(),
+            book_gen.clone(),
+            rect,
+            composer_top,
+        ));
     }
     if frame.panel_toggle {
-        root = root.child(margin_toggle(form.clone(), row, stage.clone()));
+        root = root.child(margin_toggle(
+            form.clone(),
+            row,
+            stage.clone(),
+            note.clone(),
+        ));
     }
     root = root.child(immersive_button(
         form,
@@ -2328,12 +2325,18 @@ pub(crate) fn settle_margin(
     margin_x: f64,
     window_h: f64,
     notes: &[spike_library::margin::StoredNote],
+    editor: Option<(i64, f64)>,
 ) -> MarginView {
     let mut live_now = live.clone();
     live_now.moving = live_now.moving || ease_moving;
     let mut next = spike_library::margin::reconcile(hold, &live_now);
     let fit = margin_fit(page_box, live_now.page_w, live_now.page_h);
-    let cards = spike_library::margin::cards_from(notes, fit);
+    let mut cards = spike_library::margin::cards_from(notes, fit);
+    if let Some((id, height)) = editor {
+        if let Some(card) = cards.iter_mut().find(|card| card.id == id) {
+            card.selected_h = height;
+        }
+    }
     let scene = spike_library::margin::place(
         &cards,
         spike_library::margin::Focus {
@@ -2386,6 +2389,63 @@ pub(crate) fn commit_margin(
     )
 }
 
+/// The annotation column is on screen, so its inputs are in the tree.
+pub(crate) fn margin_column_open(form: Form) -> bool {
+    matches!(
+        form,
+        Form::PageAndPanel {
+            margin: Presence::Shown,
+            ..
+        }
+    )
+}
+
+/// What the 批注 button does to the form and the drafts. Hiding the column
+/// ends composition. The text stays.
+pub(crate) fn press_margin_toggle(
+    form: Form,
+    ink: &spike_library::margin::MarginInk,
+) -> (Form, spike_library::margin::MarginInk) {
+    let next = step(form, Command::TogglePanel);
+    let ink = if margin_column_open(form) && !margin_column_open(next) {
+        spike_library::margin::release_composition(ink)
+    } else {
+        ink.clone()
+    };
+    (next, ink)
+}
+
+pub(crate) fn commit_ink(
+    ink: &spike_library::margin::MarginInk,
+    submitted: &str,
+    visible: &spike_library::margin::Visible,
+) -> spike_library::margin::MarginInk {
+    let path = crate::settings::support_dir().join("annotations.sqlite");
+    spike_library::margin::submit_new(ink, submitted, visible, &path)
+}
+
+pub(crate) fn commit_card(
+    ink: &spike_library::margin::MarginInk,
+    key: &spike_library::margin::CardKey,
+    submitted: &str,
+) -> spike_library::margin::MarginInk {
+    let path = crate::settings::support_dir().join("annotations.sqlite");
+    spike_library::margin::submit_card(ink, key, submitted, &path).0
+}
+
+pub(crate) fn absorb_margin(
+    ink: &spike_library::margin::MarginInk,
+    value: &serde_json::Value,
+    live: &spike_library::margin::LivePage,
+) -> spike_library::margin::MarginInk {
+    let moved = spike_library::margin::retarget(ink, &live.book, &live.spine, live.page);
+    let field = note_from_status(&moved.new_note, value, &live.book);
+    spike_library::margin::MarginInk {
+        new_note: field,
+        ..moved
+    }
+}
+
 pub(crate) fn note_from_status(
     field: &spike_library::margin::NoteField,
     value: &serde_json::Value,
@@ -2416,8 +2476,109 @@ pub(crate) fn note_from_status(
     }
 }
 
+fn card_editor_height(
+    ink: &spike_library::margin::MarginInk,
+    notes: &[spike_library::margin::StoredNote],
+    book: &str,
+) -> Option<(i64, f64)> {
+    let spike_library::margin::Face::Card(key) = &ink.face else {
+        return None;
+    };
+    if key.book != book {
+        return None;
+    }
+    let note = notes.iter().find(|note| note.id == key.note_id)?;
+    let draft = ink
+        .draft(key)
+        .map(|draft| draft.body.as_str())
+        .unwrap_or("");
+    let quote = if note.passage.trim().is_empty() {
+        spike_library::margin::shown_text(note)
+    } else {
+        note.passage.as_str()
+    };
+    let height = match key.kind {
+        spike_library::margin::CardKind::Edit => spike_library::margin::edit_card_h(quote, draft),
+        spike_library::margin::CardKind::Reply => {
+            spike_library::margin::reply_card_h(quote, &note.replies, draft)
+        }
+    };
+    Some((note.id, height))
+}
+
+fn margin_composer(
+    note: Signal<spike_library::margin::MarginInk>,
+    live: Signal<spike_library::margin::LivePage>,
+    book_gen: Signal<u64>,
+    rect: Rect,
+    composer_top: f64,
+) -> AnyElement {
+    let held = note.get();
+    let mut row = view()
+        .absolute()
+        .left(px(
+            (rect.x + f64::from(crate::tokens::COMPOSER_INSET)) as f32
+        ))
+        .top(px(composer_top as f32))
+        .w(px(
+            (rect.w - f64::from(crate::tokens::COMPOSER_INSET) * 2.0).max(1.0) as f32,
+        ))
+        .h(px(crate::tokens::MARGIN_COMPOSER_H))
+        .rounded(px(crate::tokens::COMPOSER_RADIUS))
+        .bg(rgb(crate::tokens::CARD).to_hsla())
+        .shadow(crate::tokens::margin_ring())
+        .px(px(crate::tokens::COMPOSER_PAD))
+        .flex()
+        .flex_col()
+        .justify_center();
+    if matches!(held.face, spike_library::margin::Face::Card(_)) {
+        return row
+            .pointer_events(PointerEvents::BoxNone)
+            .child(
+                line!(
+                    "新建已收起",
+                    crate::tokens::BODY_SIZE,
+                    crate::tokens::BODY_WEIGHT,
+                    quiet(),
+                    0.0_f32
+                )
+                .line_height(px(18.0)),
+            )
+            .into_element();
+    }
+    if held
+        .parked
+        .as_ref()
+        .is_some_and(|parked| !parked.body.trim().is_empty())
+    {
+        let restore = note.clone();
+        row = row.child(
+            view()
+                .on_press(move || {
+                    let next = spike_library::margin::restore_new(&restore.get());
+                    if next != restore.get() {
+                        restore.set(next);
+                    }
+                })
+                .child(
+                    line!(
+                        "恢复新建草稿",
+                        crate::tokens::BODY_SIZE,
+                        crate::tokens::NAME_WEIGHT,
+                        ink(),
+                        0.0_f32
+                    )
+                    .line_height(px(18.0)),
+                ),
+        );
+    }
+    row.pointer_events(PointerEvents::Auto)
+        .child(margin_note_input(note, live, book_gen))
+        .into_element()
+}
+
 fn margin_note_input(
-    note: Signal<spike_library::margin::NoteField>,
+    note: Signal<spike_library::margin::MarginInk>,
     live: Signal<spike_library::margin::LivePage>,
     book_gen: Signal<u64>,
 ) -> AnyElement {
@@ -2426,8 +2587,10 @@ fn margin_note_input(
     let submit = note.clone();
     let submit_live = live.clone();
     let submit_gen = book_gen.clone();
+    let focus = note.get().focus_new;
     nsh_core::element::input()
-        .key("margin-note")
+        .key(format!("margin-note-{focus}"))
+        .auto_focus(focus > 0)
         .flex_1()
         .min_w(px(0.0))
         .font_family(SharedString::from(crate::tokens::FONT_STACK))
@@ -2441,23 +2604,22 @@ fn margin_note_input(
         .submit_behavior(SubmitBehavior::Submit)
         // NSH `return_key` returns before submit while `hasMarkedText` is set.
         // This field's composition flag is the second guard. AppKit was not run.
-        .value(move || note.get().body)
+        .value(move || note.get().new_note.body.clone())
         .on_change(move |text: &str| {
-            let next = spike_library::margin::note_typed(&write.get(), text);
+            let next = spike_library::margin::type_new(&write.get(), text);
             if next != write.get() {
                 write.set(next);
             }
         })
         .on_composition_change(move |event: &Composition| {
-            let mut field = compose.get();
-            if field.composing != event.composing {
-                field.composing = event.composing;
-                compose.set(field);
+            let next = spike_library::margin::compose_new(&compose.get(), event.composing);
+            if next != compose.get() {
+                compose.set(next);
             }
         })
         .on_submit(move |text: &str| {
             let current = submit_live.get();
-            let next = commit_margin(
+            let next = commit_ink(
                 &submit.get(),
                 text,
                 &spike_library::margin::Visible {
@@ -2500,14 +2662,171 @@ pub(crate) fn load_spine(
     notes.list_spine(book, spine)
 }
 
+fn margin_action(label: &'static str, press: impl Fn() + 'static) -> AnyElement {
+    view()
+        .mr(px(12.0))
+        .on_press(move || press())
+        .child(
+            line!(
+                label,
+                crate::tokens::BODY_SIZE,
+                crate::tokens::NAME_WEIGHT,
+                ink(),
+                0.0_f32
+            )
+            .line_height(px(18.0)),
+        )
+        .into_element()
+}
+
+fn margin_card_field(
+    margin: Signal<spike_library::margin::MarginInk>,
+    key: spike_library::margin::CardKey,
+    placeholder: &'static str,
+) -> AnyElement {
+    let write = margin.clone();
+    let compose = margin.clone();
+    let submit = margin.clone();
+    let cancel = margin.clone();
+    let save = margin.clone();
+    let key_change = key.clone();
+    let key_compose = key.clone();
+    let key_submit = key.clone();
+    let key_cancel = key.clone();
+    let key_save = key.clone();
+    let body = margin
+        .get()
+        .draft(&key)
+        .map(|draft| draft.body.clone())
+        .unwrap_or_default();
+    let lines = spike_library::margin::editor_field_h(&body);
+    let mut column = view().w_full().flex().flex_col().child(
+        nsh_core::element::input()
+            .key(format!(
+                "card-{}-{}",
+                key.note_id,
+                matches!(key.kind, spike_library::margin::CardKind::Reply)
+            ))
+            .auto_focus(true)
+            .w_full()
+            .h(px(lines as f32))
+            .multiline(true)
+            .font_family(SharedString::from(crate::tokens::FONT_STACK))
+            .text_size(px(crate::tokens::BODY_SIZE))
+            .font_weight(crate::tokens::BODY_WEIGHT)
+            .text_color(ink())
+            .placeholder_color(quiet())
+            .placeholder(placeholder)
+            .auto_correct(false)
+            .bg(transparent_black())
+            .submit_behavior(SubmitBehavior::Submit)
+            .value({
+                let write = write.clone();
+                let key_change = key_change.clone();
+                move || {
+                    write
+                        .get()
+                        .draft(&key_change)
+                        .map(|draft| draft.body.clone())
+                        .unwrap_or_default()
+                }
+            })
+            .on_change({
+                let write = write.clone();
+                let key_change = key_change.clone();
+                move |text: &str| {
+                    let next = spike_library::margin::type_card(&write.get(), &key_change, text);
+                    if next != write.get() {
+                        write.set(next);
+                    }
+                }
+            })
+            .on_composition_change(move |event: &Composition| {
+                let next = spike_library::margin::compose_card(
+                    &compose.get(),
+                    &key_compose,
+                    event.composing,
+                );
+                if next != compose.get() {
+                    compose.set(next);
+                }
+            })
+            .on_key_press({
+                let slot = cancel.clone();
+                let key = key_cancel.clone();
+                move |pressed: &str| {
+                    if pressed == "Escape" || pressed == "escape" {
+                        let next = spike_library::margin::cancel_card(&slot.get(), &key);
+                        if next != slot.get() {
+                            slot.set(next);
+                        }
+                    }
+                }
+            })
+            .on_submit(move |text: &str| {
+                let next = commit_card(&submit.get(), &key_submit, text);
+                submit.set(next);
+            }),
+    );
+    if let Some(notice) = margin.get().draft(&key).map(|draft| draft.notice.clone()) {
+        if !notice.is_empty() {
+            column = column.child(
+                line!(
+                    notice,
+                    crate::tokens::BODY_SIZE,
+                    crate::tokens::BODY_WEIGHT,
+                    quiet(),
+                    0.0_f32
+                )
+                .line_height(px(18.0)),
+            );
+        }
+    }
+    column
+        .child(
+            view()
+                .flex()
+                .flex_row()
+                .mt(px(8.0))
+                .child(margin_action("取消", move || {
+                    let next = spike_library::margin::cancel_card(&cancel.get(), &key_cancel);
+                    if next != cancel.get() {
+                        cancel.set(next);
+                    }
+                }))
+                .child(margin_action("保存", move || {
+                    let current = save.get();
+                    let text = current
+                        .draft(&key_save)
+                        .map(|draft| draft.body.clone())
+                        .unwrap_or_default();
+                    save.set(commit_card(&current, &key_save, &text));
+                })),
+        )
+        .into_element()
+}
+
 fn margin_card(
     note: &spike_library::margin::StoredNote,
     placed: &spike_library::margin::Placed,
     hold: Signal<spike_library::margin::Hold>,
+    margin: Signal<spike_library::margin::MarginInk>,
+    book: &str,
 ) -> AnyElement {
     let id = note.id;
     let source = spike_library::margin::shown_text(note).to_string();
     let sentence = source.lines().next().unwrap_or("").trim().to_string();
+    let quote = if note.passage.trim().is_empty() {
+        source.clone()
+    } else {
+        note.passage.clone()
+    };
+    let open_key = match margin.get().face.clone() {
+        spike_library::margin::Face::Card(key) if key.note_id == id && key.book == book => {
+            Some(key)
+        }
+        _ => None,
+    };
     let mut column = view().w_full().flex().flex_col().child(
         line!(
             note.author.clone(),
@@ -2519,7 +2838,64 @@ fn margin_card(
         .line_height(px(18.0))
         .truncate(),
     );
-    if placed.open {
+    if let Some(key) = open_key.clone() {
+        match key.kind {
+            spike_library::margin::CardKind::Edit => {
+                column = column.child(
+                    line!(
+                        quote.clone(),
+                        crate::tokens::BODY_SIZE,
+                        crate::tokens::BODY_WEIGHT,
+                        quiet(),
+                        0.0_f32
+                    )
+                    .line_height(px(18.0)),
+                );
+            }
+            spike_library::margin::CardKind::Reply => {
+                column = column
+                    .child(
+                        line!(
+                            "回复这条批注",
+                            crate::tokens::BODY_SIZE,
+                            crate::tokens::NAME_WEIGHT,
+                            ink(),
+                            0.0_f32
+                        )
+                        .line_height(px(18.0)),
+                    )
+                    .child(
+                        line!(
+                            quote.clone(),
+                            crate::tokens::BODY_SIZE,
+                            crate::tokens::BODY_WEIGHT,
+                            quiet(),
+                            0.0_f32
+                        )
+                        .line_height(px(18.0)),
+                    );
+                for reply in &note.replies {
+                    column = column.child(
+                        line!(
+                            reply.clone(),
+                            crate::tokens::BODY_SIZE,
+                            crate::tokens::BODY_WEIGHT,
+                            ink(),
+                            0.0_f32
+                        )
+                        .line_height(px(18.0))
+                        .mt(px(crate::tokens::MARGIN_CARD_GAP + 8.0)),
+                    );
+                }
+            }
+        }
+        let placeholder = match key.kind {
+            spike_library::margin::CardKind::Edit => "笔记",
+            spike_library::margin::CardKind::Reply => "回复",
+        };
+        column = column.child(margin_card_field(margin.clone(), key, placeholder));
+    } else if placed.open {
+        let seed = source.clone();
         column = column.child(
             line!(
                 source,
@@ -2544,6 +2920,44 @@ fn margin_card(
                     .mt(px(crate::tokens::MARGIN_CARD_GAP + 8.0)),
                 );
             }
+            let edit_hold = hold.clone();
+            let edit_ink = margin.clone();
+            let reply_hold = hold.clone();
+            let reply_ink = margin.clone();
+            let book_edit = book.to_string();
+            let book_reply = book.to_string();
+            column = column.child(
+                view()
+                    .flex()
+                    .flex_row()
+                    .mt(px(8.0))
+                    .child(margin_action("编辑", move || {
+                        let mut current = edit_hold.get();
+                        current.selected = Some(id);
+                        edit_hold.set(current);
+                        let key = spike_library::margin::CardKey {
+                            book: book_edit.clone(),
+                            note_id: id,
+                            kind: spike_library::margin::CardKind::Edit,
+                        };
+                        edit_ink.set(spike_library::margin::begin_card(
+                            &edit_ink.get(),
+                            key,
+                            &seed,
+                        ));
+                    }))
+                    .child(margin_action("回复", move || {
+                        let mut current = reply_hold.get();
+                        current.selected = Some(id);
+                        reply_hold.set(current);
+                        let key = spike_library::margin::CardKey {
+                            book: book_reply.clone(),
+                            note_id: id,
+                            kind: spike_library::margin::CardKind::Reply,
+                        };
+                        reply_ink.set(spike_library::margin::begin_card(&reply_ink.get(), key, ""));
+                    })),
+            );
         }
     } else {
         column = column.child(
@@ -2559,6 +2973,7 @@ fn margin_card(
         );
     }
     let top = (placed.y - spike_library::margin::BAND_TOP) as f32;
+    let editing = open_key.is_some();
     view()
         .absolute()
         .left(px(crate::tokens::MARGIN_CARD_X))
@@ -2595,13 +3010,22 @@ fn margin_card(
         })
         .on_press({
             let hold = hold.clone();
+            let margin = margin.clone();
             move || {
+                if editing {
+                    return;
+                }
+                if let spike_library::margin::Face::Card(key) = margin.get().face.clone() {
+                    if key.note_id != id {
+                        margin.set(spike_library::margin::park_card(&margin.get()));
+                    }
+                }
+                let leaving = hold.get().selected == Some(id);
+                if leaving {
+                    margin.set(spike_library::margin::park_card(&margin.get()));
+                }
                 let mut current = hold.get();
-                current.selected = if current.selected == Some(id) {
-                    None
-                } else {
-                    Some(id)
-                };
+                current.selected = if leaving { None } else { Some(id) };
                 current.scroll = 0.0;
                 hold.set(current);
             }
@@ -2639,6 +3063,7 @@ fn margin_toggle(
     form: Signal<Form>,
     chrome: crate::tokens::ChromeIn,
     stage: ElementRef,
+    note: Signal<spike_library::margin::MarginInk>,
 ) -> AnyElement {
     let top = chrome.top.max(0.0) + crate::tokens::TOGGLE_TOP;
     let mut button = view()
@@ -2654,14 +3079,11 @@ fn margin_toggle(
         .accessible(true)
         .label("批注")
         .on_press(move || {
-            let next = step(form.get(), Command::TogglePanel);
-            let shown = matches!(
-                next,
-                Form::PageAndPanel {
-                    margin: Presence::Shown,
-                    ..
-                }
-            );
+            let (next, released) = press_margin_toggle(form.get(), &note.get());
+            if released != note.get() {
+                note.set(released);
+            }
+            let shown = margin_column_open(next);
             form.set(next);
             publish_margin(shown);
             stage.command("margin", serde_json::json!(shown));
@@ -4660,7 +5082,16 @@ mod tests {
             text_right: 90.0,
             replies: Vec::new(),
         };
-        let moving = settle_margin(&hold, &live, false, &page, 1200.0, 900.0, &[note.clone()]);
+        let moving = settle_margin(
+            &hold,
+            &live,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[note.clone()],
+            None,
+        );
         assert_eq!(moving.hold.page, 4);
         assert!(moving.hold.scroll.abs() < 0.01);
         assert_eq!(moving.hold.selected, Some(7));
@@ -4675,6 +5106,7 @@ mod tests {
             1200.0,
             900.0,
             &[note.clone()],
+            None,
         );
         assert!(refused.scene.scroll_max.abs() < 0.01);
         assert!(refused.hold.scroll.abs() < 0.01);
@@ -4702,6 +5134,7 @@ mod tests {
             1200.0,
             900.0,
             &[tall_note.clone()],
+            None,
         );
         assert!(tall.scene.scroll_max > 0.5);
         assert!(!tall.scene.cards[0].segments.is_empty());
@@ -4716,6 +5149,7 @@ mod tests {
             1200.0,
             900.0,
             &[tall_note.clone()],
+            None,
         );
         assert!((hidden.hold.scroll - tall.scene.scroll_max).abs() < 0.01);
         assert!(hidden.scene.cards[0].segments.is_empty());
@@ -4730,6 +5164,7 @@ mod tests {
             1200.0,
             900.0,
             &[tall_note],
+            None,
         );
         assert!(restored.hold.scroll.abs() < 0.01);
         assert!(!restored.scene.cards[0].segments.is_empty());
@@ -4737,10 +5172,28 @@ mod tests {
         let mut arrived = live.clone();
         arrived.moving = false;
         arrived.page = 5;
-        let still = settle_margin(&moving.hold, &arrived, true, &page, 1200.0, 900.0, &[]);
+        let still = settle_margin(
+            &moving.hold,
+            &arrived,
+            true,
+            &page,
+            1200.0,
+            900.0,
+            &[],
+            None,
+        );
         assert_eq!(still.hold.page, 4);
         assert_eq!(still.hold.selected, Some(7));
-        let landed = settle_margin(&still.hold, &arrived, false, &page, 1200.0, 900.0, &[]);
+        let landed = settle_margin(
+            &still.hold,
+            &arrived,
+            false,
+            &page,
+            1200.0,
+            900.0,
+            &[],
+            None,
+        );
         assert_eq!(landed.hold.page, 5);
         assert!(landed.hold.scroll.abs() < 0.01);
         assert!(landed.hold.selected.is_none());
@@ -4750,7 +5203,7 @@ mod tests {
             moving: false,
             ..arrived
         };
-        let changed = settle_margin(&landed.hold, &other, false, &page, 1200.0, 900.0, &[]);
+        let changed = settle_margin(&landed.hold, &other, false, &page, 1200.0, 900.0, &[], None);
         assert_eq!(changed.hold.book, "b.pdf");
         assert_eq!(changed.hold.page, 1);
         assert!(changed.hold.selected.is_none());
@@ -4960,6 +5413,240 @@ mod tests {
         assert_eq!(stale.notice, spike_library::margin::NOTICE_STALE);
         assert!(load_margin("/books/b.epub", 4, "").unwrap().is_empty());
         assert_eq!(load_margin("/books/a.pdf", 4, "").unwrap().len(), 1);
+        drop(restore);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn commit_card_updates_and_replies_through_the_support_file() {
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+                    None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+                }
+            }
+        }
+        let restore = Restore(std::env::var("SUPERREADER_SUPPORT_DIR").ok());
+        let dir = std::env::temp_dir().join(format!("margin-card-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
+        let notes = spike_library::margin::Notes::open(&dir.join("annotations.sqlite")).unwrap();
+        let id = notes
+            .insert(&spike_library::margin::NewNote {
+                book: "/books/a.pdf".into(),
+                page: 4,
+                spine: String::new(),
+                start: 0,
+                end: 3,
+                passage: "ink".into(),
+                body: "旧批注".into(),
+                author: "读者".into(),
+                quads: vec![spike_library::margin::Quad {
+                    x: 1.0,
+                    y: 2.0,
+                    w: 3.0,
+                    h: 4.0,
+                }],
+                text_right: 8.0,
+            })
+            .unwrap();
+        drop(notes);
+        let live = spike_library::margin::LivePage {
+            book: "/books/a.pdf".into(),
+            page: 4,
+            ..spike_library::margin::LivePage::default()
+        };
+        let placed = absorb_margin(
+            &spike_library::margin::MarginInk::default(),
+            &serde_json::json!({"book_gen": 1, "passage": serde_json::Value::Null}),
+            &live,
+        );
+        let mut drafting = placed.clone();
+        drafting.new_note.body = "未发送".into();
+        let key = spike_library::margin::CardKey {
+            book: "/books/a.pdf".into(),
+            note_id: id,
+            kind: spike_library::margin::CardKind::Edit,
+        };
+        let editing = spike_library::margin::begin_card(&drafting, key.clone(), "旧批注");
+        let visible = spike_library::margin::Visible {
+            book: spike_library::margin::LiveBook {
+                book: "/books/a.pdf".into(),
+                gen: 1,
+            },
+            page: 4,
+            spine: String::new(),
+            moving: false,
+        };
+        let blocked = commit_ink(&editing, "未发送", &visible);
+        assert!(matches!(blocked.face, spike_library::margin::Face::Card(_)));
+        assert_eq!(load_margin("/books/a.pdf", 4, "").unwrap().len(), 1);
+        let saved = commit_card(&editing, &key, "新批注");
+        assert!(matches!(saved.face, spike_library::margin::Face::New));
+        assert_eq!(
+            load_margin("/books/a.pdf", 4, "").unwrap()[0].body,
+            "新批注"
+        );
+        let reply_key = spike_library::margin::CardKey {
+            kind: spike_library::margin::CardKind::Reply,
+            ..key
+        };
+        let replying = spike_library::margin::begin_card(&saved, reply_key.clone(), "");
+        let replied = commit_card(&replying, &reply_key, "一条回复");
+        assert!(matches!(replied.face, spike_library::margin::Face::New));
+        let again = load_margin("/books/a.pdf", 4, "").unwrap();
+        assert_eq!(again[0].body, "新批注");
+        assert_eq!(again[0].replies, vec!["一条回复".to_string()]);
+        let turned = spike_library::margin::LivePage { page: 5, ..live };
+        let left = absorb_margin(&replying, &serde_json::json!({}), &turned);
+        assert!(matches!(left.face, spike_library::margin::Face::New));
+        assert!(left.draft(&reply_key).is_some());
+        let late = commit_card(&left, &reply_key, "迟到");
+        assert_eq!(
+            load_margin("/books/a.pdf", 4, "").unwrap()[0].replies.len(),
+            1
+        );
+        assert!(matches!(late.face, spike_library::margin::Face::New));
+        drop(restore);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_second_draft_stays_visible_and_the_card_still_opens() {
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("SUPERREADER_SUPPORT_DIR", value),
+                    None => std::env::remove_var("SUPERREADER_SUPPORT_DIR"),
+                }
+            }
+        }
+        let restore = Restore(std::env::var("SUPERREADER_SUPPORT_DIR").ok());
+        let dir = std::env::temp_dir().join(format!("margin-held-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SUPERREADER_SUPPORT_DIR", &dir);
+        let passage = spike_library::margin::Passage {
+            book: "/books/a.pdf".into(),
+            gen: 1,
+            page: 4,
+            spine: String::new(),
+            start: 0,
+            end: 3,
+            text: "ink".into(),
+            quads: vec![spike_library::margin::Quad {
+                x: 1.0,
+                y: 2.0,
+                w: 3.0,
+                h: 4.0,
+            }],
+            text_right: 8.0,
+        };
+        let id = spike_library::margin::Notes::open(&dir.join("annotations.sqlite"))
+            .unwrap()
+            .insert(&spike_library::margin::NewNote {
+                book: passage.book.clone(),
+                page: passage.page,
+                spine: passage.spine.clone(),
+                start: passage.start,
+                end: passage.end,
+                passage: passage.text.clone(),
+                body: "旧批注".into(),
+                author: "读者".into(),
+                quads: passage.quads.clone(),
+                text_right: passage.text_right,
+            })
+            .unwrap();
+        let live = spike_library::margin::LivePage {
+            book: passage.book.clone(),
+            page: passage.page,
+            ..spike_library::margin::LivePage::default()
+        };
+        let placed = absorb_margin(
+            &spike_library::margin::MarginInk::default(),
+            &serde_json::json!({"book_gen": 1, "passage": serde_json::Value::Null}),
+            &live,
+        );
+        let mut first = placed;
+        first.new_note.body = "未发送".into();
+        first.new_note.passage = Some(passage.clone());
+        let key = spike_library::margin::CardKey {
+            book: passage.book.clone(),
+            note_id: id,
+            kind: spike_library::margin::CardKind::Edit,
+        };
+        let stashed = spike_library::margin::begin_card(&first, key.clone(), "旧批注");
+        let waiting = spike_library::margin::cancel_card(&stashed, &key);
+        let mut second = waiting;
+        second.new_note.body = "第二条".into();
+        let opened = spike_library::margin::begin_card(&second, key.clone(), "旧批注");
+        assert!(
+            matches!(opened.face, spike_library::margin::Face::Card(_)),
+            "新建已收起"
+        );
+        assert_eq!(opened.new_note.body, "第二条");
+        assert_eq!(opened.parked.as_ref().unwrap().body, "未发送");
+        let field = spike_library::margin::cancel_card(&opened, &key);
+        let told = spike_library::margin::restore_new(&field);
+        assert_eq!(told.notice_line(), spike_library::margin::NOTICE_HELD);
+        assert_eq!(told.new_note.body, "第二条");
+        assert_eq!(told.parked.as_ref().unwrap().body, "未发送");
+        let stale_page = spike_library::margin::Visible {
+            book: spike_library::margin::LiveBook {
+                book: passage.book.clone(),
+                gen: 1,
+            },
+            page: passage.page + 1,
+            spine: String::new(),
+            moving: false,
+        };
+        let stale = commit_ink(&told, "第二条", &stale_page);
+        assert_eq!(stale.notice_line(), spike_library::margin::NOTICE_STALE);
+        assert_eq!(stale.new_note.body, "第二条");
+        assert_eq!(stale.parked.as_ref().unwrap().body, "未发送");
+        assert_eq!(load_margin(&passage.book, passage.page, "").unwrap().len(), 1);
+        let still = spike_library::margin::begin_card(&stale, key.clone(), "种子");
+        assert!(matches!(still.face, spike_library::margin::Face::Card(_)));
+        let bare_face = spike_library::margin::cancel_card(&still, &key);
+        let mut bare = bare_face;
+        bare.new_note.passage = None;
+        let here = spike_library::margin::Visible {
+            page: passage.page,
+            ..stale_page
+        };
+        let missing = commit_ink(&bare, "第二条", &here);
+        assert_eq!(missing.notice_line(), spike_library::margin::NOTICE_SELECT);
+        assert_eq!(missing.new_note.body, "第二条");
+        assert_eq!(load_margin(&passage.book, passage.page, "").unwrap().len(), 1);
+        let reachable = spike_library::margin::begin_card(&missing, key.clone(), "旧批注");
+        assert!(
+            matches!(reachable.face, spike_library::margin::Face::Card(_)),
+            "新建已收起"
+        );
+        let typed = spike_library::margin::type_card(&reachable, &key, "改过");
+        let other = spike_library::margin::LivePage {
+            book: "other.epub".into(),
+            page: 1,
+            ..live
+        };
+        let left = absorb_margin(&typed, &serde_json::json!({}), &other);
+        assert!(matches!(left.face, spike_library::margin::Face::New));
+        assert_eq!(left.draft(&key).unwrap().body, "改过");
+        assert_eq!(left.draft(&key).unwrap().key.book, passage.book);
+        assert_eq!(left.new_note.body, "第二条");
+        assert_eq!(left.parked.as_ref().unwrap().body, "未发送");
+        let again = spike_library::margin::begin_card(&left, key.clone(), "不该覆盖");
+        assert_eq!(again.draft(&key).unwrap().body, "改过");
+        std::fs::write(dir.join("annotations.sqlite"), b"not a database").unwrap();
+        let kept = commit_card(&again, &key, "改过");
+        assert!(matches!(kept.face, spike_library::margin::Face::Card(_)));
+        assert_eq!(kept.notice_line(), spike_library::margin::NOTICE_KEPT);
+        assert_eq!(kept.new_note.body, "第二条");
+        assert_eq!(kept.parked.as_ref().unwrap().body, "未发送");
         drop(restore);
         let _ = std::fs::remove_dir_all(dir);
     }
