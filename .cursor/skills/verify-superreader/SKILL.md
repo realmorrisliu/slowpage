@@ -37,7 +37,7 @@ If doctor says one is missing, run `spikes/fetch-fixtures.sh`. That script downl
 scripts/verify --doctor
 ```
 
-This is read-only. It checks `nsh` is 0.5.1, the shell crate pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.5.1`, the fixtures exist, Cargo.lock has neither the `epub` crate nor `mupdf`, the machine is macOS, and no `spike-shell` process is already running. A running shell belongs to someone else. Do not kill it.
+This is read-only. It checks `nsh` is 0.6.1, the shell crate pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.6.1`, the fixtures exist, Cargo.lock has neither the `epub` crate nor `mupdf`, the machine is macOS, and no `spike-shell` process is already running. A running shell belongs to someone else. Do not kill it.
 
 ## Drive
 

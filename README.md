@@ -40,7 +40,7 @@ You need **Rust 1.98.1** (`rust-toolchain.toml` at the repo root and `spikes/rus
 
    Release binary: `spike-shell` in the target directory reported by `cargo metadata`. A cargo wrapper may put that outside `spikes/target`.
 
-4. Full UI verification (release build, NSH **0.5.1** on `PATH`, calm machine):
+4. Full UI verification (release build, NSH **0.6.1** on `PATH`, calm machine):
 
    ```sh
    just verify
