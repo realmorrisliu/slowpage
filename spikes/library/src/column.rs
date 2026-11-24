@@ -584,20 +584,39 @@ pub fn find_return(column: &Column, here: &Place) -> (Column, Option<Hit>) {
     step(&next, true, here)
 }
 
+fn scan_finished(find: &Find) -> bool {
+    matches!(find.phase, Phase::Done | Phase::Incomplete)
+        || (find.total > 0 && find.seen >= find.total)
+}
+
 pub fn step(column: &Column, forward: bool, here: &Place) -> (Column, Option<Hit>) {
     if column.find.composing || column.find.hits.is_empty() {
         return (column.clone(), None);
     }
-    let mut next = column.clone();
-    let len = next.find.hits.len();
-    let index = match next.find.index {
-        Some(current) if forward => (current + 1) % len,
-        Some(0) => len - 1,
+    let finished = scan_finished(&column.find);
+    let len = column.find.hits.len();
+    let index = match column.find.index {
+        Some(current) if forward && current + 1 < len => current + 1,
+        Some(_) if forward && finished => 0,
+        Some(_) if forward => return (column.clone(), None),
+        Some(0) if finished => len - 1,
+        Some(0) => return (column.clone(), None),
         Some(current) => current - 1,
-        None if forward => first_from(&next.order, &next.find.hits, here),
-        None => last_before(&next.order, &next.find.hits, here),
+        None if forward => {
+            let Some(index) = pending_hit(&column.order, &column.find.hits, here, finished) else {
+                return (column.clone(), None);
+            };
+            index
+        }
+        None => match last_covered(&column.order, &column.find.hits, here) {
+            Some(index) => index,
+            None if finished => len - 1,
+            None => return (column.clone(), None),
+        },
     };
+    let mut next = column.clone();
     next.find.index = Some(index);
+    next.find.pending = false;
     let hit = next.find.hits[index].clone();
     if !same_anchor(&hit, here) {
         next.find.navigated = true;
@@ -631,11 +650,9 @@ fn first_from(order: &[String], hits: &[Hit], here: &Place) -> usize {
         .unwrap_or(0)
 }
 
-fn last_before(order: &[String], hits: &[Hit], here: &Place) -> usize {
+fn last_covered(order: &[String], hits: &[Hit], here: &Place) -> Option<usize> {
     let here_key = document_key(order, &here.href, here.page, here.offset);
-    hits.iter()
-        .rposition(|hit| hit_key(hit) < here_key)
-        .unwrap_or(hits.len().saturating_sub(1))
+    hits.iter().rposition(|hit| hit_key(hit) < here_key)
 }
 
 /// The scan's first jump. While earlier units are the only hits, this stays
@@ -748,7 +765,6 @@ pub fn replace_scan(column: &Column, scan: &Scan, here: &Place) -> (Column, Opti
         return (column.clone(), None);
     }
     let mut next = column.clone();
-    let was_empty = next.find.hits.is_empty();
     next.find.hits = scan.hits.clone();
     next.find.seen = scan.seen;
     next.find.total = scan.total;
@@ -762,19 +778,26 @@ pub fn replace_scan(column: &Column, scan: &Scan, here: &Place) -> (Column, Opti
     } else {
         Phase::Done
     };
-    let jump = if next.find.pending && was_empty && !next.find.hits.is_empty() {
-        let index = first_from(&next.order, &next.find.hits, here);
-        next.find.pending = false;
-        next.find.index = Some(index);
-        let hit = next.find.hits[index].clone();
-        if !same_anchor(&hit, here) {
-            next.find.navigated = true;
-        }
-        Some(hit)
+    let jump = if next.find.pending {
+        pending_hit(&next.order, &next.find.hits, here, scan.done).map(|index| {
+            next.find.pending = false;
+            next.find.index = Some(index);
+            let hit = next.find.hits[index].clone();
+            if !same_anchor(&hit, here) {
+                next.find.navigated = true;
+            }
+            hit
+        })
     } else {
         None
     };
     (next, jump)
+}
+
+/// Find-next, find-previous, and Shift+Return are registered only while
+/// find is open and the field is not composing. ⌘F stays a window binding.
+pub fn find_navigation_mounted(mode: Mode, composing: bool) -> bool {
+    mode == Mode::Find && !composing
 }
 
 pub fn choose(column: &Column, index: usize, here: &Place) -> (Column, Option<Hit>) {
@@ -1372,6 +1395,176 @@ mod tests {
         };
         let (_, hit) = step(&pdf, true, &pdf_here);
         assert_eq!(hit.unwrap().page, 3);
+    }
+
+    /// The stage publishes one chapter at a time. The column, the pending
+    /// jump, and the next step have to use that same coverage. A hit in an
+    /// earlier chapter does not select, navigate, or wrap while the scan
+    /// has not reached the reader.
+    #[test]
+    fn a_partial_publish_does_not_select_before_the_reader() {
+        let here = Place {
+            href: "c5.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        let seat = EditorSeat {
+            book: "a.epub".to_string(),
+            page: 1,
+            href: "c5.xhtml".to_string(),
+            kind: SeatKind::New,
+        };
+        let column = Column {
+            book: "a.epub".to_string(),
+            mode: Mode::Find,
+            order: spine(),
+            find: Find {
+                query: "信".to_string(),
+                draft: "信".to_string(),
+                pending: true,
+                phase: Phase::Searching,
+                seat: Some(seat),
+                ..Find::default()
+            },
+            ..Column::default()
+        };
+        let early = epub_hits().into_iter().take(1).collect::<Vec<_>>();
+        let partial = Scan {
+            book: "a.epub".to_string(),
+            query: "信".to_string(),
+            generation: 0,
+            hits: early.clone(),
+            seen: 1,
+            total: 5,
+            text_units: 1,
+            empty_units: 0,
+            failed_units: 0,
+            done: false,
+        };
+        let (column, hit) = replace_scan(&column, &partial, &here);
+        assert!(hit.is_none());
+        assert!(column.find.index.is_none());
+        assert!(!column.find.navigated);
+        assert!(column.find.pending);
+        assert!(pending_hit(&spine(), &early, &here, false).is_none());
+        let (stepped, hit) = step(&column, true, &here);
+        assert!(hit.is_none());
+        assert!(stepped.find.index.is_none());
+        assert!(!stepped.find.navigated);
+        let closed = close_find(&stepped);
+        assert!(closed.seat.is_some());
+
+        let (back, hit) = step(&column, false, &here);
+        assert_eq!(hit.unwrap().href, "c1.xhtml");
+        assert!(back.find.navigated);
+        let (back_again, hit) = step(&back, false, &here);
+        assert!(hit.is_none());
+        assert_eq!(back_again.find.index, Some(0));
+
+        let all = epub_hits();
+        let crossing = Scan {
+            book: "a.epub".to_string(),
+            query: "信".to_string(),
+            generation: 0,
+            hits: all.clone(),
+            seen: 4,
+            total: 5,
+            text_units: 2,
+            empty_units: 2,
+            failed_units: 0,
+            done: false,
+        };
+        let (column, hit) = replace_scan(&column, &crossing, &here);
+        let hit = hit.expect("chapter 5 is on the page");
+        assert_eq!(hit.href, "c5.xhtml");
+        assert_eq!(column.find.index, pending_hit(&spine(), &all, &here, false));
+        assert_ne!(column.find.index, Some(0));
+        assert!(column.find.navigated);
+        assert!(!column.find.pending);
+        let (next, hit) = step(&column, true, &here);
+        assert_eq!(hit.unwrap().href, "c5.xhtml");
+        assert_eq!(next.find.index, Some(column.find.index.unwrap() + 1));
+        let closed = close_find(&column);
+        assert!(closed.seat.is_none());
+
+        let finished_early = Scan {
+            hits: early.clone(),
+            seen: 5,
+            total: 5,
+            done: true,
+            ..partial
+        };
+        let fresh = Column {
+            find: Find {
+                pending: true,
+                phase: Phase::Searching,
+                seat: Some(EditorSeat {
+                    book: "a.epub".to_string(),
+                    page: 1,
+                    href: "c5.xhtml".to_string(),
+                    kind: SeatKind::New,
+                }),
+                query: "信".to_string(),
+                draft: "信".to_string(),
+                ..Find::default()
+            },
+            ..column.clone()
+        };
+        let (done, hit) = replace_scan(&fresh, &finished_early, &here);
+        assert_eq!(hit.unwrap().href, "c1.xhtml");
+        assert_eq!(done.find.index, Some(0));
+        assert!(done.find.navigated);
+        assert_eq!(pending_hit(&spine(), &early, &here, true), Some(0));
+        assert!(close_find(&done).seat.is_none());
+    }
+
+    #[test]
+    fn find_navigation_keys_follow_the_nsh_keymap() {
+        use nsh_core::keymap::{KeyBinding, KeyFocus, KeyMatch, Keymap, Keystroke, When};
+
+        let apple = true;
+        let strokes = ["shift+return", "mod+g", "shift+mod+g"]
+            .map(|chord| Keystroke::parse_with(chord, apple).unwrap());
+        let mut editing = KeyFocus::default();
+        editing.editing = true;
+        let closed = Keymap::new(vec![]);
+        for stroke in strokes {
+            assert_eq!(closed.find_with(0, stroke, editing, false), KeyMatch::None);
+        }
+        assert!(!find_navigation_mounted(Mode::Notes, false));
+        assert!(!find_navigation_mounted(Mode::Find, true));
+        assert!(find_navigation_mounted(Mode::Find, false));
+        let open = Keymap::new(
+            strokes
+                .iter()
+                .enumerate()
+                .map(|(index, stroke)| {
+                    KeyBinding::new((index + 1) as u32, *stroke, When::Always, false)
+                })
+                .collect(),
+        );
+        for (index, stroke) in strokes.iter().enumerate() {
+            assert_eq!(
+                open.find_with(0, *stroke, editing, false),
+                KeyMatch::Fire((index + 1) as u32)
+            );
+        }
+        assert!(strokes[0].edits_text());
+        assert!(!strokes[1].edits_text());
+        assert!(!strokes[2].edits_text());
+        let auto = Keymap::new(vec![KeyBinding::new(7, strokes[1], When::Auto, false)]);
+        assert_eq!(
+            auto.find_with(0, strokes[1], editing, false),
+            KeyMatch::Fire(7),
+            "⌘G does not edit text, so When::Auto still consumes it in the find field"
+        );
+        let open_find = Keystroke::parse_with("mod+f", apple).unwrap();
+        let window = Keymap::new(vec![KeyBinding::new(4, open_find, When::Always, false)]);
+        assert!(!open_find.edits_text());
+        assert_eq!(
+            window.find_with(0, open_find, editing, false),
+            KeyMatch::Fire(4)
+        );
     }
 
     #[test]

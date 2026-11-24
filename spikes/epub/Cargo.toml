@@ -19,6 +19,8 @@ blitz = [
 [dependencies]
 spike-report = { path = "../report" }
 rbook = "=0.7.13"
+html5ever = "=0.27.0"
+markup5ever_rcdom = "=0.3.0"
 blitz-dom = { version = "=0.3.0-beta.4", optional = true }
 blitz-html = { version = "=0.3.0-beta.4", optional = true }
 blitz-paint = { version = "=0.3.0-beta.4", optional = true }

@@ -612,22 +612,6 @@ pub fn SpikeApp() -> impl IntoElement {
             }
         }
     });
-    on_key_with("mod+g", find_keys(), {
-        let column = column.clone();
-        let live = margin_live.clone();
-        let stage = stage.clone();
-        move |_| {
-            form::press_find_step(&column, &live, &stage, true);
-        }
-    });
-    on_key_with("shift+mod+g", find_keys(), {
-        let column = column.clone();
-        let live = margin_live.clone();
-        let stage = stage.clone();
-        move |_| {
-            form::press_find_step(&column, &live, &stage, false);
-        }
-    });
     on_key_with(IMMERSIVE_KEY, leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();

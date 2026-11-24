@@ -2190,23 +2190,38 @@ thread_local! {
     > = const { RefCell::new(None) };
 }
 
-/// Shift+Return is a newline in a note. The binding exists only while the
-/// find column is mounted and the find field is not composing, so a closed
-/// find does not consume it and an open composition still reaches the field.
+/// Shift+Return, ⌘G, and Shift-⌘G step through find. They exist only while
+/// find is open and the field is not composing. A closed find and an open
+/// composition do not register them, so the key still reaches the field.
 #[component]
-fn FindShiftReturn() -> impl IntoElement {
+fn FindNavigationKeys() -> impl IntoElement {
     if let Some((column, live, stage)) = FIND_STEP.with(|slot| slot.borrow().clone()) {
-        on_key_with(
-            "shift+return",
-            KeyOptions {
+        let current = column.get();
+        if spike_library::column::find_navigation_mounted(current.mode, current.find.composing) {
+            let options = KeyOptions {
                 when: nsh_core::keymap::When::Always,
                 pass_through: false,
                 ..KeyOptions::default()
-            },
-            move |_| {
-                press_find_step(&column, &live, &stage, false);
-            },
-        );
+            };
+            on_key_with("shift+return", options, {
+                let column = column.clone();
+                let live = live.clone();
+                let stage = stage.clone();
+                move |_| press_find_step(&column, &live, &stage, false)
+            });
+            on_key_with("mod+g", options, {
+                let column = column.clone();
+                let live = live.clone();
+                let stage = stage.clone();
+                move |_| press_find_step(&column, &live, &stage, true)
+            });
+            on_key_with("shift+mod+g", options, {
+                let column = column.clone();
+                let live = live.clone();
+                let stage = stage.clone();
+                move |_| press_find_step(&column, &live, &stage, false)
+            });
+        }
     }
     view().absolute().w(px(0.0)).h(px(0.0))
 }
@@ -3007,7 +3022,7 @@ fn find_list(
             .w_full()
             .flex()
             .flex_col()
-            .child(find_shift_return())
+            .child(find_navigation_keys())
             .child(list)
             .into_element()
     }

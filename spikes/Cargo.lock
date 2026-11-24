@@ -3499,6 +3499,8 @@ dependencies = [
  "blitz-html",
  "blitz-paint",
  "blitz-traits",
+ "html5ever 0.27.0",
+ "markup5ever_rcdom",
  "peniko",
  "rbook",
  "spike-report",
@@ -3515,6 +3517,7 @@ dependencies = [
 name = "spike-library"
 version = "0.1.0"
 dependencies = [
+ "nsh-core",
  "png",
  "rusqlite",
  "spike-epub",

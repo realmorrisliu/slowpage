@@ -1,7 +1,10 @@
-mod entities;
-
+use std::cell::RefCell;
 use std::collections::HashMap;
 
+use html5ever::tendril::TendrilSink;
+use html5ever::tree_builder::TreeBuilderOpts;
+use html5ever::{parse_document, ParseOpts};
+use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use rbook::Epub;
 use spike_report::Anchor;
 #[cfg(feature = "blitz")]
@@ -227,235 +230,79 @@ fn plain_text(xhtml: &str) -> String {
 }
 
 /// Body text in the order the page script's `TreeWalker` of `SHOW_TEXT`
-/// visits, after `keepEmDash`. Offsets are UTF-16 code units, the same
-/// count as a JavaScript string `.length`.
+/// visits, after `keepEmDash`. The chapter is loaded as text/html with
+/// scripting enabled, the same load the page uses. A snippet with no
+/// `<html>` or `<body>` is that body's content.
 pub fn dom_text(xhtml: &str) -> String {
-    walk_text(&body_inner(xhtml))
+    let source = chapter_document(xhtml);
+    let opts = ParseOpts {
+        tree_builder: TreeBuilderOpts {
+            scripting_enabled: true,
+            drop_doctype: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dom = parse_document(RcDom::default(), opts).one(source);
+    let Some(body) = find_element(&dom.document, "body") else {
+        return String::new();
+    };
+    let mut out = String::new();
+    walk_body(&body, false, &mut out);
+    out
 }
 
-fn walk_text(html: &str) -> String {
-    let mut out = String::new();
-    let mut rest = html;
-    let mut stack: Vec<Frame> = Vec::new();
-    while !rest.is_empty() {
-        if rest.starts_with("<!--") {
-            rest = match rest.find("-->") {
-                Some(end) => &rest[end + 3..],
-                None => "",
-            };
-            continue;
+fn chapter_document(xhtml: &str) -> String {
+    let lower = xhtml.to_ascii_lowercase();
+    if lower.contains("<html") || lower.contains("<body") {
+        xhtml.to_string()
+    } else {
+        format!("<body>{xhtml}</body>")
+    }
+}
+
+fn find_element(handle: &Handle, name: &str) -> Option<Handle> {
+    if let NodeData::Element { name: tag, .. } = &handle.data {
+        if tag.local.as_ref() == name {
+            return Some(handle.clone());
         }
-        if rest.starts_with("<![CDATA[") {
-            if let Some(end) = rest.find("]]>") {
-                push_node(&mut out, &rest[9..end], false, in_footer(&stack));
-                rest = &rest[end + 3..];
+    }
+    for child in handle.children.borrow().iter() {
+        if let Some(found) = find_element(child, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn walk_body(handle: &Handle, footer: bool, out: &mut String) {
+    match &handle.data {
+        NodeData::Element { name, attrs, .. } => {
+            if name.local.as_ref() == "template" {
+                return;
+            }
+            let footer = footer || element_has_id(attrs, "spike-footer");
+            for child in handle.children.borrow().iter() {
+                walk_body(child, footer, out);
+            }
+        }
+        NodeData::Text { contents } => {
+            let text = contents.borrow().to_string();
+            if footer {
+                out.push_str(&text);
             } else {
-                break;
+                out.push_str(&join_em_dash_node(&text));
             }
-            continue;
         }
-        if rest.starts_with('<') {
-            let Some(end) = rest.find('>') else {
-                break;
-            };
-            let tag = &rest[1..end];
-            let name = tag_name(tag);
-            let closing = tag.starts_with('/');
-            let empty = tag.ends_with('/') || is_void(&name);
-            rest = &rest[end + 1..];
-            if closing {
-                pop_frame(&mut stack, &name);
-                continue;
-            }
-            if name == "template" {
-                rest = skip_element(rest, "template");
-                continue;
-            }
-            let footer = in_footer(&stack) || has_id(tag, "spike-footer");
-            if !empty {
-                stack.push(Frame {
-                    name: name.clone(),
-                    footer,
-                });
-            }
-            if name == "script" || name == "style" {
-                let (inner, next) = take_raw(rest, &name);
-                if !empty {
-                    pop_frame(&mut stack, &name);
-                }
-                push_node(&mut out, inner, false, footer);
-                rest = next;
-            }
-            continue;
-        }
-        let end = rest.find('<').unwrap_or(rest.len());
-        push_node(&mut out, &rest[..end], true, in_footer(&stack));
-        rest = &rest[end..];
-    }
-    out
-}
-
-struct Frame {
-    name: String,
-    footer: bool,
-}
-
-fn in_footer(stack: &[Frame]) -> bool {
-    stack.iter().any(|frame| frame.footer)
-}
-
-fn pop_frame(stack: &mut Vec<Frame>, name: &str) {
-    if let Some(at) = stack.iter().rposition(|frame| frame.name == name) {
-        stack.truncate(at);
+        _ => {}
     }
 }
 
-fn is_void(name: &str) -> bool {
-    matches!(
-        name,
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "source"
-            | "track"
-            | "wbr"
-    )
-}
-
-fn has_id(tag: &str, id: &str) -> bool {
-    let lower = tag.to_ascii_lowercase();
-    let needle = format!("id=\"{id}\"");
-    let needle_sq = format!("id='{id}'");
-    lower.contains(&needle) || lower.contains(&needle_sq)
-}
-
-fn skip_element<'a>(html: &'a str, name: &str) -> &'a str {
-    let (inner, next) = take_raw(html, name);
-    let _ = inner;
-    next
-}
-
-fn take_raw<'a>(html: &'a str, name: &str) -> (&'a str, &'a str) {
-    let lower = html.to_ascii_lowercase();
-    let close = format!("</{name}");
-    let Some(at) = lower.find(&close) else {
-        return ("", "");
-    };
-    let after = &html[at + close.len()..];
-    let Some(end) = after.find('>') else {
-        return (&html[..at], "");
-    };
-    (&html[..at], &after[end + 1..])
-}
-
-fn push_node(out: &mut String, raw: &str, decode: bool, footer: bool) {
-    let text = if decode {
-        decode_text(raw)
-    } else {
-        raw.to_string()
-    };
-    if footer {
-        out.push_str(&text);
-    } else {
-        out.push_str(&join_em_dash_node(&text));
-    }
-}
-
-fn tag_name(tag: &str) -> String {
-    let tag = tag.trim_start_matches('/');
-    tag.split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
-}
-
-fn decode_text(raw: &str) -> String {
-    let mut out = String::new();
-    let mut rest = raw;
-    while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at + 1..];
-        let Some(end) = rest.find(';') else {
-            out.push('&');
-            out.push_str(rest);
-            return out;
-        };
-        if end > 32 {
-            out.push('&');
-            continue;
-        }
-        let token = &rest[..end];
-        if let Some(text) = decode_entity(token) {
-            out.push_str(&text);
-            rest = &rest[end + 1..];
-        } else {
-            out.push('&');
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn decode_entity(token: &str) -> Option<String> {
-    if let Some(hex) = token
-        .strip_prefix("#x")
-        .or_else(|| token.strip_prefix("#X"))
-    {
-        return Some(numeric_char(u32::from_str_radix(hex, 16).ok()?).to_string());
-    }
-    if let Some(dec) = token.strip_prefix('#') {
-        return Some(numeric_char(dec.parse().ok()?).to_string());
-    }
-    let index = crate::entities::NAMED
-        .binary_search_by_key(&token, |row| row.0)
-        .ok()?;
-    Some(crate::entities::NAMED[index].1.to_string())
-}
-
-fn numeric_char(value: u32) -> char {
-    let value = match value {
-        0x00 => 0xFFFD,
-        0x80 => 0x20AC,
-        0x82 => 0x201A,
-        0x83 => 0x0192,
-        0x84 => 0x201E,
-        0x85 => 0x2026,
-        0x86 => 0x2020,
-        0x87 => 0x2021,
-        0x88 => 0x02C6,
-        0x89 => 0x2030,
-        0x8A => 0x0160,
-        0x8B => 0x2039,
-        0x8C => 0x0152,
-        0x8E => 0x017D,
-        0x91 => 0x2018,
-        0x92 => 0x2019,
-        0x93 => 0x201C,
-        0x94 => 0x201D,
-        0x95 => 0x2022,
-        0x96 => 0x2013,
-        0x97 => 0x2014,
-        0x98 => 0x02DC,
-        0x99 => 0x2122,
-        0x9A => 0x0161,
-        0x9B => 0x203A,
-        0x9C => 0x0153,
-        0x9E => 0x017E,
-        0x9F => 0x0178,
-        0x0D => 0x000D,
-        code if (0xD800..=0xDFFF).contains(&code) || code > 0x10FFFF => 0xFFFD,
-        code if (0x80..=0x9F).contains(&code) => 0xFFFD,
-        code => code,
-    };
-    char::from_u32(value).unwrap_or('\u{FFFD}')
+fn element_has_id(attrs: &RefCell<Vec<html5ever::Attribute>>, id: &str) -> bool {
+    attrs
+        .borrow()
+        .iter()
+        .any(|attr| attr.name.local.as_ref() == "id" && attr.value.as_ref() == id)
 }
 
 /// The page script inserts U+2060 only when an em dash is not the first
@@ -819,6 +666,31 @@ mod tests {
             }
         }
         assert!(spans.contains(&(3, 4)), "{spans:?}");
+    }
+
+    /// These four strings are body content of a text/html chapter with
+    /// scripting enabled. The expected text is the page's TreeWalker after
+    /// keepEmDash, not a second copy of the extractor.
+    #[test]
+    fn text_html_body_matches_the_page_rules() {
+        let cases = [
+            (
+                "<noscript><p>甲&amp;乙</p></noscript><p>丙</p>",
+                "<p>甲&amp;乙</p>丙",
+            ),
+            ("前<![CDATA[甲—乙]]>后", "前后"),
+            ("<p title=\"a>b\">丙—丁</p>", "丙\u{2060}—丁"),
+            ("a&nbsp b &amp c", "a\u{00a0} b & c"),
+        ];
+        for (html, expect) in cases {
+            assert_eq!(dom_text(html), expect, "{html}");
+        }
+        let astral = dom_text("<p>🙂—边</p><p>—b</p>");
+        assert_eq!(astral, "🙂\u{2060}—边—b");
+        assert_eq!(
+            astral.encode_utf16().count(),
+            "🙂—边—b".encode_utf16().count() + 1
+        );
     }
 
     #[test]
