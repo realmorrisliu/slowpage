@@ -28,3 +28,6 @@ blitz-traits = { version = "=0.3.0-beta.4", optional = true }
 anyrender = { version = "=0.14.0", optional = true }
 anyrender_vello_cpu = { version = "=0.18.0", optional = true }
 peniko = { version = "=0.6", optional = true }
+
+[dev-dependencies]
+spike-bold-word-starts = { path = "../bold-word-starts" }

@@ -2277,7 +2277,6 @@ fn send_find(stage: &ElementRef, column: &spike_library::column::Column) {
             "book": column.book,
             "query": column.find.query,
             "generation": column.find.generation,
-            "step": column.find.pending,
         }),
     );
 }
@@ -2299,7 +2298,7 @@ pub(crate) fn press_find_step(
     column.set(next);
 }
 
-fn send_jump(stage: &ElementRef, hit: &spike_library::column::Hit) {
+pub(crate) fn send_jump(stage: &ElementRef, hit: &spike_library::column::Hit) {
     stage.command(
         "jump",
         serde_json::json!({
@@ -2376,7 +2375,7 @@ pub fn apply_find_status(
             .unwrap_or(0) as u32,
         done: find.get("done").and_then(|v| v.as_bool()).unwrap_or(false),
     };
-    spike_library::column::replace_scan(column, &scan, here)
+    spike_library::column::on_scan_publish(column, &scan, here)
 }
 
 pub fn reading_margin(
@@ -2800,11 +2799,11 @@ fn mark_list(
                             page: mark.page,
                             offset: mark.offset,
                         };
+                        let mut next = spike_library::column::release_landing(&column.get());
                         if dest != here {
-                            let mut next = column.get();
                             next.find.navigated = true;
-                            column.set(next);
                         }
+                        column.set(next);
                         stage.command(
                             "jump",
                             serde_json::json!({

@@ -694,6 +694,42 @@ mod tests {
     }
 
     #[test]
+    fn search_offsets_follow_the_rendered_word_starts() {
+        let html = "<html><head></head><body><p>a—b</p></body></html>";
+        let plain = dom_text(html);
+        assert_eq!(plain, "a\u{2060}—b");
+        assert_eq!(spike_bold_word_starts::decorate(html, false), html);
+        let painted = spike_bold_word_starts::decorate(html, true);
+        assert!(painted.contains(
+            "<span class=\"sr-word-start\">a</span>—<span class=\"sr-word-start\">b</span>"
+        ));
+        let bold = dom_text(&painted);
+        assert!(!bold.contains('\u{2060}'), "{bold:?}");
+        assert!(bold.contains('—'));
+        assert!(!bold.contains("font-weight"));
+        let query: Vec<u16> = "—b".encode_utf16().collect();
+        let at = |text: &str| {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            units
+                .windows(query.len())
+                .position(|window| window == query)
+        };
+        assert_eq!(at(&plain), Some(2));
+        assert_eq!(at(&bold), Some(1));
+        let next = "<html><head></head><body><p>下一章信</p></body></html>";
+        assert_eq!(
+            dom_text(next),
+            dom_text(&spike_bold_word_starts::decorate(next, true))
+        );
+        let joined_plain = format!("{plain}{}", dom_text(next));
+        let joined_bold = format!("{bold}{}", dom_text(next));
+        assert_ne!(
+            joined_plain.encode_utf16().count(),
+            joined_bold.encode_utf16().count()
+        );
+    }
+
+    #[test]
     fn built_fixtures_keep_a_declared_page_and_a_face() {
         let root = "/tmp/superreader-fixtures";
         let fixed = format!("{root}/fixed.epub");

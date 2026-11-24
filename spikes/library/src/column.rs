@@ -31,13 +31,6 @@ pub enum Phase {
     Incomplete,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnitRead {
-    Text,
-    Empty,
-    Failed,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
     pub href: String,
@@ -94,6 +87,9 @@ pub struct Find {
     pub empty_units: u32,
     pub failed_units: u32,
     pub pending: bool,
+    /// The reading place the automatic landing is still owed against.
+    /// A scan does not retarget this after the reader moves.
+    pub origin: Place,
     pub navigated: bool,
     pub seat: Option<EditorSeat>,
     pub focus: u64,
@@ -115,6 +111,11 @@ impl Default for Find {
             empty_units: 0,
             failed_units: 0,
             pending: false,
+            origin: Place {
+                href: String::new(),
+                page: 0,
+                offset: 0,
+            },
             navigated: false,
             seat: None,
             focus: 0,
@@ -149,17 +150,6 @@ impl Default for Column {
             find: Find::default(),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UnitReport {
-    pub book: String,
-    pub query: String,
-    pub generation: u64,
-    pub index: u32,
-    pub total: u32,
-    pub read: UnitRead,
-    pub hits: Vec<Hit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -567,6 +557,7 @@ pub fn find_return(column: &Column, here: &Place) -> (Column, Option<Hit>) {
         begin_query(&mut next, &draft);
         if next.find.phase == Phase::Searching {
             next.find.pending = true;
+            next.find.origin = here.clone();
         }
         return (next, None);
     }
@@ -579,6 +570,7 @@ pub fn find_return(column: &Column, here: &Place) -> (Column, Option<Hit>) {
             begin_query(&mut next, &query);
         }
         next.find.pending = true;
+        next.find.origin = here.clone();
         return (next, None);
     }
     step(&next, true, here)
@@ -687,58 +679,40 @@ pub fn hit_place(hit: &Hit) -> Place {
     }
 }
 
-pub fn accept_unit(column: &Column, report: &UnitReport, here: &Place) -> (Column, Option<Hit>) {
-    if report.book != column.book
-        || report.query != column.find.query
-        || report.generation != column.find.generation
-        || report.index != column.find.seen
-    {
-        return (column.clone(), None);
-    }
-    let mut next = column.clone();
-    next.find.total = report.total;
-    next.find.seen = next.find.seen.saturating_add(1);
-    let added = match report.read {
-        UnitRead::Text => {
-            next.find.text_units = next.find.text_units.saturating_add(1);
-            let start = next.find.hits.len();
-            next.find.hits.extend(report.hits.iter().cloned());
-            if report.hits.is_empty() {
-                None
-            } else {
-                Some(start)
-            }
-        }
-        UnitRead::Empty => {
-            next.find.empty_units = next.find.empty_units.saturating_add(1);
-            None
-        }
-        UnitRead::Failed => {
-            next.find.failed_units = next.find.failed_units.saturating_add(1);
-            None
-        }
-    };
-    if next.find.seen >= next.find.total {
-        next.find.phase = if next.find.failed_units > 0 {
-            Phase::Incomplete
-        } else {
-            Phase::Done
-        };
-    }
-    let jump = if next.find.pending {
-        added.map(|start| {
-            next.find.pending = false;
-            next.find.index = Some(start);
-            let hit = next.find.hits[start].clone();
-            if !same_anchor(&hit, here) {
-                next.find.navigated = true;
-            }
-            hit
-        })
+/// The reader left the place the first landing was owed against.
+/// An EPUB page number is a reflow result, so only the spine href and the
+/// UTF-16 offset count. A PDF has no href, so its page number is the place.
+fn reader_left(origin: &Place, live: &Place) -> bool {
+    if origin.href.is_empty() && live.href.is_empty() {
+        origin.page != live.page
     } else {
-        None
+        spike_epub::normalize_href(&origin.href) != spike_epub::normalize_href(&live.href)
+            || origin.offset != live.offset
+    }
+}
+
+/// A page turn, a bookmark, a contents jump, or an in-book link. The scan
+/// keeps the hits it already has and no longer owes a landing.
+pub fn release_landing(column: &Column) -> Column {
+    let mut next = column.clone();
+    next.find.pending = false;
+    next
+}
+
+/// The shell applies one published snapshot here. The column owns the owed
+/// landing. Leaving the origin cancels it before the hits are replaced, so
+/// the snapshot cannot jump to a later chapter the reader already left.
+pub fn on_scan_publish(column: &Column, scan: &Scan, live: &Place) -> (Column, Option<Hit>) {
+    let mut next = column.clone();
+    if next.find.pending && reader_left(&next.find.origin, live) {
+        next.find.pending = false;
+    }
+    let anchor = if next.find.pending {
+        next.find.origin.clone()
+    } else {
+        live.clone()
     };
-    (next, jump)
+    replace_scan(&next, scan, &anchor)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -778,6 +752,13 @@ pub fn replace_scan(column: &Column, scan: &Scan, here: &Place) -> (Column, Opti
     } else {
         Phase::Done
     };
+    if next
+        .find
+        .index
+        .is_some_and(|index| index >= next.find.hits.len())
+    {
+        next.find.index = None;
+    }
     let jump = if next.find.pending {
         pending_hit(&next.order, &next.find.hits, here, scan.done).map(|index| {
             next.find.pending = false;
@@ -805,6 +786,7 @@ pub fn choose(column: &Column, index: usize, here: &Place) -> (Column, Option<Hi
         return (column.clone(), None);
     }
     let mut next = column.clone();
+    next.find.pending = false;
     next.find.index = Some(index);
     let hit = next.find.hits[index].clone();
     if !same_anchor(&hit, here) {
@@ -973,6 +955,37 @@ mod tests {
         }
     }
 
+    fn pdf_page(page: u32) -> Place {
+        Place {
+            href: String::new(),
+            page,
+            offset: 0,
+        }
+    }
+
+    fn publish(
+        book: &str,
+        query: &str,
+        generation: u64,
+        hits: Vec<Hit>,
+        seen: u32,
+        total: u32,
+        done: bool,
+    ) -> Scan {
+        Scan {
+            book: book.to_string(),
+            query: query.to_string(),
+            generation,
+            hits,
+            seen,
+            total,
+            text_units: seen,
+            empty_units: 0,
+            failed_units: 0,
+            done,
+        }
+    }
+
     #[test]
     fn a_bookmark_survives_reopen_undo_and_stays_on_its_book() {
         let file = tempfile::NamedTempFile::new().unwrap();
@@ -1042,45 +1055,45 @@ mod tests {
         );
         assert!(column.find.hits.is_empty());
         assert_eq!(column.find.phase, Phase::Searching);
-        let report = UnitReport {
+        let report = Scan {
             book: "a.epub".to_string(),
             query: "信".to_string(),
             generation: column.find.generation,
-            index: 0,
-            total: 2,
-            read: UnitRead::Text,
             hits: first.clone(),
+            seen: 1,
+            total: 2,
+            text_units: 1,
+            empty_units: 0,
+            failed_units: 0,
+            done: false,
         };
-        let (column, jump) = accept_unit(&column, &report, &here(1));
+        let (column, jump) = on_scan_publish(&column, &report, &here(1));
         assert!(jump.is_none());
         assert_eq!(column.find.hits.len(), 1);
-        let stale = UnitReport {
+        let stale = Scan {
             generation: column.find.generation - 1,
-            index: 1,
             hits: more.clone(),
             ..report.clone()
         };
-        let (held, _) = accept_unit(&column, &stale, &here(1));
+        let (held, _) = on_scan_publish(&column, &stale, &here(1));
         assert_eq!(held.find.hits.len(), 1);
-        let other_book = UnitReport {
+        let other_book = Scan {
             book: "b.epub".to_string(),
-            index: 1,
             hits: more.clone(),
             ..report.clone()
         };
-        let (held, _) = accept_unit(&column, &other_book, &here(1));
+        let (held, _) = on_scan_publish(&column, &other_book, &here(1));
         assert_eq!(held.find.hits.len(), 1);
         let typed = type_find(&column, "袋");
         assert!(typed.find.hits.is_empty());
         assert_ne!(typed.find.generation, column.find.generation);
-        let late = UnitReport {
+        let late = Scan {
             query: "信".to_string(),
             generation: column.find.generation,
-            index: 0,
             hits: first,
             ..report
         };
-        let (still, _) = accept_unit(&typed, &late, &here(1));
+        let (still, _) = on_scan_publish(&typed, &late, &here(1));
         assert!(still.find.hits.is_empty());
         let mut marked = column.clone();
         marked.find.hits = more.clone();
@@ -1117,14 +1130,14 @@ mod tests {
             generation: column.find.generation,
             ..scan.clone()
         };
-        let (held, jump) = replace_scan(&stepped, &late, &here(1));
+        let (held, jump) = on_scan_publish(&stepped, &late, &here(1));
         assert!(jump.is_none());
         assert!(held.find.hits.is_empty());
-        let (landed, jump) = replace_scan(&stepped, &scan, &here(1));
+        let (landed, jump) = on_scan_publish(&stepped, &scan, &here(1));
         assert!(jump.is_some());
         assert_eq!(landed.find.hits.len(), 1);
         assert!(landed.find.navigated);
-        let (again, jump) = replace_scan(&landed, &scan, &here(4));
+        let (again, jump) = on_scan_publish(&landed, &scan, &here(4));
         assert!(jump.is_none());
         assert_eq!(again.find.hits.len(), 1);
     }
@@ -1138,36 +1151,44 @@ mod tests {
             },
             "信",
         );
-        let base = UnitReport {
+        let base = Scan {
             book: "a.pdf".to_string(),
             query: "信".to_string(),
             generation: column.find.generation,
-            index: 0,
-            total: 2,
-            read: UnitRead::Empty,
             hits: Vec::new(),
+            seen: 1,
+            total: 2,
+            text_units: 0,
+            empty_units: 1,
+            failed_units: 0,
+            done: false,
         };
-        let (column, _) = accept_unit(&column, &base, &here(1));
+        let (column, _) = on_scan_publish(&column, &base, &pdf_page(1));
         assert_eq!(find_line(&column).text, "搜索中 · 已搜 1/2");
-        let failed = UnitReport {
-            index: 1,
-            read: UnitRead::Failed,
+        let failed = Scan {
+            seen: 2,
+            empty_units: 1,
+            failed_units: 1,
+            done: true,
             ..base.clone()
         };
-        let (column, _) = accept_unit(&column, &failed, &here(1));
+        let (column, _) = on_scan_publish(&column, &failed, &pdf_page(1));
         let line = find_line(&column);
         assert!(line.retry);
         assert!(line.text.starts_with("查找未完成，可重试"));
         assert!(!line.text.contains("无结果"));
         let mut only_empty = type_find(&Column::default(), "信");
         only_empty.book = "a.pdf".to_string();
-        let done = UnitReport {
+        let done = Scan {
+            seen: 1,
             total: 1,
-            read: UnitRead::Empty,
+            empty_units: 1,
+            failed_units: 0,
+            done: true,
             generation: only_empty.find.generation,
             ..base
         };
-        let (only_empty, _) = accept_unit(&only_empty, &done, &here(1));
+        let (only_empty, _) = on_scan_publish(&only_empty, &done, &pdf_page(1));
         assert_eq!(find_line(&only_empty).text, "没有可搜索的文本");
         let none = type_find(
             &Column {
@@ -1176,16 +1197,19 @@ mod tests {
             },
             "缺",
         );
-        let scanned = UnitReport {
+        let scanned = Scan {
             book: "a.pdf".to_string(),
             query: "缺".to_string(),
             generation: none.find.generation,
-            index: 0,
-            total: 1,
-            read: UnitRead::Text,
             hits: Vec::new(),
+            seen: 1,
+            total: 1,
+            text_units: 1,
+            empty_units: 0,
+            failed_units: 0,
+            done: true,
         };
-        let (none, _) = accept_unit(&none, &scanned, &here(1));
+        let (none, _) = on_scan_publish(&none, &scanned, &pdf_page(1));
         assert_eq!(find_line(&none).text, "无结果 · 已搜全书可用文本");
         let retry = retry_find(&none);
         assert!(retry.find.hits.is_empty());
@@ -1422,6 +1446,7 @@ mod tests {
                 query: "信".to_string(),
                 draft: "信".to_string(),
                 pending: true,
+                origin: here.clone(),
                 phase: Phase::Searching,
                 seat: Some(seat),
                 ..Find::default()
@@ -1441,7 +1466,7 @@ mod tests {
             failed_units: 0,
             done: false,
         };
-        let (column, hit) = replace_scan(&column, &partial, &here);
+        let (column, hit) = on_scan_publish(&column, &partial, &here);
         assert!(hit.is_none());
         assert!(column.find.index.is_none());
         assert!(!column.find.navigated);
@@ -1474,7 +1499,7 @@ mod tests {
             failed_units: 0,
             done: false,
         };
-        let (column, hit) = replace_scan(&column, &crossing, &here);
+        let (column, hit) = on_scan_publish(&column, &crossing, &here);
         let hit = hit.expect("chapter 5 is on the page");
         assert_eq!(hit.href, "c5.xhtml");
         assert_eq!(column.find.index, pending_hit(&spine(), &all, &here, false));
@@ -1497,6 +1522,7 @@ mod tests {
         let fresh = Column {
             find: Find {
                 pending: true,
+                origin: here.clone(),
                 phase: Phase::Searching,
                 seat: Some(EditorSeat {
                     book: "a.epub".to_string(),
@@ -1510,12 +1536,168 @@ mod tests {
             },
             ..column.clone()
         };
-        let (done, hit) = replace_scan(&fresh, &finished_early, &here);
+        let (done, hit) = on_scan_publish(&fresh, &finished_early, &here);
         assert_eq!(hit.unwrap().href, "c1.xhtml");
         assert_eq!(done.find.index, Some(0));
         assert!(done.find.navigated);
         assert_eq!(pending_hit(&spine(), &early, &here, true), Some(0));
         assert!(close_find(&done).seat.is_none());
+    }
+
+    #[test]
+    fn a_manual_move_cancels_the_owed_landing() {
+        let chapter5 = Place {
+            href: "c5.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        let seat = EditorSeat {
+            book: "a.epub".to_string(),
+            page: 1,
+            href: "c5.xhtml".to_string(),
+            kind: SeatKind::New,
+        };
+        let opened = type_find(
+            &Column {
+                book: "a.epub".to_string(),
+                mode: Mode::Find,
+                order: spine(),
+                find: Find {
+                    seat: Some(seat.clone()),
+                    ..Find::default()
+                },
+                ..Column::default()
+            },
+            "信",
+        );
+        let (column, jump) = find_return(&opened, &chapter5);
+        assert!(jump.is_none());
+        assert!(column.find.pending);
+        assert_eq!(column.find.origin.href, "c5.xhtml");
+        let early = epub_hits().into_iter().take(1).collect::<Vec<_>>();
+        let partial = publish("a.epub", "信", column.find.generation, early, 1, 5, false);
+        let (waiting, jump) = on_scan_publish(&column, &partial, &chapter5);
+        assert!(jump.is_none());
+        assert!(waiting.find.pending);
+        assert!(waiting.find.index.is_none());
+
+        let (back, hit) = step(&waiting, false, &chapter5);
+        assert_eq!(hit.unwrap().href, "c1.xhtml");
+        assert!(!back.find.pending);
+        assert_eq!(back.find.index, Some(0));
+        assert!(back.find.navigated);
+        let later = publish(
+            "a.epub",
+            "信",
+            back.find.generation,
+            epub_hits(),
+            5,
+            5,
+            true,
+        );
+        let (held, jump) = on_scan_publish(&back, &later, &chapter5);
+        assert!(jump.is_none());
+        assert_eq!(held.find.index, Some(0));
+        assert_eq!(held.find.hits[0].href, "c1.xhtml");
+        assert!(close_find(&held).seat.is_none());
+        let (forward, hit) = step(&held, true, &chapter5);
+        assert_eq!(hit.unwrap().href, "c5.xhtml");
+        assert_eq!(forward.find.index, Some(1));
+
+        let (clicked, hit) = choose(&waiting, 0, &chapter5);
+        assert_eq!(hit.unwrap().href, "c1.xhtml");
+        assert!(!clicked.find.pending);
+        assert_eq!(clicked.find.index, Some(0));
+        assert!(clicked.find.navigated);
+        let (still, jump) = on_scan_publish(&clicked, &later, &chapter5);
+        assert!(jump.is_none());
+        assert_eq!(still.find.index, Some(0));
+
+        let same = choose(&waiting, 0, &hit_place(&waiting.find.hits[0]));
+        let (same, _) = same;
+        assert!(!same.find.pending);
+        assert!(!same.find.navigated);
+        assert!(close_find(&same).seat.is_some());
+        let (quiet, jump) = on_scan_publish(&same, &later, &hit_place(&waiting.find.hits[0]));
+        assert!(jump.is_none());
+        assert_eq!(quiet.find.index, Some(0));
+
+        let turned = release_landing(&waiting);
+        assert!(!turned.find.pending);
+        let page6 = Place {
+            href: "c6.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        let (stayed, jump) = on_scan_publish(&waiting, &later, &page6);
+        assert!(jump.is_none());
+        assert!(!stayed.find.pending);
+        assert!(stayed.find.index.is_none());
+        let (after_key, hit) = step(&stayed, true, &page6);
+        assert_eq!(hit.unwrap().href, "c1.xhtml");
+        assert_eq!(after_key.find.index, Some(0));
+
+        let reflowed = Place {
+            href: "c5.xhtml".to_string(),
+            page: 4,
+            offset: 0,
+        };
+        let (still_owed, jump) = on_scan_publish(&waiting, &partial, &reflowed);
+        assert!(jump.is_none());
+        assert!(still_owed.find.pending);
+
+        let pdf = type_find(
+            &Column {
+                book: "a.pdf".to_string(),
+                mode: Mode::Find,
+                ..Column::default()
+            },
+            "信",
+        );
+        let page5 = pdf_page(5);
+        let (pdf, _) = find_return(&pdf, &page5);
+        let only_first = publish(
+            "a.pdf",
+            "信",
+            pdf.find.generation,
+            hits_in("信", "信", 1, "", IndexKind::Utf16),
+            1,
+            5,
+            false,
+        );
+        let (pdf_waiting, jump) = on_scan_publish(&pdf, &only_first, &page5);
+        assert!(jump.is_none());
+        assert!(pdf_waiting.find.pending);
+        assert!(pdf_waiting.find.index.is_none());
+        let (pdf_back, hit) = step(&pdf_waiting, false, &page5);
+        assert_eq!(hit.unwrap().page, 1);
+        assert!(!pdf_back.find.pending);
+        let pdf_done = publish(
+            "a.pdf",
+            "信",
+            pdf_back.find.generation,
+            {
+                let mut hits = hits_in("信", "信", 1, "", IndexKind::Utf16);
+                hits.extend(hits_in("信", "信", 5, "", IndexKind::Utf16));
+                hits
+            },
+            5,
+            5,
+            true,
+        );
+        let (pdf_held, jump) = on_scan_publish(&pdf_back, &pdf_done, &page5);
+        assert!(jump.is_none());
+        assert_eq!(pdf_held.find.index, Some(0));
+        assert_eq!(pdf_held.find.hits[0].page, 1);
+        let (pdf_click, _) = choose(&pdf_waiting, 0, &page5);
+        assert!(!pdf_click.find.pending);
+        let (pdf_click, jump) = on_scan_publish(&pdf_click, &pdf_done, &page5);
+        assert!(jump.is_none());
+        assert_eq!(pdf_click.find.index, Some(0));
+        let paged = release_landing(&pdf_waiting);
+        let (paged, jump) = on_scan_publish(&paged, &pdf_done, &pdf_page(6));
+        assert!(jump.is_none());
+        assert!(paged.find.index.is_none());
     }
 
     #[test]

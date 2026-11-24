@@ -1,5 +1,8 @@
 pub const BOLD_WORD_STARTS_LABEL: (&str, &str) = ("Bold Word Starts", "词首加粗");
 
+mod decorate;
+pub use decorate::decorate;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LetterRun<'a>(&'a str);
 

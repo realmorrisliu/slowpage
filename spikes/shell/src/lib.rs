@@ -486,22 +486,26 @@ pub fn SpikeApp() -> impl IntoElement {
     on_key_with("left", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, shell_on, false)
+        let column = column.clone();
+        move |_| turn_page(&stage, &visit, &column, shell_on, false)
     });
     on_key_with("right", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, shell_on, true)
+        let column = column.clone();
+        move |_| turn_page(&stage, &visit, &column, shell_on, true)
     });
     on_key_with("space", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, shell_on, true)
+        let column = column.clone();
+        move |_| turn_page(&stage, &visit, &column, shell_on, true)
     });
     on_key_with("shift+space", page_keys, {
         let stage = stage.clone();
         let visit = visit.clone();
-        move |_| turn_page(&stage, &visit, shell_on, false)
+        let column = column.clone();
+        move |_| turn_page(&stage, &visit, &column, shell_on, false)
     });
     let leave_keys = KeyOptions {
         when: nsh_core::keymap::When::NotEditing,
@@ -918,6 +922,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             let margin_note = margin_note.clone();
                             let margin_gen = margin_gen.clone();
                             let column = column.clone();
+                            let stage = stage.clone();
                             move |event: &NativeEvent| {
                                 if event.name.as_ref() == "ease" {
                                     let leg = event.data["leg"].as_u64().unwrap_or(0);
@@ -991,8 +996,11 @@ pub fn SpikeApp() -> impl IntoElement {
                                     shelf.order = order;
                                 }
                                 let place = form::reading_place(&next_live);
-                                let (shelf, _) =
+                                let (shelf, hit) =
                                     form::apply_find_status(&shelf, &event.data, &place);
+                                if let Some(hit) = hit.as_ref() {
+                                    form::send_jump(&stage, hit);
+                                }
                                 if shelf != column.get() {
                                     column.set(shelf);
                                 }
@@ -1299,9 +1307,16 @@ fn receive_file(
     history.set(settings::load_history(&settings::path()));
 }
 
-fn turn_page(stage: &ElementRef, visit: &Signal<visit::Visit>, shell: bool, forward: bool) {
+fn turn_page(
+    stage: &ElementRef,
+    visit: &Signal<visit::Visit>,
+    column: &Signal<spike_library::column::Column>,
+    shell: bool,
+    forward: bool,
+) {
     let delta = visit::page_key_delta(shell, visit.get().surface, forward);
     if delta != 0 {
+        column.set(spike_library::column::release_landing(&column.get()));
         stage.command("page", json!(delta));
     }
 }

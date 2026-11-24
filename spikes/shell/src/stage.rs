@@ -464,6 +464,15 @@ struct PageDecoration {
     scale: PixelScale,
 }
 
+/// The characters a search offset counts. The same order the page uses:
+/// normalize, then the word-start decoration, then the em-dash joiner.
+fn search_chapter(raw: &str) -> String {
+    let html = spike_epub::normalize_chapter(raw);
+    let bold = crate::settings::bold_word_starts(&crate::settings::path());
+    let html = crate::bold_word::decorate(&html, bold);
+    spike_epub::dom_text(&html)
+}
+
 struct FindJob {
     book: String,
     query: String,
@@ -476,7 +485,6 @@ struct FindJob {
     text_units: u32,
     empty_units: u32,
     failed_units: u32,
-    step: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -862,6 +870,18 @@ impl State {
                 if let Some(web) = &self.web {
                     web.word_starts_changed();
                 }
+                if let Some(job) = self.find.as_mut() {
+                    job.spine.clear();
+                    job.hits.clear();
+                    job.next = 0;
+                    job.total = 0;
+                    job.ready = false;
+                    job.text_units = 0;
+                    job.empty_units = 0;
+                    job.failed_units = 0;
+                }
+                self.find_paint.clear();
+                self.find_current = None;
             }
             "epub" => {
                 self.mode = match args.as_str() {
@@ -892,8 +912,7 @@ impl State {
                 let book = args.get("book").and_then(|v| v.as_str()).unwrap_or("");
                 let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
                 let generation = args.get("generation").and_then(|v| v.as_u64()).unwrap_or(0);
-                let step = args.get("step").and_then(|v| v.as_bool()).unwrap_or(false);
-                self.begin_find(book, query, generation, step);
+                self.begin_find(book, query, generation);
             }
             "find-stop" => self.stop_find(),
             "jump" => {
@@ -910,7 +929,7 @@ impl State {
         }
     }
 
-    fn begin_find(&mut self, book: &str, query: &str, generation: u64, step: bool) {
+    fn begin_find(&mut self, book: &str, query: &str, generation: u64) {
         self.stop_find();
         let query = query.trim();
         if book.is_empty() || query.is_empty() || book != self.book_path {
@@ -928,7 +947,6 @@ impl State {
             text_units: 0,
             empty_units: 0,
             failed_units: 0,
-            step,
         });
     }
 
@@ -1053,7 +1071,6 @@ impl State {
                 }
             }
         }
-        self.finish_find_step();
         true
     }
 
@@ -1069,7 +1086,7 @@ impl State {
                         .filter_map(|href| {
                             let bytes = packed.files.get(href)?;
                             let raw = String::from_utf8_lossy(bytes);
-                            let text = spike_epub::dom_text(&spike_epub::normalize_chapter(&raw));
+                            let text = search_chapter(&raw);
                             Some((href.clone(), text))
                         })
                         .collect::<Vec<_>>();
@@ -1143,34 +1160,8 @@ impl State {
             }
             job.next += 1;
         }
-        self.finish_find_step();
         self.paint_epub_hits();
         true
-    }
-
-    fn finish_find_step(&mut self) {
-        let Some(hit) = self.take_pending_hit() else {
-            return;
-        };
-        self.jump_place(&hit.href, hit.page, hit.start, hit.end);
-    }
-
-    fn take_pending_hit(&mut self) -> Option<spike_library::column::Hit> {
-        let order = self.web.as_ref().map(|web| web.spine()).unwrap_or_default();
-        let here = self.visit_place();
-        let place = spike_library::column::Place {
-            href: here.href,
-            page: here.page,
-            offset: here.offset,
-        };
-        let job = self.find.as_mut()?;
-        if !job.step || job.hits.is_empty() {
-            return None;
-        }
-        let finished = job.total > 0 && job.next >= job.total;
-        let index = spike_library::column::pending_hit(&order, &job.hits, &place, finished)?;
-        job.step = false;
-        job.hits.get(index).cloned()
     }
 
     fn paint_epub_hits(&self) {
@@ -1280,7 +1271,7 @@ impl State {
             return String::new();
         };
         let raw = String::from_utf8_lossy(bytes);
-        spike_epub::dom_text(&spike_epub::normalize_chapter(&raw))
+        search_chapter(&raw)
     }
 
     fn visit_place(&self) -> crate::visit::ReadingPlace {
