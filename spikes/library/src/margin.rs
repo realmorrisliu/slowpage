@@ -461,6 +461,7 @@ pub const NOTICE_BLANK: &str = "先写一句笔记";
 pub const NOTICE_SELECT: &str = "先选中原文";
 pub const NOTICE_STALE: &str = "选区已经换了";
 pub const NOTICE_KEPT: &str = "未能保存，草稿仍在此，未丢失";
+pub const NOTICE_HELD: &str = "输入框里还有字，新建草稿仍在";
 
 /// One PDF glyph in page points. The index is a Unicode scalar offset.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1328,8 +1329,8 @@ fn clear_new_body(field: &mut NoteField) {
 }
 
 /// Open a card editor. An existing draft for this note and kind continues.
-/// The live new-note text is stashed once. A stash already held stays, and a
-/// second live draft does not replace it or get dropped to open the editor.
+/// The live new-note text is stashed once. A stash already held stays.
+/// A second live draft stays in the field, and the card editor still opens.
 pub fn begin_card(ink: &MarginInk, key: CardKey, seed: &str) -> MarginInk {
     if matches!(&ink.face, Face::Card(current) if current == &key) {
         return ink.clone();
@@ -1344,12 +1345,13 @@ pub fn begin_card(ink: &MarginInk, key: CardKey, seed: &str) -> MarginInk {
             .as_ref()
             .is_some_and(|parked| !parked.body.trim().is_empty());
         if held {
-            return ink.clone();
+            next.new_note.composing = false;
+        } else {
+            let mut parked = next.new_note.clone();
+            parked.composing = false;
+            next.parked = Some(parked);
+            clear_new_body(&mut next.new_note);
         }
-        let mut parked = next.new_note.clone();
-        parked.composing = false;
-        next.parked = Some(parked);
-        clear_new_body(&mut next.new_note);
     } else if matches!(next.face, Face::New) {
         clear_new_body(&mut next.new_note);
     }
@@ -1375,7 +1377,6 @@ pub fn park_card(ink: &MarginInk) -> MarginInk {
         end_composition(&mut next.drafts, &key);
     }
     next.face = Face::New;
-    clear_new_body(&mut next.new_note);
     next
 }
 
@@ -1393,14 +1394,25 @@ pub fn cancel_card(ink: &MarginInk, key: &CardKey) -> MarginInk {
     let mut next = ink.clone();
     next.drafts.retain(|draft| &draft.key != key);
     next.face = Face::New;
-    clear_new_body(&mut next.new_note);
     next
 }
 
 /// Put the stashed new-note draft back and ask the field to take focus.
-/// Text already in the field stays. The stash stays until that field is empty.
+/// Text already in the field stays. The notice says why the stash did not replace it.
 pub fn restore_new(ink: &MarginInk) -> MarginInk {
-    if !matches!(ink.face, Face::New) || !ink.new_note.body.trim().is_empty() {
+    if !matches!(ink.face, Face::New) {
+        return ink.clone();
+    }
+    if !ink.new_note.body.trim().is_empty() {
+        let waiting = ink
+            .parked
+            .as_ref()
+            .is_some_and(|parked| !parked.body.trim().is_empty());
+        if waiting && ink.new_note.notice != NOTICE_HELD {
+            let mut next = ink.clone();
+            next.new_note.notice = NOTICE_HELD.to_string();
+            return next;
+        }
         return ink.clone();
     }
     let Some(parked) = ink.parked.clone() else {
@@ -1426,7 +1438,6 @@ pub fn retarget(ink: &MarginInk, book: &str, spine: &str, page: u32) -> MarginIn
             end_composition(&mut next.drafts, &key);
         }
         next.face = Face::New;
-        clear_new_body(&mut next.new_note);
     }
     if had_place && ink.place_book != book {
         next.new_note.passage = None;
@@ -1555,7 +1566,6 @@ pub fn submit_card(
             let mut next = ink.clone();
             next.drafts.retain(|draft| &draft.key != key);
             next.face = Face::New;
-            clear_new_body(&mut next.new_note);
             (next, CardWrite::Saved)
         }
         Err(_) => {
@@ -3265,18 +3275,124 @@ mod tests {
         assert_eq!(other.draft(&key).unwrap().key.book, passage.book);
         let mut second = cancelled.clone();
         second.new_note.body = "第二条".into();
-        let refused = begin_card(&second, key.clone(), "种子");
-        assert!(matches!(refused.face, Face::New));
-        assert_eq!(refused.new_note.body, "第二条");
-        assert_eq!(refused.parked.as_ref().unwrap().body, "未发送");
-        let kept = restore_new(&refused);
-        assert_eq!(kept.new_note.body, "第二条");
-        assert_eq!(kept.parked.as_ref().unwrap().body, "未发送");
-        let mut cleared = kept.clone();
-        cleared.new_note.body.clear();
-        let opened = begin_card(&cleared, key, "种子");
-        assert!(matches!(opened.face, Face::Card(_)));
+        let opened = begin_card(&second, key.clone(), "种子");
+        assert!(matches!(opened.face, Face::Card(_)), "新建已收起");
+        assert_eq!(opened.new_note.body, "第二条");
         assert_eq!(opened.parked.as_ref().unwrap().body, "未发送");
+        let back = cancel_card(&opened, &key);
+        assert!(matches!(back.face, Face::New));
+        assert_eq!(back.new_note.body, "第二条");
+        let told = restore_new(&back);
+        assert_eq!(told.notice_line(), NOTICE_HELD);
+        assert_eq!(told.new_note.body, "第二条");
+        assert_eq!(told.parked.as_ref().unwrap().body, "未发送");
+        assert_eq!(told.focus_new, back.focus_new);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_second_draft_keeps_the_field_and_the_card_still_opens() {
+        let dir = std::env::temp_dir().join(format!("margin-held-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("annotations.sqlite");
+        let passage = passage_from(sample_selection()).unwrap();
+        let id = Notes::open(&path)
+            .unwrap()
+            .insert(&NewNote {
+                book: passage.book.clone(),
+                page: passage.page,
+                spine: passage.spine.clone(),
+                start: passage.start,
+                end: passage.end,
+                passage: passage.text.clone(),
+                body: "旧".into(),
+                author: LOCAL_AUTHOR.into(),
+                quads: passage.quads.clone(),
+                text_right: passage.text_right,
+            })
+            .unwrap();
+        let mut ink = ink_place(&passage.book, passage.page);
+        ink.new_note = field_of(passage.clone(), "未发送");
+        let key = CardKey {
+            book: passage.book.clone(),
+            note_id: id,
+            kind: CardKind::Edit,
+        };
+        let stashed = begin_card(&ink, key.clone(), "卡内");
+        let waiting = cancel_card(&stashed, &key);
+        assert!(waiting.new_note.body.trim().is_empty());
+        let mut second = waiting;
+        second.new_note.body = "第二条".into();
+        let opened = begin_card(&second, key.clone(), "卡内");
+        assert!(matches!(opened.face, Face::Card(_)), "新建已收起");
+        assert_eq!(opened.new_note.body, "第二条");
+        assert_eq!(opened.parked.as_ref().unwrap().body, "未发送");
+        let field = cancel_card(&opened, &key);
+        assert!(matches!(field.face, Face::New));
+        assert_eq!(field.new_note.body, "第二条");
+        let told = restore_new(&field);
+        assert_eq!(told.notice_line(), NOTICE_HELD);
+        assert_eq!(told.new_note.body, "第二条");
+        assert_eq!(told.parked.as_ref().unwrap().body, "未发送");
+        assert_eq!(told.focus_new, field.focus_new);
+        let live = LiveBook {
+            book: passage.book.clone(),
+            gen: passage.gen,
+        };
+        let mut visible = shown(&live, &passage);
+        visible.page = passage.page + 1;
+        let stale = submit_new(&told, "第二条", &visible, &path);
+        assert_eq!(stale.notice_line(), NOTICE_STALE);
+        assert_eq!(stale.new_note.body, "第二条");
+        assert_eq!(stale.parked.as_ref().unwrap().body, "未发送");
+        assert_eq!(
+            Notes::open(&path)
+                .unwrap()
+                .list(&passage.book, passage.page, "")
+                .unwrap()
+                .len(),
+            1
+        );
+        let still = begin_card(&stale, key.clone(), "卡内");
+        assert!(matches!(still.face, Face::Card(_)), "新建已收起");
+        let bare_face = cancel_card(&still, &key);
+        let mut bare = bare_face;
+        bare.new_note.passage = None;
+        let missing = submit_new(&bare, "第二条", &shown(&live, &passage), &path);
+        assert_eq!(missing.notice_line(), NOTICE_SELECT);
+        assert_eq!(missing.new_note.body, "第二条");
+        assert_eq!(missing.parked.as_ref().unwrap().body, "未发送");
+        let reachable = begin_card(&missing, key.clone(), "卡内");
+        assert!(matches!(reachable.face, Face::Card(_)), "新建已收起");
+        let typed = type_card(&reachable, &key, "改过");
+        let bad = dir.join("not-a-database");
+        std::fs::write(&bad, b"nope").unwrap();
+        let (failed, write) = submit_card(&typed, &key, "改过", &bad);
+        assert_eq!(write, CardWrite::Failed);
+        assert!(matches!(failed.face, Face::Card(_)));
+        assert_eq!(failed.notice_line(), NOTICE_KEPT);
+        assert_eq!(failed.draft(&key).unwrap().body, "改过");
+        assert_eq!(failed.new_note.body, "第二条");
+        assert_eq!(failed.parked.as_ref().unwrap().body, "未发送");
+        assert_eq!(
+            Notes::open(&path)
+                .unwrap()
+                .list(&passage.book, passage.page, "")
+                .unwrap()[0]
+                .body,
+            "旧"
+        );
+        let other = retarget(&failed, "other.epub", "", 1);
+        assert!(matches!(other.face, Face::New));
+        assert!(other.new_note.passage.is_none());
+        assert_eq!(other.draft(&key).unwrap().body, "改过");
+        assert_eq!(other.draft(&key).unwrap().key.book, passage.book);
+        assert_eq!(other.new_note.body, "第二条");
+        assert_eq!(other.parked.as_ref().unwrap().body, "未发送");
+        let again = begin_card(&other, key.clone(), "不该覆盖");
+        assert!(matches!(again.face, Face::Card(_)));
+        assert_eq!(again.draft(&key).unwrap().body, "改过");
         let _ = std::fs::remove_dir_all(dir);
     }
 
