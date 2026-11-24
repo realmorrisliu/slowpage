@@ -2180,6 +2180,37 @@ fn panel_command(current: Form, floating: bool) -> Form {
     }
 }
 
+thread_local! {
+    static FIND_STEP: RefCell<
+        Option<(
+            Signal<spike_library::column::Column>,
+            Signal<spike_library::margin::LivePage>,
+            ElementRef,
+        )>,
+    > = const { RefCell::new(None) };
+}
+
+/// Shift+Return is a newline in a note. The binding exists only while the
+/// find column is mounted and the find field is not composing, so a closed
+/// find does not consume it and an open composition still reaches the field.
+#[component]
+fn FindShiftReturn() -> impl IntoElement {
+    if let Some((column, live, stage)) = FIND_STEP.with(|slot| slot.borrow().clone()) {
+        on_key_with(
+            "shift+return",
+            KeyOptions {
+                when: nsh_core::keymap::When::Always,
+                pass_through: false,
+                ..KeyOptions::default()
+            },
+            move |_| {
+                press_find_step(&column, &live, &stage, false);
+            },
+        );
+    }
+    view().absolute().w(px(0.0)).h(px(0.0))
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2658,11 +2689,15 @@ fn mark_list(
                         return;
                     };
                     let place = reading_place(&live.get());
+                    let label = spike_library::column::bookmark_label(
+                        &place,
+                        &crate::web::reading_excerpt(),
+                    );
                     let Ok(next) = spike_library::column::toggle_mark(
                         &column.get(),
                         &marks,
                         &place,
-                        "",
+                        &label,
                         now_ms(),
                     ) else {
                         return;
@@ -2962,7 +2997,20 @@ fn find_list(
                 ),
         );
     }
-    list.into_element()
+    if current.find.composing {
+        list.into_element()
+    } else {
+        FIND_STEP.with(|slot| {
+            slot.replace(Some((column, live, stage)));
+        });
+        view()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(find_shift_return())
+            .child(list)
+            .into_element()
+    }
 }
 
 pub(crate) struct MarginView {

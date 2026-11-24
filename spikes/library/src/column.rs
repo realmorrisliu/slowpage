@@ -127,6 +127,9 @@ pub struct Column {
     pub mode: Mode,
     pub mode_before: Mode,
     pub book: String,
+    /// Spine hrefs in document order. Empty for a PDF, whose page number is
+    /// already the document unit.
+    pub order: Vec<String>,
     pub marks: Vec<Bookmark>,
     pub undo: Option<Bookmark>,
     pub undo_until: u64,
@@ -139,6 +142,7 @@ impl Default for Column {
             mode: Mode::Notes,
             mode_before: Mode::Notes,
             book: String::new(),
+            order: Vec::new(),
             marks: Vec::new(),
             undo: None,
             undo_until: 0,
@@ -212,22 +216,10 @@ impl Marks {
         href: &str,
         offset: u32,
     ) -> Result<Option<Bookmark>, String> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, book, page, href, offset, label
-                 FROM bookmarks
-                 WHERE book = ?1 AND page = ?2 AND href = ?3 AND offset = ?4
-                 LIMIT 1",
-            )
-            .map_err(|err| err.to_string())?;
-        let mut rows = stmt
-            .query_map(params![book, page, href, offset], read_mark)
-            .map_err(|err| err.to_string())?;
-        match rows.next() {
-            Some(row) => row.map(Some).map_err(|err| err.to_string()),
-            None => Ok(None),
-        }
+        let rows = self.list(book)?;
+        Ok(rows
+            .into_iter()
+            .find(|mark| same_place(mark, page, href, offset)))
     }
 
     pub fn insert(
@@ -239,7 +231,14 @@ impl Marks {
         label: &str,
     ) -> Result<Bookmark, String> {
         let label = if label.is_empty() {
-            format!("第{page}页")
+            bookmark_label(
+                &Place {
+                    href: href.to_string(),
+                    page,
+                    offset,
+                },
+                "",
+            )
         } else {
             label.to_string()
         };
@@ -592,27 +591,75 @@ pub fn step(column: &Column, forward: bool, here: &Place) -> (Column, Option<Hit
     let mut next = column.clone();
     let len = next.find.hits.len();
     let index = match next.find.index {
-        None => first_from(&next.find.hits, here),
         Some(current) if forward => (current + 1) % len,
         Some(0) => len - 1,
         Some(current) => current - 1,
+        None if forward => first_from(&next.order, &next.find.hits, here),
+        None => last_before(&next.order, &next.find.hits, here),
     };
     next.find.index = Some(index);
     let hit = next.find.hits[index].clone();
-    if hit_place(&hit) != *here {
+    if !same_anchor(&hit, here) {
         next.find.navigated = true;
     }
     (next, Some(hit))
 }
 
-fn first_from(hits: &[Hit], here: &Place) -> usize {
+/// Spine order, then the character offset. A PDF has an empty href, so its
+/// page number is the unit. An EPUB column page is not a spine index.
+fn document_key(order: &[String], href: &str, page: u32, offset: u32) -> (u32, u32) {
+    if href.is_empty() {
+        return (page, offset);
+    }
+    let want = spike_epub::normalize_href(href);
+    let unit = order
+        .iter()
+        .position(|item| spike_epub::normalize_href(item) == want)
+        .map(|index| index as u32 + 1)
+        .unwrap_or(u32::MAX);
+    (unit, offset)
+}
+
+fn hit_key(hit: &Hit) -> (u32, u32) {
+    (hit.page, hit.start)
+}
+
+fn first_from(order: &[String], hits: &[Hit], here: &Place) -> usize {
+    let here_key = document_key(order, &here.href, here.page, here.offset);
     hits.iter()
-        .position(|hit| {
-            hit.page > here.page
-                || hit.page == here.page && hit.href == here.href && hit.start >= here.offset
-                || hit.page == here.page && hit.href != here.href
-        })
+        .position(|hit| hit_key(hit) >= here_key)
         .unwrap_or(0)
+}
+
+fn last_before(order: &[String], hits: &[Hit], here: &Place) -> usize {
+    let here_key = document_key(order, &here.href, here.page, here.offset);
+    hits.iter()
+        .rposition(|hit| hit_key(hit) < here_key)
+        .unwrap_or(hits.len().saturating_sub(1))
+}
+
+/// The scan's first jump. While earlier units are the only hits, this stays
+/// empty so a later chapter is not pulled back to chapter 1. A finished scan
+/// wraps.
+pub fn pending_hit(order: &[String], hits: &[Hit], here: &Place, finished: bool) -> Option<usize> {
+    if hits.is_empty() {
+        return None;
+    }
+    let here_key = document_key(order, &here.href, here.page, here.offset);
+    if hits.iter().any(|hit| hit_key(hit) >= here_key) || finished {
+        Some(first_from(order, hits, here))
+    } else {
+        None
+    }
+}
+
+fn same_anchor(hit: &Hit, here: &Place) -> bool {
+    if here.href.is_empty() {
+        hit.href.is_empty() && hit.page == here.page && hit.start == here.offset
+    } else {
+        spike_epub::normalize_href(&hit.href) == spike_epub::normalize_href(&here.href)
+            && hit.start == here.offset
+    }
 }
 
 pub fn hit_place(hit: &Hit) -> Place {
@@ -666,7 +713,7 @@ pub fn accept_unit(column: &Column, report: &UnitReport, here: &Place) -> (Colum
             next.find.pending = false;
             next.find.index = Some(start);
             let hit = next.find.hits[start].clone();
-            if hit_place(&hit) != *here {
+            if !same_anchor(&hit, here) {
                 next.find.navigated = true;
             }
             hit
@@ -716,11 +763,11 @@ pub fn replace_scan(column: &Column, scan: &Scan, here: &Place) -> (Column, Opti
         Phase::Done
     };
     let jump = if next.find.pending && was_empty && !next.find.hits.is_empty() {
-        let index = first_from(&next.find.hits, here);
+        let index = first_from(&next.order, &next.find.hits, here);
         next.find.pending = false;
         next.find.index = Some(index);
         let hit = next.find.hits[index].clone();
-        if hit_place(&hit) != *here {
+        if !same_anchor(&hit, here) {
             next.find.navigated = true;
         }
         Some(hit)
@@ -737,7 +784,7 @@ pub fn choose(column: &Column, index: usize, here: &Place) -> (Column, Option<Hi
     let mut next = column.clone();
     next.find.index = Some(index);
     let hit = next.find.hits[index].clone();
-    if hit_place(&hit) != *here {
+    if !same_anchor(&hit, here) {
         next.find.navigated = true;
     }
     (next, Some(hit))
@@ -851,7 +898,32 @@ pub fn remember_origin(existing: Option<Place>, here: &Place, dest: &Place) -> O
 }
 
 pub fn same_place(mark: &Bookmark, page: u32, href: &str, offset: u32) -> bool {
-    mark.page == page && mark.href == href && mark.offset == offset
+    if href.is_empty() && mark.href.is_empty() {
+        mark.page == page
+    } else {
+        spike_epub::normalize_href(&mark.href) == spike_epub::normalize_href(href)
+            && mark.offset == offset
+    }
+}
+
+/// The row the add button stores. A nearby passage is the label. Without
+/// one, a PDF names its page and an EPUB names the chapter file and offset.
+pub fn bookmark_label(place: &Place, nearby: &str) -> String {
+    let flat = nearby.split_whitespace().collect::<Vec<_>>().join(" ");
+    let excerpt: String = flat.chars().take(32).collect();
+    if !excerpt.is_empty() {
+        return excerpt;
+    }
+    if place.href.is_empty() {
+        return format!("第{}页", place.page.max(1));
+    }
+    let name = place.href.split('#').next().unwrap_or(place.href.as_str());
+    let name = name.rsplit(['/', '\\']).next().unwrap_or(name).trim();
+    if name.is_empty() {
+        format!("第{}字", place.offset)
+    } else {
+        format!("{name} · 第{}字", place.offset)
+    }
 }
 
 #[cfg(test)]
@@ -1201,5 +1273,225 @@ mod tests {
         let (returned, jump) = find_return(&compose_find(&column, true), &start);
         assert!(jump.is_none());
         assert!(!returned.find.navigated);
+    }
+
+    fn spine() -> Vec<String> {
+        (1..=5).map(|n| format!("c{n}.xhtml")).collect()
+    }
+
+    fn epub_hits() -> Vec<Hit> {
+        let mut hits = hits_in("信在第一章", "信", 1, "c1.xhtml", IndexKind::Utf16);
+        hits.extend(hits_in(
+            "第五章信甲信乙",
+            "信",
+            5,
+            "c5.xhtml",
+            IndexKind::Utf16,
+        ));
+        hits
+    }
+
+    #[test]
+    fn epub_next_and_previous_follow_the_spine() {
+        let hits = epub_hits();
+        assert_eq!(hits[0].page, 1);
+        assert_eq!(hits[1].page, 5);
+        let column = Column {
+            book: "a.epub".to_string(),
+            mode: Mode::Find,
+            order: spine(),
+            find: Find {
+                query: "信".to_string(),
+                draft: "信".to_string(),
+                hits: hits.clone(),
+                phase: Phase::Done,
+                seen: 5,
+                total: 5,
+                text_units: 2,
+                ..Find::default()
+            },
+            ..Column::default()
+        };
+        let chapter5 = Place {
+            href: "c5.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        let (forward, hit) = step(&column, true, &chapter5);
+        let hit = hit.expect("next");
+        assert_eq!(hit.href, "c5.xhtml");
+        assert_eq!(hit.start, hits[1].start);
+        assert_ne!(hit.href, "c1.xhtml");
+        let covered = Place {
+            href: "c5.xhtml".to_string(),
+            page: 1,
+            offset: hits[1].start,
+        };
+        let (again, hit) = find_return(&column, &covered);
+        assert_eq!(hit.unwrap().start, hits[1].start);
+        assert!(!again.find.navigated);
+        let adjacent = Place {
+            href: "c5.xhtml".to_string(),
+            page: 1,
+            offset: hits[1].start + 1,
+        };
+        let (_, hit) = step(&column, true, &adjacent);
+        assert_eq!(hit.unwrap().start, hits[2].start);
+        let (_, back) = step(&forward, false, &chapter5);
+        assert_eq!(back.unwrap().href, "c1.xhtml");
+        let (wrapped, _) = step(&forward, true, &chapter5);
+        let (wrapped, hit) = step(&wrapped, true, &chapter5);
+        assert_eq!(hit.unwrap().href, "c1.xhtml");
+        assert_eq!(wrapped.find.index, Some(0));
+        let (from_start, hit) = step(&wrapped, false, &chapter5);
+        assert_eq!(hit.unwrap().start, hits[2].start);
+        assert_eq!(from_start.find.index, Some(2));
+        assert!(pending_hit(&spine(), &hits[..1], &chapter5, false).is_none());
+        assert_eq!(pending_hit(&spine(), &hits, &chapter5, false), Some(1));
+        assert_eq!(pending_hit(&spine(), &hits[..1], &chapter5, true), Some(0));
+        let pdf_here = Place {
+            href: String::new(),
+            page: 3,
+            offset: 0,
+        };
+        let pdf_hits = vec![
+            hits_in("信", "信", 1, "", IndexKind::Chars)[0].clone(),
+            hits_in("信", "信", 3, "", IndexKind::Chars)[0].clone(),
+        ];
+        let pdf = Column {
+            book: "a.pdf".to_string(),
+            mode: Mode::Find,
+            find: Find {
+                query: "信".to_string(),
+                draft: "信".to_string(),
+                hits: pdf_hits,
+                phase: Phase::Done,
+                ..Find::default()
+            },
+            ..Column::default()
+        };
+        let (_, hit) = step(&pdf, true, &pdf_here);
+        assert_eq!(hit.unwrap().page, 3);
+    }
+
+    #[test]
+    fn the_add_path_stores_an_excerpt_or_a_place() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let marks = Marks::open(file.path()).unwrap();
+        let place = Place {
+            href: "c5.xhtml".to_string(),
+            page: 1,
+            offset: 12,
+        };
+        let column = Column {
+            book: "a.epub".to_string(),
+            ..Column::default()
+        };
+        let label = bookmark_label(&place, "我沿着石埠往下走，看见对岸的渔船");
+        let column = toggle_mark(&column, &marks, &place, &label, 0).unwrap();
+        assert_eq!(column.marks.len(), 1);
+        assert!(column.marks[0].label.contains("石埠"));
+        let reopened = Marks::open(file.path()).unwrap();
+        let rows = reopened.list("a.epub").unwrap();
+        assert_eq!(rows[0].label, column.marks[0].label);
+        let bare = Place {
+            href: String::new(),
+            page: 4,
+            offset: 0,
+        };
+        let pdf = toggle_mark(
+            &Column {
+                book: "a.pdf".to_string(),
+                ..Column::default()
+            },
+            &marks,
+            &bare,
+            "",
+            0,
+        )
+        .unwrap();
+        assert_eq!(pdf.marks[0].label, "第4页");
+        let fallback = bookmark_label(&place, "   ");
+        assert!(fallback.contains("c5.xhtml"));
+        assert!(fallback.contains('1') || fallback.contains('2'));
+    }
+
+    #[test]
+    fn a_reflow_keeps_the_epub_anchor_and_pdf_pages_stay_distinct() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let marks = Marks::open(file.path()).unwrap();
+        let saved = Place {
+            href: "chapters/c5.xhtml".to_string(),
+            page: 2,
+            offset: 18,
+        };
+        let column = toggle_mark(
+            &Column {
+                book: "a.epub".to_string(),
+                ..Column::default()
+            },
+            &marks,
+            &saved,
+            &bookmark_label(&saved, "石埠"),
+            0,
+        )
+        .unwrap();
+        let reflow = Place {
+            href: "/chapters/c5.xhtml".to_string(),
+            page: 9,
+            offset: 18,
+        };
+        assert!(same_place(
+            &column.marks[0],
+            reflow.page,
+            &reflow.href,
+            reflow.offset
+        ));
+        let cancelled = toggle_mark(&column, &marks, &reflow, "", 1_000).unwrap();
+        assert!(cancelled.marks.is_empty());
+        assert!(cancelled.undo.is_some());
+        let restored = undo_delete(&cancelled, &marks).unwrap();
+        let again = Marks::open(file.path()).unwrap();
+        let rows = again.list("a.epub").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(same_place(&rows[0], 40, &reflow.href, 18));
+        let other = Place {
+            href: reflow.href.clone(),
+            page: 40,
+            offset: 19,
+        };
+        assert!(!same_place(&rows[0], other.page, &other.href, other.offset));
+        let two = toggle_mark(&restored, &marks, &other, "另一处", 2_000).unwrap();
+        assert_eq!(two.marks.len(), 2);
+        let pdf_marks = Marks::open(file.path()).unwrap();
+        let page2 = Place {
+            href: String::new(),
+            page: 2,
+            offset: 0,
+        };
+        let pdf = toggle_mark(
+            &Column {
+                book: "a.pdf".to_string(),
+                ..Column::default()
+            },
+            &pdf_marks,
+            &page2,
+            "",
+            0,
+        )
+        .unwrap();
+        let page3 = Place {
+            href: String::new(),
+            page: 3,
+            offset: 0,
+        };
+        assert!(!same_place(&pdf.marks[0], page3.page, "", 0));
+        let still = toggle_mark(&pdf, &pdf_marks, &page3, "", 0).unwrap();
+        assert_eq!(still.marks.len(), 2);
+        let gone = toggle_mark(&still, &pdf_marks, &page2, "", 0).unwrap();
+        assert_eq!(gone.marks.len(), 1);
+        assert_eq!(gone.marks[0].page, 3);
+        let reopened = Marks::open(file.path()).unwrap();
+        assert_eq!(reopened.list("a.pdf").unwrap().len(), 1);
     }
 }

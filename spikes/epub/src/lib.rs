@@ -1,9 +1,11 @@
+mod entities;
+
 use std::collections::HashMap;
 
 use rbook::Epub;
+use spike_report::Anchor;
 #[cfg(feature = "blitz")]
 use std::time::Instant;
-use spike_report::Anchor;
 
 pub const PAGE_W: u32 = 720;
 pub const PAGE_H: u32 = 960;
@@ -186,7 +188,10 @@ fn body_inner(xhtml: &str) -> String {
         return xhtml.to_string();
     };
     let from = start + gt + 1;
-    let end = lower[from..].find("</body>").map(|i| from + i).unwrap_or(xhtml.len());
+    let end = lower[from..]
+        .find("</body>")
+        .map(|i| from + i)
+        .unwrap_or(xhtml.len());
     xhtml[from..end].to_string()
 }
 
@@ -221,21 +226,28 @@ fn plain_text(xhtml: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Body text in the order a `TreeWalker` of `SHOW_TEXT` visits, with entities
-/// decoded and `script` / `style` left out. Offsets are UTF-16 code units,
-/// the same count as a JavaScript string `.length`. An em dash keeps the
-/// word joiner the page script inserts in front of it.
+/// Body text in the order the page script's `TreeWalker` of `SHOW_TEXT`
+/// visits, after `keepEmDash`. Offsets are UTF-16 code units, the same
+/// count as a JavaScript string `.length`.
 pub fn dom_text(xhtml: &str) -> String {
-    join_em_dash(&walk_text(&body_inner(xhtml)))
+    walk_text(&body_inner(xhtml))
 }
 
 fn walk_text(html: &str) -> String {
     let mut out = String::new();
     let mut rest = html;
-    let mut skip: Option<String> = None;
+    let mut stack: Vec<Frame> = Vec::new();
     while !rest.is_empty() {
         if rest.starts_with("<!--") {
-            if let Some(end) = rest.find("-->") {
+            rest = match rest.find("-->") {
+                Some(end) => &rest[end + 3..],
+                None => "",
+            };
+            continue;
+        }
+        if rest.starts_with("<![CDATA[") {
+            if let Some(end) = rest.find("]]>") {
+                push_node(&mut out, &rest[9..end], false, in_footer(&stack));
                 rest = &rest[end + 3..];
             } else {
                 break;
@@ -248,23 +260,112 @@ fn walk_text(html: &str) -> String {
             };
             let tag = &rest[1..end];
             let name = tag_name(tag);
-            if tag.starts_with('/') {
-                if skip.as_deref() == Some(name.as_str()) {
-                    skip = None;
-                }
-            } else if skip.is_none() && (name == "script" || name == "style") {
-                skip = Some(name);
-            }
+            let closing = tag.starts_with('/');
+            let empty = tag.ends_with('/') || is_void(&name);
             rest = &rest[end + 1..];
+            if closing {
+                pop_frame(&mut stack, &name);
+                continue;
+            }
+            if name == "template" {
+                rest = skip_element(rest, "template");
+                continue;
+            }
+            let footer = in_footer(&stack) || has_id(tag, "spike-footer");
+            if !empty {
+                stack.push(Frame {
+                    name: name.clone(),
+                    footer,
+                });
+            }
+            if name == "script" || name == "style" {
+                let (inner, next) = take_raw(rest, &name);
+                if !empty {
+                    pop_frame(&mut stack, &name);
+                }
+                push_node(&mut out, inner, false, footer);
+                rest = next;
+            }
             continue;
         }
         let end = rest.find('<').unwrap_or(rest.len());
-        if skip.is_none() {
-            push_decoded(&mut out, &rest[..end]);
-        }
+        push_node(&mut out, &rest[..end], true, in_footer(&stack));
         rest = &rest[end..];
     }
     out
+}
+
+struct Frame {
+    name: String,
+    footer: bool,
+}
+
+fn in_footer(stack: &[Frame]) -> bool {
+    stack.iter().any(|frame| frame.footer)
+}
+
+fn pop_frame(stack: &mut Vec<Frame>, name: &str) {
+    if let Some(at) = stack.iter().rposition(|frame| frame.name == name) {
+        stack.truncate(at);
+    }
+}
+
+fn is_void(name: &str) -> bool {
+    matches!(
+        name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+fn has_id(tag: &str, id: &str) -> bool {
+    let lower = tag.to_ascii_lowercase();
+    let needle = format!("id=\"{id}\"");
+    let needle_sq = format!("id='{id}'");
+    lower.contains(&needle) || lower.contains(&needle_sq)
+}
+
+fn skip_element<'a>(html: &'a str, name: &str) -> &'a str {
+    let (inner, next) = take_raw(html, name);
+    let _ = inner;
+    next
+}
+
+fn take_raw<'a>(html: &'a str, name: &str) -> (&'a str, &'a str) {
+    let lower = html.to_ascii_lowercase();
+    let close = format!("</{name}");
+    let Some(at) = lower.find(&close) else {
+        return ("", "");
+    };
+    let after = &html[at + close.len()..];
+    let Some(end) = after.find('>') else {
+        return (&html[..at], "");
+    };
+    (&html[..at], &after[end + 1..])
+}
+
+fn push_node(out: &mut String, raw: &str, decode: bool, footer: bool) {
+    let text = if decode {
+        decode_text(raw)
+    } else {
+        raw.to_string()
+    };
+    if footer {
+        out.push_str(&text);
+    } else {
+        out.push_str(&join_em_dash_node(&text));
+    }
 }
 
 fn tag_name(tag: &str) -> String {
@@ -276,7 +377,8 @@ fn tag_name(tag: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn push_decoded(out: &mut String, raw: &str) {
+fn decode_text(raw: &str) -> String {
+    let mut out = String::new();
     let mut rest = raw;
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
@@ -284,50 +386,91 @@ fn push_decoded(out: &mut String, raw: &str) {
         let Some(end) = rest.find(';') else {
             out.push('&');
             out.push_str(rest);
-            return;
+            return out;
         };
-        if end > 12 {
+        if end > 32 {
             out.push('&');
             continue;
         }
         let token = &rest[..end];
-        if let Some(ch) = decode_entity(token) {
-            out.push(ch);
+        if let Some(text) = decode_entity(token) {
+            out.push_str(&text);
             rest = &rest[end + 1..];
         } else {
             out.push('&');
         }
     }
     out.push_str(rest);
-}
-
-fn decode_entity(token: &str) -> Option<char> {
-    match token {
-        "amp" => Some('&'),
-        "lt" => Some('<'),
-        "gt" => Some('>'),
-        "quot" => Some('"'),
-        "apos" => Some('\''),
-        "nbsp" => Some('\u{00a0}'),
-        _ if token.starts_with("#x") || token.starts_with("#X") => {
-            char::from_u32(u32::from_str_radix(&token[2..], 16).ok()?)
-        }
-        _ if token.starts_with('#') => char::from_u32(token[1..].parse().ok()?),
-        _ => None,
-    }
-}
-
-fn join_em_dash(text: &str) -> String {
-    let mut out = String::new();
-    let mut prev = None;
-    for ch in text.chars() {
-        if ch == '\u{2014}' && prev != Some('\u{2060}') {
-            out.push('\u{2060}');
-        }
-        out.push(ch);
-        prev = Some(ch);
-    }
     out
+}
+
+fn decode_entity(token: &str) -> Option<String> {
+    if let Some(hex) = token
+        .strip_prefix("#x")
+        .or_else(|| token.strip_prefix("#X"))
+    {
+        return Some(numeric_char(u32::from_str_radix(hex, 16).ok()?).to_string());
+    }
+    if let Some(dec) = token.strip_prefix('#') {
+        return Some(numeric_char(dec.parse().ok()?).to_string());
+    }
+    let index = crate::entities::NAMED
+        .binary_search_by_key(&token, |row| row.0)
+        .ok()?;
+    Some(crate::entities::NAMED[index].1.to_string())
+}
+
+fn numeric_char(value: u32) -> char {
+    let value = match value {
+        0x00 => 0xFFFD,
+        0x80 => 0x20AC,
+        0x82 => 0x201A,
+        0x83 => 0x0192,
+        0x84 => 0x201E,
+        0x85 => 0x2026,
+        0x86 => 0x2020,
+        0x87 => 0x2021,
+        0x88 => 0x02C6,
+        0x89 => 0x2030,
+        0x8A => 0x0160,
+        0x8B => 0x2039,
+        0x8C => 0x0152,
+        0x8E => 0x017D,
+        0x91 => 0x2018,
+        0x92 => 0x2019,
+        0x93 => 0x201C,
+        0x94 => 0x201D,
+        0x95 => 0x2022,
+        0x96 => 0x2013,
+        0x97 => 0x2014,
+        0x98 => 0x02DC,
+        0x99 => 0x2122,
+        0x9A => 0x0161,
+        0x9B => 0x203A,
+        0x9C => 0x0153,
+        0x9E => 0x017E,
+        0x9F => 0x0178,
+        0x0D => 0x000D,
+        code if (0xD800..=0xDFFF).contains(&code) || code > 0x10FFFF => 0xFFFD,
+        code if (0x80..=0x9F).contains(&code) => 0xFFFD,
+        code => code,
+    };
+    char::from_u32(value).unwrap_or('\u{FFFD}')
+}
+
+/// The page script inserts U+2060 only when an em dash is not the first
+/// UTF-16 unit of its own text node and the previous unit is not already
+/// U+2060. A dash at the start of a node stays bare.
+fn join_em_dash_node(text: &str) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let mut out = Vec::with_capacity(units.len());
+    for (index, unit) in units.iter().copied().enumerate() {
+        if unit == 0x2014 && index > 0 && units[index - 1] != 0x2060 {
+            out.push(0x2060);
+        }
+        out.push(unit);
+    }
+    String::from_utf16_lossy(&out)
 }
 
 pub fn flow_html(css: &str, chapter: &str) -> String {
@@ -375,15 +518,15 @@ pub struct BlitzPages {
 
 #[cfg(feature = "blitz")]
 pub fn paginate_blitz(html: &str) -> Result<BlitzPages, String> {
-    use anyrender::{PaintScene as _, render_to_buffer};
+    use anyrender::{render_to_buffer, PaintScene as _};
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use blitz_dom::util::Color;
     use blitz_dom::DocumentConfig;
     use blitz_html::HtmlDocument;
     use blitz_paint::paint_scene;
     use blitz_traits::shell::{ColorScheme, Viewport};
-    use peniko::Fill;
     use peniko::kurbo::Rect;
+    use peniko::Fill;
     let scale = 2.0_f64;
     let width = PAGE_W;
     let height = PAGE_H;
@@ -649,19 +792,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dom_text_matches_text_nodes_and_utf16_length() {
-        let xhtml = "<html><body><p>信🙂边</p><script>skip</script><p>a&amp;b—c</p></body></html>";
+    fn dom_text_matches_the_page_script() {
+        let xhtml = "<html><body><p>信🙂边</p><script>skip</script><style>css</style><!-- hidden — --><template><p>—gone</p></template><p>—开头</p><p>a&amp;b—c</p><p>a&mdash;b</p><p>a&#8212;b</p><p>a&#x2014;b</p><p>&#128512;边</p><p>a&#x97;b</p><div id=\"spike-footer\">a—b</div><p>a</p><p>—b</p></body></html>";
         let text = dom_text(xhtml);
-        assert!(!text.contains("skip"));
-        assert!(text.contains("信🙂边"));
-        assert!(text.contains("a&b"));
-        let dash = text.find('\u{2014}').expect("em dash");
-        let before: Vec<char> = text[..dash].chars().collect();
-        assert_eq!(before.last().copied(), Some('\u{2060}'));
+        let wj = "\u{2060}";
+        let expected =
+            format!("信🙂边skipcss—开头a&b{wj}—ca{wj}—ba{wj}—ba{wj}—b\u{1F600}边a{wj}—ba—ba—b");
+        assert_eq!(text, expected);
+        assert!(!text.contains("hidden"));
+        assert!(!text.contains("gone"));
+        assert!(!text.contains("&mdash;"));
         let at = text.find('边').unwrap();
-        let prefix = &text[..at];
-        assert_eq!(prefix.encode_utf16().count(), 3);
-        assert_eq!("信🙂边".encode_utf16().count(), 4);
+        assert_eq!(text[..at].encode_utf16().count(), 3);
+        let astral = text.find('\u{1F600}').unwrap();
+        let after = astral + "\u{1F600}".len();
+        assert_eq!(
+            text[..after].encode_utf16().count() - text[..astral].encode_utf16().count(),
+            2
+        );
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let query: Vec<u16> = "边".encode_utf16().collect();
+        let mut spans = Vec::new();
+        for index in 0..=units.len().saturating_sub(query.len()) {
+            if units[index..index + query.len()] == query[..] {
+                spans.push((index as u32, (index + query.len()) as u32));
+            }
+        }
+        assert!(spans.contains(&(3, 4)), "{spans:?}");
     }
 
     #[test]
@@ -697,7 +854,10 @@ mod tests {
 
     #[test]
     fn viewport_pair_reads_a_fixed_page() {
-        assert_eq!(viewport_pair("width=1000, height=1000"), Some((1000.0, 1000.0)));
+        assert_eq!(
+            viewport_pair("width=1000, height=1000"),
+            Some((1000.0, 1000.0))
+        );
         assert_eq!(viewport_pair("width=device-width"), None);
     }
 
@@ -705,7 +865,13 @@ mod tests {
     fn anchor_uses_the_chapter_text_not_a_page_number() {
         let plain = "It is a truth universally acknowledged";
         let anchor = anchor_in_chapter("chapter-1.xhtml", plain, "truth universally").unwrap();
-        let Anchor::Epub { start, end, spine_href, .. } = anchor else {
+        let Anchor::Epub {
+            start,
+            end,
+            spine_href,
+            ..
+        } = anchor
+        else {
             panic!("epub");
         };
         assert_eq!(spine_href, "chapter-1.xhtml");
@@ -737,8 +903,14 @@ mod tests {
             );
         }
         let pride = open_book(&pride).unwrap();
-        assert!(pride.chapters[0].href.contains("chapter-1"), "{}", pride.chapters[0].href);
-        assert!(pride.chapters[0].plain.contains("truth universally acknowledged"));
+        assert!(
+            pride.chapters[0].href.contains("chapter-1"),
+            "{}",
+            pride.chapters[0].href
+        );
+        assert!(pride.chapters[0]
+            .plain
+            .contains("truth universally acknowledged"));
         let zhaohua = open_book(&zhaohua).unwrap();
         let href = &zhaohua.chapters[0].href;
         assert!(
@@ -761,7 +933,10 @@ mod tests {
         assert!(out.contains("《讀賣新聞》"), "{out}");
         assert!(out.contains("中國來的"), "{out}");
         assert!(out.contains("互相恐嚇"), "{out}");
-        assert!(out.contains("class=\"spike-dateline\">十月十二日。"), "{out}");
+        assert!(
+            out.contains("class=\"spike-dateline\">十月十二日。"),
+            "{out}"
+        );
         assert!(out.contains("<p>大家一怔。"), "{out}");
         assert!(!out.contains("讀賣 新"));
         let latin = normalize_chapter("<html><body><p>Mr Bennet</p></body></html>");

@@ -1469,6 +1469,23 @@ pub fn reader_place() -> crate::visit::ReadingPlace {
     SESSION.with(|session| session.borrow().reader.place.clone())
 }
 
+thread_local! {
+    static READING_EXCERPT: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+pub fn set_reading_excerpt(text: &str) {
+    READING_EXCERPT.with(|excerpt| {
+        let mut slot = excerpt.borrow_mut();
+        if *slot != text {
+            *slot = text.to_string();
+        }
+    });
+}
+
+pub fn reading_excerpt() -> String {
+    READING_EXCERPT.with(|excerpt| excerpt.borrow().clone())
+}
+
 pub fn reader_back() -> Option<crate::visit::ReadingPlace> {
     SESSION.with(|session| session.borrow().reader.back.clone())
 }

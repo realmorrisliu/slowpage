@@ -444,6 +444,8 @@ struct State {
     find: Option<FindJob>,
     find_paint: Vec<FindPaint>,
     find_current: Option<(u32, u32, u32)>,
+    excerpt_key: String,
+    excerpt_text: String,
 }
 
 #[derive(Clone)]
@@ -1029,23 +1031,10 @@ impl State {
                         });
                     }
                 }
-                let step = self
-                    .find
-                    .as_ref()
-                    .is_some_and(|job| job.step && job.hits.is_empty() && !hits.is_empty());
-                let landed = hits.first().cloned();
                 if let Some(job) = self.find.as_mut() {
                     job.text_units = job.text_units.saturating_add(1);
                     job.hits.extend(hits);
                     job.next += 1;
-                    if step {
-                        job.step = false;
-                    }
-                }
-                if step {
-                    if let Some(hit) = landed {
-                        self.jump_place(&hit.href, hit.page, hit.start, hit.end);
-                    }
                 }
                 if let Some(pdf) = self.pdf.as_mut() {
                     pdf.text.insert(index, text);
@@ -1064,6 +1053,7 @@ impl State {
                 }
             }
         }
+        self.finish_find_step();
         true
     }
 
@@ -1123,22 +1113,27 @@ impl State {
                 })
             })
             .unwrap_or(href);
+        let unit = self
+            .web
+            .as_ref()
+            .and_then(|web| {
+                web.spine().iter().position(|item| {
+                    spike_epub::normalize_href(item) == spike_epub::normalize_href(&web_href)
+                })
+            })
+            .map(|at| at as u32 + 1)
+            .unwrap_or(index as u32 + 1);
         let hits = if text.trim().is_empty() {
             Vec::new()
         } else {
             spike_library::column::hits_in(
                 &text,
                 &query,
-                index as u32 + 1,
+                unit,
                 &web_href,
                 spike_library::column::IndexKind::Utf16,
             )
         };
-        let step = self
-            .find
-            .as_ref()
-            .is_some_and(|job| job.step && job.hits.is_empty() && !hits.is_empty());
-        let landed = hits.first().cloned();
         if let Some(job) = self.find.as_mut() {
             if text.trim().is_empty() {
                 job.empty_units = job.empty_units.saturating_add(1);
@@ -1147,17 +1142,35 @@ impl State {
                 job.hits.extend(hits);
             }
             job.next += 1;
-            if step {
-                job.step = false;
-            }
         }
-        if step {
-            if let Some(hit) = landed {
-                self.jump_place(&hit.href, hit.page, hit.start, hit.end);
-            }
-        }
+        self.finish_find_step();
         self.paint_epub_hits();
         true
+    }
+
+    fn finish_find_step(&mut self) {
+        let Some(hit) = self.take_pending_hit() else {
+            return;
+        };
+        self.jump_place(&hit.href, hit.page, hit.start, hit.end);
+    }
+
+    fn take_pending_hit(&mut self) -> Option<spike_library::column::Hit> {
+        let order = self.web.as_ref().map(|web| web.spine()).unwrap_or_default();
+        let here = self.visit_place();
+        let place = spike_library::column::Place {
+            href: here.href,
+            page: here.page,
+            offset: here.offset,
+        };
+        let job = self.find.as_mut()?;
+        if !job.step || job.hits.is_empty() {
+            return None;
+        }
+        let finished = job.total > 0 && job.next >= job.total;
+        let index = spike_library::column::pending_hit(&order, &job.hits, &place, finished)?;
+        job.step = false;
+        job.hits.get(index).cloned()
     }
 
     fn paint_epub_hits(&self) {
@@ -1219,6 +1232,55 @@ impl State {
         }
         self.paint_epub_hits();
         self.publish();
+    }
+
+    fn reading_excerpt(&mut self) -> String {
+        let place = self.visit_place();
+        if place.href.is_empty() {
+            let index = place.page.saturating_sub(1) as usize;
+            return excerpt_window(&self.pdf_plain(index), 0);
+        }
+        let key = format!("{}|{}", self.book_path, place.href);
+        if self.excerpt_key != key {
+            let text = self.chapter_text(&place.href);
+            self.excerpt_text = text;
+            self.excerpt_key = key;
+        }
+        excerpt_window(&self.excerpt_text, place.offset)
+    }
+
+    fn pdf_plain(&mut self, index: usize) -> String {
+        if let Some(pdf) = self.pdf.as_ref() {
+            if let Some(text) = pdf.text.get(&index) {
+                return text.plain.clone();
+            }
+        }
+        let Some(pdf) = self.pdf.as_mut() else {
+            return String::new();
+        };
+        let text = pdf.doc.text(index);
+        let plain = text.plain.clone();
+        pdf.text.insert(index, text);
+        plain
+    }
+
+    fn chapter_text(&self, href: &str) -> String {
+        let Ok(packed) = spike_epub::pack(&self.book_path) else {
+            return String::new();
+        };
+        let want = spike_epub::normalize_href(href);
+        let Some(key) = packed
+            .spine
+            .iter()
+            .find(|item| spike_epub::normalize_href(item) == want)
+        else {
+            return String::new();
+        };
+        let Some(bytes) = packed.files.get(key) else {
+            return String::new();
+        };
+        let raw = String::from_utf8_lossy(bytes);
+        spike_epub::dom_text(&spike_epub::normalize_chapter(&raw))
     }
 
     fn visit_place(&self) -> crate::visit::ReadingPlace {
@@ -2554,6 +2616,8 @@ impl State {
                 web.set_footer(&left, &right);
             }
         }
+        let margin_order = self.web.as_ref().map(|web| web.spine()).unwrap_or_default();
+        let margin_excerpt = self.reading_excerpt();
         let mut status = json!({
             "title": title,
             "variant": variant,
@@ -2571,6 +2635,8 @@ impl State {
             "pages": shown_pages,
             "margin_book": margin_book,
             "margin_spine": margin_spine,
+            "margin_order": margin_order,
+            "margin_excerpt": margin_excerpt,
             "margin_page": margin_page,
             "margin_moving": margin_moving,
             "margin_pw": margin_pw,
@@ -2986,6 +3052,17 @@ fn elapsed_ms(at: Option<Instant>) -> u32 {
         .unwrap_or(0)
 }
 
+fn excerpt_window(text: &str, offset: u32) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    if units.is_empty() {
+        return String::new();
+    }
+    let at = (offset as usize).min(units.len() - 1);
+    let from = at.saturating_sub(12);
+    let to = (at + 36).min(units.len());
+    String::from_utf16_lossy(&units[from..to])
+}
+
 fn pages_left(left: usize) -> String {
     if left == 1 {
         "1 page left in this chapter".into()
@@ -3069,6 +3146,8 @@ impl Stage {
             find: None,
             find_paint: Vec::new(),
             find_current: None,
+            excerpt_key: String::new(),
+            excerpt_text: String::new(),
         }));
         let view = mtm.alloc::<StageView>().set_ivars(Ivars {
             state: state.clone(),

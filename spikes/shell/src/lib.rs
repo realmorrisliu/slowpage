@@ -628,14 +628,6 @@ pub fn SpikeApp() -> impl IntoElement {
             form::press_find_step(&column, &live, &stage, false);
         }
     });
-    on_key_with("shift+return", find_keys(), {
-        let column = column.clone();
-        let live = margin_live.clone();
-        let stage = stage.clone();
-        move |_| {
-            form::press_find_step(&column, &live, &stage, false);
-        }
-    });
     on_key_with(IMMERSIVE_KEY, leave_keys, {
         let visit = visit.clone();
         let shell_form = shell_form.clone();
@@ -986,6 +978,20 @@ pub fn SpikeApp() -> impl IntoElement {
                                 if margin_live.get() != next_live {
                                     margin_live.set(next_live.clone());
                                 }
+                                let order = event.data["margin_order"]
+                                    .as_array()
+                                    .map(|items| {
+                                        items
+                                            .iter()
+                                            .filter_map(|item| item.as_str().map(str::to_string))
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default();
+                                let excerpt = event.data["margin_excerpt"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .to_string();
+                                crate::web::set_reading_excerpt(&excerpt);
                                 let mut shelf = column.get();
                                 if shelf.book != next_live.book {
                                     shelf =
@@ -996,6 +1002,9 @@ pub fn SpikeApp() -> impl IntoElement {
                                             shelf = spike_library::column::reload(&shelf, rows);
                                         }
                                     }
+                                }
+                                if shelf.order != order {
+                                    shelf.order = order;
                                 }
                                 let place = form::reading_place(&next_live);
                                 let (shelf, _) =
