@@ -2295,7 +2295,7 @@ pub(crate) fn press_find_step(
     if let Some(hit) = hit.as_ref() {
         send_jump(stage, hit);
     }
-    column.set(next);
+    commit_column(column, next);
 }
 
 pub(crate) fn send_jump(stage: &ElementRef, hit: &spike_library::column::Hit) {
@@ -2308,6 +2308,29 @@ pub(crate) fn send_jump(stage: &ElementRef, hit: &spike_library::column::Hit) {
             "end": hit.end,
         }),
     );
+}
+
+pub(crate) fn send_landing(stage: &ElementRef, hit: &spike_library::column::Hit) {
+    stage.command(
+        "jump",
+        serde_json::json!({
+            "href": hit.href,
+            "page": hit.page,
+            "offset": hit.start,
+            "end": hit.end,
+            "landing": true,
+        }),
+    );
+}
+
+pub(crate) fn commit_column(
+    column: &Signal<spike_library::column::Column>,
+    next: spike_library::column::Column,
+) {
+    let settled = spike_library::column::observe_nav(&column.get(), &next);
+    if settled != column.get() {
+        column.set(settled);
+    }
 }
 
 pub fn apply_find_status(
@@ -2374,6 +2397,11 @@ pub fn apply_find_status(
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32,
         done: find.get("done").and_then(|v| v.as_bool()).unwrap_or(false),
+        nav: find
+            .get("nav")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .max(spike_library::column::nav_epoch()),
     };
     spike_library::column::on_scan_publish(column, &scan, here)
 }
@@ -2811,6 +2839,7 @@ fn mark_list(
                                 "page": mark.page,
                                 "offset": mark.offset,
                                 "end": mark.offset,
+                                "intent": "bookmark",
                             }),
                         );
                     }
@@ -2936,7 +2965,7 @@ fn find_list(
                     if let Some(hit) = hit {
                         send_jump(&stage, &hit);
                     }
-                    column.set(next);
+                    commit_column(&column, next);
                 }
             }),
     );
@@ -2992,7 +3021,7 @@ fn find_list(
                         if let Some(hit) = hit {
                             send_jump(&stage, &hit);
                         }
-                        column.set(next);
+                        commit_column(&column, next);
                     }
                 })
                 .child(
@@ -6344,7 +6373,10 @@ mod tests {
         assert_eq!(stale.notice_line(), spike_library::margin::NOTICE_STALE);
         assert_eq!(stale.new_note.body, "第二条");
         assert_eq!(stale.parked.as_ref().unwrap().body, "未发送");
-        assert_eq!(load_margin(&passage.book, passage.page, "").unwrap().len(), 1);
+        assert_eq!(
+            load_margin(&passage.book, passage.page, "").unwrap().len(),
+            1
+        );
         let still = spike_library::margin::begin_card(&stale, key.clone(), "种子");
         assert!(matches!(still.face, spike_library::margin::Face::Card(_)));
         let bare_face = spike_library::margin::cancel_card(&still, &key);
@@ -6357,7 +6389,10 @@ mod tests {
         let missing = commit_ink(&bare, "第二条", &here);
         assert_eq!(missing.notice_line(), spike_library::margin::NOTICE_SELECT);
         assert_eq!(missing.new_note.body, "第二条");
-        assert_eq!(load_margin(&passage.book, passage.page, "").unwrap().len(), 1);
+        assert_eq!(
+            load_margin(&passage.book, passage.page, "").unwrap().len(),
+            1
+        );
         let reachable = spike_library::margin::begin_card(&missing, key.clone(), "旧批注");
         assert!(
             matches!(reachable.face, spike_library::margin::Face::Card(_)),

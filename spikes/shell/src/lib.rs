@@ -369,6 +369,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let arrival = signal((0_u64, String::new()));
     let arrival_menu = arrival.clone();
     let shell_form = signal(form::launch());
+    let column = signal(spike_library::column::Column::default());
     effect({
         let trim_id = trim_id.clone();
         let bold_on = bold_on.clone();
@@ -378,6 +379,7 @@ pub fn SpikeApp() -> impl IntoElement {
         let arrival_menu = arrival_menu.clone();
         let form_menu = shell_form.clone();
         let visit_menu = visit.clone();
+        let column_menu = column.clone();
         move || {
             let current = trim_id.get();
             let bold = bold_on.get();
@@ -391,6 +393,7 @@ pub fn SpikeApp() -> impl IntoElement {
             let form_pick = form_menu.clone();
             let visit_pick = visit_menu.clone();
             let stage_immersive = stage.clone();
+            let column_bold = column_menu.clone();
             set_application_menu(reading_menu(
                 &current,
                 bold,
@@ -402,7 +405,22 @@ pub fn SpikeApp() -> impl IntoElement {
                 move || {
                     let next = !bold_slot.get();
                     bold_slot.set(next);
-                    stage_bold.command("bold", json!(next));
+                    let cleared = spike_library::column::invalidate_find_text(&column_bold.get());
+                    column_bold.set(cleared.clone());
+                    let query = if cleared.mode == spike_library::column::Mode::Find {
+                        cleared.find.query.clone()
+                    } else {
+                        String::new()
+                    };
+                    stage_bold.command(
+                        "bold",
+                        json!({
+                            "on": next,
+                            "book": cleared.book,
+                            "query": query,
+                            "generation": cleared.find.generation,
+                        }),
+                    );
                 },
                 {
                     let arrival_pick = arrival_menu.clone();
@@ -437,7 +455,6 @@ pub fn SpikeApp() -> impl IntoElement {
     let margin_hold = signal(spike_library::margin::Hold::default());
     let margin_fault = signal(String::new());
     let margin_note = signal(spike_library::margin::MarginInk::default());
-    let column = signal(spike_library::column::Column::default());
     let margin_gen = signal(0_u64);
     let margin_measures = signal(Vec::<spike_library::margin::FreshMeasure>::new());
     let shell_chrome = signal(form::chrome_off());
@@ -999,11 +1016,9 @@ pub fn SpikeApp() -> impl IntoElement {
                                 let (shelf, hit) =
                                     form::apply_find_status(&shelf, &event.data, &place);
                                 if let Some(hit) = hit.as_ref() {
-                                    form::send_jump(&stage, hit);
+                                    form::send_landing(&stage, hit);
                                 }
-                                if shelf != column.get() {
-                                    column.set(shelf);
-                                }
+                                form::commit_column(&column, shelf);
                                 let gen = event.data["book_gen"].as_u64().unwrap_or(0);
                                 if margin_gen.get() != gen {
                                     margin_gen.set(gen);
@@ -1317,7 +1332,7 @@ fn turn_page(
     let delta = visit::page_key_delta(shell, visit.get().surface, forward);
     if delta != 0 {
         column.set(spike_library::column::release_landing(&column.get()));
-        stage.command("page", json!(delta));
+        stage.command("page", json!({"delta": delta, "intent": "key"}));
     }
 }
 
@@ -2034,13 +2049,11 @@ mod launch_tests {
         assert_eq!(kept.draft(&key).unwrap().body, "改过");
         let same = spike_library::margin::retarget(&kept, &passage.book, "", passage.page);
         assert!(same.draft(&key).unwrap().composing);
-        assert!(
-            notes
-                .list(&passage.book, passage.page, &passage.spine)
-                .unwrap()
-                .iter()
-                .any(|note| note.id == id && note.body == "旧批注")
-        );
+        assert!(notes
+            .list(&passage.book, passage.page, &passage.spine)
+            .unwrap()
+            .iter()
+            .any(|note| note.id == id && note.body == "旧批注"));
         let runtime = nsh_core::element::reactive::Runtime::default();
         let _entered = runtime.enter();
         let (owner, continued) = nsh_core::element::reactive::create_root(|| {
@@ -2071,7 +2084,9 @@ mod launch_tests {
             .unwrap()
             .list(&passage.book, passage.page, &passage.spine)
             .unwrap();
-        assert!(stored.iter().any(|note| note.id == id && note.body == "改过"));
+        assert!(stored
+            .iter()
+            .any(|note| note.id == id && note.body == "改过"));
         assert!(stored.iter().any(|note| note.body == "还在"));
         drop(restore);
         let _ = std::fs::remove_dir_all(dir);

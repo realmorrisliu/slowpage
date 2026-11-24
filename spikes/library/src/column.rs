@@ -4,6 +4,7 @@
 //! Bookmarks live in the same SQLite file as notes. A search walks units the
 //! caller feeds one at a time. A keystroke does not scan the book.
 
+use std::cell::Cell;
 use std::path::Path;
 
 use rusqlite::{params, Connection};
@@ -90,6 +91,10 @@ pub struct Find {
     /// The reading place the automatic landing is still owed against.
     /// A scan does not retarget this after the reader moves.
     pub origin: Place,
+    /// Navigation epoch caught when this search began to owe a landing.
+    /// A newer epoch means the reader has started a move, even when the
+    /// place report still shows the origin.
+    pub nav: u64,
     pub navigated: bool,
     pub seat: Option<EditorSeat>,
     pub focus: u64,
@@ -116,6 +121,7 @@ impl Default for Find {
                 page: 0,
                 offset: 0,
             },
+            nav: 0,
             navigated: false,
             seat: None,
             focus: 0,
@@ -556,8 +562,7 @@ pub fn find_return(column: &Column, here: &Place) -> (Column, Option<Hit>) {
         let draft = next.find.draft.clone();
         begin_query(&mut next, &draft);
         if next.find.phase == Phase::Searching {
-            next.find.pending = true;
-            next.find.origin = here.clone();
+            owe_landing(&mut next, here);
         }
         return (next, None);
     }
@@ -569,8 +574,7 @@ pub fn find_return(column: &Column, here: &Place) -> (Column, Option<Hit>) {
             let query = next.find.query.clone();
             begin_query(&mut next, &query);
         }
-        next.find.pending = true;
-        next.find.origin = here.clone();
+        owe_landing(&mut next, here);
         return (next, None);
     }
     step(&next, true, here)
@@ -693,17 +697,137 @@ fn reader_left(origin: &Place, live: &Place) -> bool {
 
 /// A page turn, a bookmark, a contents jump, or an in-book link. The scan
 /// keeps the hits it already has and no longer owes a landing.
+///
+/// Callers that already hold the column use this. A move whose place is
+/// written back later uses [`arm_nav`] instead, and the next snapshot
+/// carries that epoch.
 pub fn release_landing(column: &Column) -> Column {
     let mut next = column.clone();
     next.find.pending = false;
     next
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavIntent {
+    Key,
+    PageEdge,
+    Trackpad,
+    PdfGlide,
+    Toc,
+    Link,
+    Bookmark,
+}
+
+thread_local! {
+    static NAV_EPOCH: Cell<u64> = const { Cell::new(0) };
+    static NAV_LAST: Cell<u8> = const { Cell::new(0) };
+}
+
+fn intent_tag(intent: NavIntent) -> u8 {
+    match intent {
+        NavIntent::Key => 1,
+        NavIntent::PageEdge => 2,
+        NavIntent::Trackpad => 3,
+        NavIntent::PdfGlide => 4,
+        NavIntent::Toc => 5,
+        NavIntent::Link => 6,
+        NavIntent::Bookmark => 7,
+    }
+}
+
+pub fn nav_epoch() -> u64 {
+    NAV_EPOCH.with(|cell| cell.get())
+}
+
+#[cfg(test)]
+fn last_intent_tag() -> u8 {
+    NAV_LAST.with(|cell| cell.get())
+}
+
+/// Record one explicit navigation before its asynchronous move.
+/// The returned epoch is what the next snapshot must carry.
+pub fn arm_nav(intent: NavIntent) -> u64 {
+    NAV_LAST.with(|cell| cell.set(intent_tag(intent)));
+    NAV_EPOCH.with(|cell| {
+        let next = cell.get().saturating_add(1);
+        cell.set(next);
+        next
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageCommand {
+    pub delta: i64,
+    pub intent: Option<NavIntent>,
+}
+
+/// A page command arms only when it will move. Delta 0 is not a gesture.
+/// The page edge is `edge`. Every other moving command is a key.
+pub fn page_command(delta: i64, intent: Option<&str>) -> PageCommand {
+    if delta == 0 {
+        return PageCommand {
+            delta: 0,
+            intent: None,
+        };
+    }
+    let intent = if intent == Some("edge") {
+        NavIntent::PageEdge
+    } else {
+        NavIntent::Key
+    };
+    PageCommand {
+        delta,
+        intent: Some(intent),
+    }
+}
+
+/// A column computed before a nested publish must not move the epoch backward.
+/// The newer epoch already cancelled the owed landing.
+pub fn observe_nav(current: &Column, proposed: &Column) -> Column {
+    if current.find.nav <= proposed.find.nav {
+        return proposed.clone();
+    }
+    let mut next = proposed.clone();
+    next.find.nav = current.find.nav;
+    next.find.pending = false;
+    next
+}
+
+fn owe_landing(column: &mut Column, here: &Place) {
+    column.find.pending = true;
+    column.find.origin = here.clone();
+    let epoch = nav_epoch();
+    if epoch > column.find.nav {
+        column.find.nav = epoch;
+    }
+}
+
+/// Drop every find fact that depends on the character contract.
+/// The query and the find mode stay. The owed landing does not.
+/// A closed find does not start a scan.
+pub fn invalidate_find_text(column: &Column) -> Column {
+    let mut next = column.clone();
+    let query = next.find.query.clone();
+    let open = next.mode == Mode::Find && !query.trim().is_empty();
+    begin_query(&mut next, &query);
+    next.find.pending = false;
+    if !open {
+        next.find.phase = Phase::Idle;
+    }
+    next
+}
+
 /// The shell applies one published snapshot here. The column owns the owed
-/// landing. Leaving the origin cancels it before the hits are replaced, so
-/// the snapshot cannot jump to a later chapter the reader already left.
+/// landing. A snapshot epoch newer than the search cancels it before the
+/// place is consulted, so a same-chapter page or a gesture still at the
+/// origin cannot land. Leaving the origin remains the backstop for a move
+/// that changed the href, the offset, or the PDF page.
 pub fn on_scan_publish(column: &Column, scan: &Scan, live: &Place) -> (Column, Option<Hit>) {
     let mut next = column.clone();
+    if scan.nav > next.find.nav {
+        next.find.pending = false;
+        next.find.nav = scan.nav;
+    }
     if next.find.pending && reader_left(&next.find.origin, live) {
         next.find.pending = false;
     }
@@ -727,6 +851,8 @@ pub struct Scan {
     pub empty_units: u32,
     pub failed_units: u32,
     pub done: bool,
+    /// Navigation epoch at the moment the stage published this snapshot.
+    pub nav: u64,
 }
 
 /// The stage sends the hits it has so far. An older generation or another
@@ -983,6 +1109,7 @@ mod tests {
             empty_units: 0,
             failed_units: 0,
             done,
+            nav: 0,
         }
     }
 
@@ -1066,6 +1193,7 @@ mod tests {
             empty_units: 0,
             failed_units: 0,
             done: false,
+            nav: 0,
         };
         let (column, jump) = on_scan_publish(&column, &report, &here(1));
         assert!(jump.is_none());
@@ -1124,6 +1252,7 @@ mod tests {
             empty_units: 0,
             failed_units: 0,
             done: true,
+            nav: 0,
         };
         let late = Scan {
             query: "信".to_string(),
@@ -1162,6 +1291,7 @@ mod tests {
             empty_units: 1,
             failed_units: 0,
             done: false,
+            nav: 0,
         };
         let (column, _) = on_scan_publish(&column, &base, &pdf_page(1));
         assert_eq!(find_line(&column).text, "搜索中 · 已搜 1/2");
@@ -1208,6 +1338,7 @@ mod tests {
             empty_units: 0,
             failed_units: 0,
             done: true,
+            nav: 0,
         };
         let (none, _) = on_scan_publish(&none, &scanned, &pdf_page(1));
         assert_eq!(find_line(&none).text, "无结果 · 已搜全书可用文本");
@@ -1465,6 +1596,7 @@ mod tests {
             empty_units: 0,
             failed_units: 0,
             done: false,
+            nav: 0,
         };
         let (column, hit) = on_scan_publish(&column, &partial, &here);
         assert!(hit.is_none());
@@ -1498,6 +1630,7 @@ mod tests {
             empty_units: 2,
             failed_units: 0,
             done: false,
+            nav: 0,
         };
         let (column, hit) = on_scan_publish(&column, &crossing, &here);
         let hit = hit.expect("chapter 5 is on the page");
@@ -1698,6 +1831,313 @@ mod tests {
         let (paged, jump) = on_scan_publish(&paged, &pdf_done, &pdf_page(6));
         assert!(jump.is_none());
         assert!(paged.find.index.is_none());
+    }
+
+    #[test]
+    fn a_navigation_epoch_cancels_before_the_place_moves() {
+        let chapter5 = Place {
+            href: "c5.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        let page_only = Place {
+            href: "c5.xhtml".to_string(),
+            page: 2,
+            offset: 0,
+        };
+        let opened = type_find(
+            &Column {
+                book: "a.epub".to_string(),
+                mode: Mode::Find,
+                order: spine(),
+                ..Column::default()
+            },
+            "信",
+        );
+        let (waiting, jump) = find_return(&opened, &chapter5);
+        assert!(jump.is_none());
+        assert!(waiting.find.pending);
+        let hit = Hit {
+            page: 5,
+            href: "c5.xhtml".to_string(),
+            start: 10,
+            end: 11,
+            kind: IndexKind::Utf16,
+            snippet: "信".to_string(),
+        };
+        let mut owed = publish(
+            "a.epub",
+            "信",
+            waiting.find.generation,
+            vec![hit.clone()],
+            5,
+            5,
+            true,
+        );
+        owed.nav = waiting.find.nav;
+        let zero = page_command(0, Some("edge"));
+        assert_eq!(zero.delta, 0);
+        assert!(zero.intent.is_none());
+        let (still, jump) = on_scan_publish(&waiting, &owed, &page_only);
+        let jump = jump.expect("a column-page change is still the origin");
+        assert_eq!(jump.href, "c5.xhtml");
+        assert_eq!(jump.start, 10);
+        assert!(!still.find.pending);
+
+        let edge = page_command(1, Some("edge"));
+        let key = page_command(-1, Some("key"));
+        let legacy = page_command(1, None);
+        assert_eq!(edge.intent, Some(NavIntent::PageEdge));
+        assert_eq!(key.intent, Some(NavIntent::Key));
+        assert_eq!(legacy.intent, Some(NavIntent::Key));
+
+        let intents = [
+            edge.intent.unwrap(),
+            key.intent.unwrap(),
+            NavIntent::Trackpad,
+            NavIntent::PdfGlide,
+            NavIntent::Toc,
+            NavIntent::Link,
+            NavIntent::Bookmark,
+        ];
+        for intent in intents {
+            let epoch = arm_nav(intent);
+            assert_eq!(last_intent_tag(), intent_tag(intent));
+            assert!(epoch > waiting.find.nav);
+            let mut scan = owed.clone();
+            scan.nav = epoch;
+            let (held, jump) = on_scan_publish(&waiting, &scan, &page_only);
+            assert!(jump.is_none(), "{intent:?} page-only");
+            assert!(!held.find.pending, "{intent:?}");
+            assert!(held.find.index.is_none(), "{intent:?}");
+            assert_eq!(held.find.nav, epoch);
+            let (same, jump) = on_scan_publish(&waiting, &scan, &chapter5);
+            assert!(jump.is_none(), "{intent:?} same place");
+            assert!(!same.find.pending, "{intent:?}");
+        }
+
+        let pdf = type_find(
+            &Column {
+                book: "a.pdf".to_string(),
+                mode: Mode::Find,
+                ..Column::default()
+            },
+            "信",
+        );
+        let page5 = pdf_page(5);
+        let (pdf, _) = find_return(&pdf, &page5);
+        let mut glide = publish(
+            "a.pdf",
+            "信",
+            pdf.find.generation,
+            hits_in("信", "信", 5, "", IndexKind::Utf16),
+            5,
+            5,
+            true,
+        );
+        glide.nav = pdf.find.nav;
+        let (landed, jump) = on_scan_publish(&pdf, &glide, &page5);
+        assert!(jump.is_some());
+        assert_eq!(landed.find.hits[0].page, 5);
+        let epoch = arm_nav(NavIntent::PdfGlide);
+        glide.nav = epoch;
+        let (held, jump) = on_scan_publish(&pdf, &glide, &page5);
+        assert!(jump.is_none());
+        assert!(!held.find.pending);
+        assert!(held.find.index.is_none());
+
+        let proposed = waiting.clone();
+        let mut current = waiting.clone();
+        current.find.nav = arm_nav(NavIntent::Key);
+        current.find.pending = false;
+        let settled = observe_nav(&current, &proposed);
+        assert_eq!(settled.find.nav, current.find.nav);
+        assert!(!settled.find.pending);
+        assert_eq!(settled.find.query, proposed.find.query);
+    }
+
+    #[test]
+    fn a_text_contract_change_drops_the_old_offsets() {
+        let origin = Place {
+            href: "c1.xhtml".to_string(),
+            page: 1,
+            offset: 0,
+        };
+        let old = Hit {
+            page: 1,
+            href: "c1.xhtml".to_string(),
+            start: 2,
+            end: 3,
+            kind: IndexKind::Utf16,
+            snippet: "—".to_string(),
+        };
+        let column = Column {
+            book: "a.epub".to_string(),
+            mode: Mode::Find,
+            order: spine(),
+            find: Find {
+                draft: "—".to_string(),
+                query: "—".to_string(),
+                generation: 4,
+                hits: vec![old.clone()],
+                index: Some(0),
+                pending: true,
+                origin: origin.clone(),
+                phase: Phase::Searching,
+                ..Find::default()
+            },
+            ..Column::default()
+        };
+        let cleared = invalidate_find_text(&column);
+        assert_eq!(cleared.mode, Mode::Find);
+        assert_eq!(cleared.find.query, "—");
+        assert_eq!(cleared.find.draft, "—");
+        assert!(cleared.find.hits.is_empty());
+        assert!(cleared.find.index.is_none());
+        assert!(!cleared.find.pending);
+        assert!(cleared.find.generation > column.find.generation);
+        assert_eq!(cleared.find.phase, Phase::Searching);
+        let (stepped, hit) = step(&cleared, true, &origin);
+        assert!(hit.is_none());
+        assert!(stepped.find.hits.is_empty());
+        let (chosen, hit) = choose(&cleared, 0, &origin);
+        assert!(hit.is_none());
+        assert!(chosen.find.index.is_none());
+
+        let stale = publish("a.epub", "—", column.find.generation, vec![old], 1, 1, true);
+        let (held, jump) = on_scan_publish(&cleared, &stale, &origin);
+        assert!(jump.is_none());
+        assert!(held.find.hits.is_empty());
+        assert!(!held.find.pending);
+
+        let fresh_hit = Hit {
+            page: 1,
+            href: "c1.xhtml".to_string(),
+            start: 1,
+            end: 2,
+            kind: IndexKind::Utf16,
+            snippet: "—".to_string(),
+        };
+        let mut fresh = publish(
+            "a.epub",
+            "—",
+            cleared.find.generation,
+            vec![fresh_hit],
+            1,
+            1,
+            true,
+        );
+        fresh.nav = cleared.find.nav;
+        let (rescanned, jump) = on_scan_publish(&held, &fresh, &origin);
+        assert!(jump.is_none());
+        assert!(!rescanned.find.pending);
+        assert_eq!(rescanned.find.hits[0].start, 1);
+        let (moved, hit) = step(&rescanned, true, &origin);
+        assert_eq!(hit.unwrap().start, 1);
+        assert_eq!(moved.find.index, Some(0));
+
+        let mut closed = column.clone();
+        closed.mode = Mode::Notes;
+        let idle = invalidate_find_text(&closed);
+        assert_eq!(idle.mode, Mode::Notes);
+        assert_eq!(idle.find.query, "—");
+        assert!(idle.find.hits.is_empty());
+        assert_eq!(idle.find.phase, Phase::Idle);
+        assert!(!idle.find.pending);
+    }
+
+    #[test]
+    fn navigation_and_bold_share_one_gate() {
+        let stage = include_str!("../../shell/src/stage.rs");
+        let web = include_str!("../../shell/src/web.rs");
+        let shell = include_str!("../../shell/src/lib.rs");
+        let form = include_str!("../../shell/src/form.rs");
+
+        let page = between(stage, "\"page\" =>", "\"immersive\" =>");
+        earlier(page, "page_command", "arm_nav");
+        earlier(page, "arm_nav", "web.turn");
+        earlier(page, "arm_nav", "turn_pdf");
+        earlier(page, "arm_nav", "self.publish()");
+        assert!(stage.contains("\"intent\": \"edge\""));
+
+        let wheel_at = web.find("fn take_epub_wheel").expect("epub wheel");
+        let wheel = &web[wheel_at..];
+        assert!(wheel.contains("NavIntent::Trackpad"));
+        earlier(wheel, "arm_nav", "web.follow");
+        earlier(wheel, "arm_nav", "web.release_swipe");
+
+        let glide = between(stage, "fn apply_pdf_wheel", "fn note_card");
+        assert!(glide.contains("NavIntent::PdfGlide"));
+        earlier(glide, "arm_nav", "pdf_glide = Some");
+
+        let scrolled = between(stage, "fn scroll(&mut self", "fn wheel_pdf");
+        earlier(scrolled, "arm_nav", "self.publish()");
+
+        let chapter = between(stage, "fn apply_chapter", "fn return_saved_place");
+        assert!(chapter.contains("NavIntent::Toc"));
+        earlier(chapter, "arm_nav", "web.show_chapter");
+        earlier(chapter, "arm_nav", "web.reveal");
+
+        let back = between(stage, "fn return_saved_place", "fn select_phrase");
+        earlier(back, "arm_nav", "show_pdf_page");
+
+        let link = between(web, "fn on_link", "fn note_shown");
+        assert!(link.contains("NavIntent::Link"));
+        earlier(link, "arm_nav", "show_chapter");
+        earlier(link, "arm_nav", "chapter.reveal");
+
+        let jump = between(stage, "\"jump\" =>", "fn begin_find");
+        assert!(jump.contains("landing"));
+        assert!(jump.contains("NavIntent::Bookmark"));
+        earlier(jump, "if !landing", "arm_nav");
+        earlier(jump, "arm_nav", "jump_place");
+
+        assert!(shell.contains("\"intent\": \"key\""));
+        let menu = shell
+            .find("invalidate_find_text")
+            .expect("the bold menu clears the column before the command");
+        assert!(
+            shell[menu..].contains("\"bold\""),
+            "invalidate_find_text precedes the bold command"
+        );
+
+        let bold = between(stage, "\"bold\" =>", "\"epub\" =>");
+        earlier(bold, "excerpt_key.clear()", "word_starts_changed");
+        earlier(bold, "clear_find()", "word_starts_changed");
+        earlier(bold, "set_find_boot", "word_starts_changed");
+        earlier(bold, "begin_find", "word_starts_changed");
+
+        assert!(form.contains("nav_epoch()"));
+        assert!(form.contains("\"landing\": true"));
+        assert!(stage.contains("\"nav\":"));
+
+        for site in stage.match_indices("TurnSource::Restore") {
+            let start = site.0.saturating_sub(240);
+            let window = &stage[start..site.0];
+            assert!(
+                !window.contains("arm_nav"),
+                "a restore turn is not a user navigation"
+            );
+        }
+    }
+
+    fn between<'a>(src: &'a str, start: &str, end: &str) -> &'a str {
+        let at = src.find(start).unwrap_or_else(|| panic!("missing {start}"));
+        let rest = &src[at..];
+        let stop = rest
+            .find(end)
+            .unwrap_or_else(|| panic!("missing {end} after {start}"));
+        &rest[..stop]
+    }
+
+    fn earlier(region: &str, first: &str, second: &str) {
+        let left = region
+            .find(first)
+            .unwrap_or_else(|| panic!("missing {first}"));
+        let right = region
+            .find(second)
+            .unwrap_or_else(|| panic!("missing {second}"));
+        assert!(left < right, "{first} should precede {second}");
     }
 
     #[test]

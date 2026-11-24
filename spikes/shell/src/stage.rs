@@ -326,8 +326,12 @@ define_class!(
                     crate::visit::PageEdge::None
                 };
                 match edge {
-                    crate::visit::PageEdge::Back => state.command("page", &json!(-1)),
-                    crate::visit::PageEdge::Forward => state.command("page", &json!(1)),
+                    crate::visit::PageEdge::Back => {
+                        state.command("page", &json!({"delta": -1, "intent": "edge"}))
+                    }
+                    crate::visit::PageEdge::Forward => {
+                        state.command("page", &json!({"delta": 1, "intent": "edge"}))
+                    }
                     crate::visit::PageEdge::None => state.finish_drag(start, point),
                 }
             }
@@ -663,6 +667,7 @@ impl State {
             return;
         }
         if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            spike_library::column::arm_nav(spike_library::column::NavIntent::Trackpad);
             self.offset = (self.offset - dy).max(0.0);
             self.note_page();
             self.publish();
@@ -708,6 +713,9 @@ impl State {
     }
 
     fn apply_pdf_wheel(&mut self, decision: crate::visit::PdfWheel) {
+        if !matches!(decision, crate::visit::PdfWheel::Pass) {
+            spike_library::column::arm_nav(spike_library::column::NavIntent::PdfGlide);
+        }
         match decision {
             crate::visit::PdfWheel::Pass => {}
             crate::visit::PdfWheel::Follow { shift } => {
@@ -865,23 +873,31 @@ impl State {
                 self.publish();
             }
             "bold" => {
-                let on = args.as_bool().unwrap_or(false);
+                let on = args
+                    .as_bool()
+                    .or_else(|| args.get("on").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
                 let _ = crate::settings::store_bold(&crate::settings::path(), on);
+                self.find_paint.clear();
+                self.find_current = None;
+                self.excerpt_text.clear();
+                self.excerpt_key.clear();
+                if let Some(web) = &self.web {
+                    web.clear_find();
+                } else {
+                    crate::web::set_find_boot("[]");
+                }
+                let book = args.get("book").and_then(|v| v.as_str()).unwrap_or("");
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                let generation = args.get("generation").and_then(|v| v.as_u64()).unwrap_or(0);
+                if !book.is_empty() && !query.is_empty() {
+                    self.begin_find(book, query, generation);
+                } else {
+                    self.stop_find();
+                }
                 if let Some(web) = &self.web {
                     web.word_starts_changed();
                 }
-                if let Some(job) = self.find.as_mut() {
-                    job.spine.clear();
-                    job.hits.clear();
-                    job.next = 0;
-                    job.total = 0;
-                    job.ready = false;
-                    job.text_units = 0;
-                    job.empty_units = 0;
-                    job.failed_units = 0;
-                }
-                self.find_paint.clear();
-                self.find_current = None;
             }
             "epub" => {
                 self.mode = match args.as_str() {
@@ -893,7 +909,15 @@ impl State {
             }
             "page" => {
                 crate::web::abandon_swipe();
-                let delta = args.as_i64().unwrap_or(0);
+                let delta = args
+                    .as_i64()
+                    .unwrap_or_else(|| args.get("delta").and_then(|v| v.as_i64()).unwrap_or(0));
+                let name = args.get("intent").and_then(|v| v.as_str());
+                let dispatched = spike_library::column::page_command(delta, name);
+                if let Some(intent) = dispatched.intent {
+                    spike_library::column::arm_nav(intent);
+                }
+                let delta = dispatched.delta;
                 if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
                         web.turn(delta as i32, crate::visit::TurnSource::User);
@@ -916,6 +940,17 @@ impl State {
             }
             "find-stop" => self.stop_find(),
             "jump" => {
+                let landing = args
+                    .get("landing")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !landing {
+                    let intent = match args.get("intent").and_then(|v| v.as_str()) {
+                        Some("bookmark") => spike_library::column::NavIntent::Bookmark,
+                        _ => spike_library::column::NavIntent::Key,
+                    };
+                    spike_library::column::arm_nav(intent);
+                }
                 let href = args.get("href").and_then(|v| v.as_str()).unwrap_or("");
                 let page = args.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                 let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -1335,6 +1370,7 @@ impl State {
             "empty_units": job.empty_units,
             "failed_units": job.failed_units,
             "done": job.total > 0 && job.next >= job.total,
+            "nav": spike_library::column::nav_epoch(),
             "hits": job.hits.iter().map(|hit| json!({
                 "page": hit.page,
                 "href": hit.href,
@@ -1377,6 +1413,7 @@ impl State {
         if !decided.accepted {
             return;
         }
+        spike_library::column::arm_nav(spike_library::column::NavIntent::Toc);
         crate::web::cancel_swipe();
         let _ = self.pdf_swipe.cancel_release();
         let go = decided
@@ -1420,9 +1457,12 @@ impl State {
         let Some(back) = crate::web::reader_back() else {
             return;
         };
-        if back.href.is_empty() && self.show_pdf_page(back.page) {
-            crate::web::set_reader_back(None);
-            self.publish();
+        if back.href.is_empty() {
+            spike_library::column::arm_nav(spike_library::column::NavIntent::Toc);
+            if self.show_pdf_page(back.page) {
+                crate::web::set_reader_back(None);
+                self.publish();
+            }
         }
     }
 

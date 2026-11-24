@@ -1362,6 +1362,7 @@ fn on_link(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
     if !applied.accepted {
         return;
     }
+    spike_library::column::arm_nav(spike_library::column::NavIntent::Link);
     // The chapter command drops the gesture after the move is accepted.
     cancel_swipe();
     let chapter = WebChapter {
@@ -1689,6 +1690,9 @@ pub fn take_epub_wheel(phase: u64, momentum: u64, dx: f64, dy: f64) -> bool {
             crate::ease::current(),
         )
     });
+    if !matches!(effect, crate::visit::WheelMove::Pass) {
+        spike_library::column::arm_nav(spike_library::column::NavIntent::Trackpad);
+    }
     match effect {
         crate::visit::WheelMove::Pass => false,
         crate::visit::WheelMove::Swallow | crate::visit::WheelMove::Hold => true,
