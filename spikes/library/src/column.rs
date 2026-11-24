@@ -1,0 +1,1205 @@
+//! Bookmarks and in-book search for one open book.
+//!
+//! The margin column has three modes. The page frame is not one of them.
+//! Bookmarks live in the same SQLite file as notes. A search walks units the
+//! caller feeds one at a time. A keystroke does not scan the book.
+
+use std::path::Path;
+
+use rusqlite::{params, Connection};
+
+use crate::margin::{park_card, release_composition, CardKind, Face, LivePage, MarginInk};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Notes,
+    Marks,
+    Find,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexKind {
+    Chars,
+    Utf16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Idle,
+    Searching,
+    Done,
+    Incomplete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitRead {
+    Text,
+    Empty,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub href: String,
+    pub page: u32,
+    pub offset: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Bookmark {
+    pub id: i64,
+    pub book: String,
+    pub page: u32,
+    pub href: String,
+    pub offset: u32,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hit {
+    pub page: u32,
+    pub href: String,
+    pub start: u32,
+    pub end: u32,
+    pub kind: IndexKind,
+    pub snippet: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SeatKind {
+    New,
+    Card { note_id: i64, kind: CardKind },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorSeat {
+    pub book: String,
+    pub page: u32,
+    pub href: String,
+    pub kind: SeatKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Find {
+    pub draft: String,
+    pub query: String,
+    pub composing: bool,
+    pub generation: u64,
+    pub hits: Vec<Hit>,
+    pub index: Option<usize>,
+    pub phase: Phase,
+    pub seen: u32,
+    pub total: u32,
+    pub text_units: u32,
+    pub empty_units: u32,
+    pub failed_units: u32,
+    pub pending: bool,
+    pub navigated: bool,
+    pub seat: Option<EditorSeat>,
+    pub focus: u64,
+}
+
+impl Default for Find {
+    fn default() -> Self {
+        Self {
+            draft: String::new(),
+            query: String::new(),
+            composing: false,
+            generation: 0,
+            hits: Vec::new(),
+            index: None,
+            phase: Phase::Idle,
+            seen: 0,
+            total: 0,
+            text_units: 0,
+            empty_units: 0,
+            failed_units: 0,
+            pending: false,
+            navigated: false,
+            seat: None,
+            focus: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Column {
+    pub mode: Mode,
+    pub mode_before: Mode,
+    pub book: String,
+    pub marks: Vec<Bookmark>,
+    pub undo: Option<Bookmark>,
+    pub undo_until: u64,
+    pub find: Find,
+}
+
+impl Default for Column {
+    fn default() -> Self {
+        Self {
+            mode: Mode::Notes,
+            mode_before: Mode::Notes,
+            book: String::new(),
+            marks: Vec::new(),
+            undo: None,
+            undo_until: 0,
+            find: Find::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnitReport {
+    pub book: String,
+    pub query: String,
+    pub generation: u64,
+    pub index: u32,
+    pub total: u32,
+    pub read: UnitRead,
+    pub hits: Vec<Hit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FindLine {
+    pub text: String,
+    pub retry: bool,
+}
+
+pub struct Marks {
+    conn: Connection,
+}
+
+impl Marks {
+    pub fn open(path: &Path) -> Result<Self, String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+        }
+        let conn = Connection::open(path).map_err(|err| err.to_string())?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS bookmarks (
+                id INTEGER PRIMARY KEY,
+                book TEXT NOT NULL,
+                page INTEGER NOT NULL,
+                href TEXT NOT NULL,
+                offset INTEGER NOT NULL,
+                label TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks(book);",
+        )
+        .map_err(|err| err.to_string())?;
+        Ok(Self { conn })
+    }
+
+    pub fn list(&self, book: &str) -> Result<Vec<Bookmark>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, book, page, href, offset, label
+                 FROM bookmarks WHERE book = ?1
+                 ORDER BY page, offset, id",
+            )
+            .map_err(|err| err.to_string())?;
+        let rows = stmt
+            .query_map(params![book], read_mark)
+            .map_err(|err| err.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())
+    }
+
+    pub fn at(
+        &self,
+        book: &str,
+        page: u32,
+        href: &str,
+        offset: u32,
+    ) -> Result<Option<Bookmark>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, book, page, href, offset, label
+                 FROM bookmarks
+                 WHERE book = ?1 AND page = ?2 AND href = ?3 AND offset = ?4
+                 LIMIT 1",
+            )
+            .map_err(|err| err.to_string())?;
+        let mut rows = stmt
+            .query_map(params![book, page, href, offset], read_mark)
+            .map_err(|err| err.to_string())?;
+        match rows.next() {
+            Some(row) => row.map(Some).map_err(|err| err.to_string()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn insert(
+        &self,
+        book: &str,
+        page: u32,
+        href: &str,
+        offset: u32,
+        label: &str,
+    ) -> Result<Bookmark, String> {
+        let label = if label.is_empty() {
+            format!("第{page}页")
+        } else {
+            label.to_string()
+        };
+        self.conn
+            .execute(
+                "INSERT INTO bookmarks (book, page, href, offset, label) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![book, page, href, offset, label],
+            )
+            .map_err(|err| err.to_string())?;
+        let id = self.conn.last_insert_rowid();
+        Ok(Bookmark {
+            id,
+            book: book.to_string(),
+            page,
+            href: href.to_string(),
+            offset,
+            label,
+        })
+    }
+
+    pub fn remove(&self, id: i64) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM bookmarks WHERE id = ?1", params![id])
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+}
+
+fn read_mark(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bookmark> {
+    Ok(Bookmark {
+        id: row.get(0)?,
+        book: row.get(1)?,
+        page: row.get(2)?,
+        href: row.get(3)?,
+        offset: row.get(4)?,
+        label: row.get(5)?,
+    })
+}
+
+pub fn reload(column: &Column, marks: Vec<Bookmark>) -> Column {
+    let mut next = column.clone();
+    next.marks = marks;
+    next
+}
+
+pub fn expire_undo(column: &Column, now_ms: u64) -> Column {
+    if column.undo.is_some() && now_ms >= column.undo_until {
+        let mut next = column.clone();
+        next.undo = None;
+        next.undo_until = 0;
+        return next;
+    }
+    column.clone()
+}
+
+pub const UNDO_MS: u64 = 4_000;
+
+pub fn toggle_mark(
+    column: &Column,
+    marks: &Marks,
+    place: &Place,
+    label: &str,
+    now_ms: u64,
+) -> Result<Column, String> {
+    if column.book.is_empty() {
+        return Ok(column.clone());
+    }
+    let mut next = column.clone();
+    if let Some(found) = marks.at(&column.book, place.page, &place.href, place.offset)? {
+        marks.remove(found.id)?;
+        next.undo = Some(found);
+        next.undo_until = now_ms.saturating_add(UNDO_MS);
+    } else {
+        marks.insert(&column.book, place.page, &place.href, place.offset, label)?;
+        next.undo = None;
+        next.undo_until = 0;
+    }
+    next.marks = marks.list(&column.book)?;
+    Ok(next)
+}
+
+pub fn delete_mark(column: &Column, marks: &Marks, id: i64, now_ms: u64) -> Result<Column, String> {
+    let Some(found) = column.marks.iter().find(|mark| mark.id == id).cloned() else {
+        return Ok(column.clone());
+    };
+    marks.remove(id)?;
+    let mut next = column.clone();
+    next.undo = Some(found);
+    next.undo_until = now_ms.saturating_add(UNDO_MS);
+    next.marks = marks.list(&column.book)?;
+    Ok(next)
+}
+
+pub fn undo_delete(column: &Column, marks: &Marks) -> Result<Column, String> {
+    let Some(mark) = column.undo.clone() else {
+        return Ok(column.clone());
+    };
+    let _ = marks.insert(&mark.book, mark.page, &mark.href, mark.offset, &mark.label)?;
+    let mut next = column.clone();
+    next.undo = None;
+    next.undo_until = 0;
+    next.marks = marks.list(&column.book)?;
+    Ok(next)
+}
+
+pub fn enter_marks(column: &Column, ink: &MarginInk) -> (Column, MarginInk) {
+    let mut next = column.clone();
+    if next.mode != Mode::Find {
+        next.mode_before = next.mode;
+    }
+    next.mode = Mode::Marks;
+    (next, park_card(&release_composition(ink)))
+}
+
+pub fn enter_notes(column: &Column) -> Column {
+    let mut next = column.clone();
+    next.mode = Mode::Notes;
+    next
+}
+
+pub fn enter_find(column: &Column, ink: &MarginInk, live: &LivePage) -> (Column, MarginInk) {
+    let mut next = column.clone();
+    if next.mode != Mode::Find {
+        next.mode_before = next.mode;
+        next.find.navigated = false;
+        next.find.seat = seat_of(ink, live);
+    }
+    next.mode = Mode::Find;
+    next.find.focus = next.find.focus.saturating_add(1);
+    (next, release_composition(ink))
+}
+
+fn seat_of(ink: &MarginInk, live: &LivePage) -> Option<EditorSeat> {
+    if live.book.is_empty() {
+        return None;
+    }
+    let kind = match &ink.face {
+        Face::Card(key) if key.book == live.book => SeatKind::Card {
+            note_id: key.note_id,
+            kind: key.kind,
+        },
+        Face::New
+            if ink.new_note.composing
+                || !ink.new_note.body.trim().is_empty()
+                || ink.focus_new > 0 =>
+        {
+            SeatKind::New
+        }
+        _ => return None,
+    };
+    Some(EditorSeat {
+        book: live.book.clone(),
+        page: live.page,
+        href: live.spine.clone(),
+        kind,
+    })
+}
+
+pub struct ClosedFind {
+    pub column: Column,
+    pub seat: Option<EditorSeat>,
+}
+
+pub fn close_find(column: &Column) -> ClosedFind {
+    let mut next = column.clone();
+    let seat = if next.find.navigated {
+        None
+    } else {
+        next.find.seat.clone()
+    };
+    let back = if next.mode_before == Mode::Find {
+        Mode::Notes
+    } else {
+        next.mode_before
+    };
+    next.mode = back;
+    next.find.hits.clear();
+    next.find.index = None;
+    next.find.pending = false;
+    next.find.phase = Phase::Idle;
+    next.find.seen = 0;
+    next.find.total = 0;
+    next.find.text_units = 0;
+    next.find.empty_units = 0;
+    next.find.failed_units = 0;
+    ClosedFind { column: next, seat }
+}
+
+pub fn refocus_after_find(
+    ink: &MarginInk,
+    seat: Option<&EditorSeat>,
+    live: &LivePage,
+) -> MarginInk {
+    let Some(seat) = seat else {
+        return ink.clone();
+    };
+    if seat.book != live.book || seat.page != live.page || seat.href != live.spine {
+        return ink.clone();
+    }
+    match (&seat.kind, &ink.face) {
+        (SeatKind::New, Face::New) => {
+            let mut next = ink.clone();
+            next.focus_new = next.focus_new.saturating_add(1);
+            next
+        }
+        (SeatKind::Card { note_id, kind }, Face::Card(key))
+            if key.note_id == *note_id && key.kind == *kind && key.book == seat.book =>
+        {
+            ink.clone()
+        }
+        _ => ink.clone(),
+    }
+}
+
+/// Esc puts the column back, then the caret. A card that is not the same
+/// book, card, and page is parked. Its draft stays. The field is not built.
+pub fn restore_after_find(
+    column: &Column,
+    ink: &MarginInk,
+    seat: Option<&EditorSeat>,
+    live: &LivePage,
+) -> MarginInk {
+    let focused = refocus_after_find(ink, seat, live);
+    let landed = match (seat, &ink.face) {
+        (Some(_), Face::New) if focused.focus_new > ink.focus_new => true,
+        (Some(seat), Face::Card(key))
+            if seat.book == live.book
+                && seat.page == live.page
+                && seat.href == live.spine
+                && matches!(
+                    &seat.kind,
+                    SeatKind::Card { note_id, kind }
+                        if *note_id == key.note_id && *kind == key.kind && key.book == seat.book
+                ) =>
+        {
+            true
+        }
+        _ => false,
+    };
+    if landed {
+        return focused;
+    }
+    if column.mode == Mode::Notes {
+        park_card(ink)
+    } else {
+        ink.clone()
+    }
+}
+
+pub fn clear_book(column: &Column, book: &str) -> Column {
+    if column.book == book {
+        return column.clone();
+    }
+    Column {
+        book: book.to_string(),
+        ..Column::default()
+    }
+}
+
+pub fn type_find(column: &Column, draft: &str) -> Column {
+    let mut next = column.clone();
+    next.find.draft = draft.to_string();
+    if next.find.composing {
+        return next;
+    }
+    confirm_draft(&mut next);
+    next
+}
+
+pub fn compose_find(column: &Column, composing: bool) -> Column {
+    let mut next = column.clone();
+    next.find.composing = composing;
+    if composing {
+        return next;
+    }
+    confirm_draft(&mut next);
+    next
+}
+
+fn confirm_draft(column: &mut Column) {
+    if column.find.draft == column.find.query {
+        return;
+    }
+    let draft = column.find.draft.clone();
+    begin_query(column, &draft);
+}
+
+fn begin_query(column: &mut Column, query: &str) {
+    column.find.query = query.to_string();
+    column.find.generation = column.find.generation.saturating_add(1);
+    column.find.hits.clear();
+    column.find.index = None;
+    column.find.pending = false;
+    column.find.seen = 0;
+    column.find.total = 0;
+    column.find.text_units = 0;
+    column.find.empty_units = 0;
+    column.find.failed_units = 0;
+    column.find.phase = if query.trim().is_empty() {
+        Phase::Idle
+    } else {
+        Phase::Searching
+    };
+}
+
+pub fn retry_find(column: &Column) -> Column {
+    let mut next = column.clone();
+    if next.find.query.trim().is_empty() {
+        return next;
+    }
+    let query = next.find.query.clone();
+    next.find.draft = query.clone();
+    begin_query(&mut next, &query);
+    next
+}
+
+/// Return in the find field. A composition does not search or step.
+/// A new query clears hits and waits for the first one. It does not move.
+pub fn find_return(column: &Column, here: &Place) -> (Column, Option<Hit>) {
+    if column.find.composing {
+        return (column.clone(), None);
+    }
+    let mut next = column.clone();
+    if next.find.draft != next.find.query {
+        let draft = next.find.draft.clone();
+        begin_query(&mut next, &draft);
+        if next.find.phase == Phase::Searching {
+            next.find.pending = true;
+        }
+        return (next, None);
+    }
+    if next.find.query.trim().is_empty() {
+        return (next, None);
+    }
+    if next.find.hits.is_empty() {
+        if next.find.phase != Phase::Searching {
+            let query = next.find.query.clone();
+            begin_query(&mut next, &query);
+        }
+        next.find.pending = true;
+        return (next, None);
+    }
+    step(&next, true, here)
+}
+
+pub fn step(column: &Column, forward: bool, here: &Place) -> (Column, Option<Hit>) {
+    if column.find.composing || column.find.hits.is_empty() {
+        return (column.clone(), None);
+    }
+    let mut next = column.clone();
+    let len = next.find.hits.len();
+    let index = match next.find.index {
+        None => first_from(&next.find.hits, here),
+        Some(current) if forward => (current + 1) % len,
+        Some(0) => len - 1,
+        Some(current) => current - 1,
+    };
+    next.find.index = Some(index);
+    let hit = next.find.hits[index].clone();
+    if hit_place(&hit) != *here {
+        next.find.navigated = true;
+    }
+    (next, Some(hit))
+}
+
+fn first_from(hits: &[Hit], here: &Place) -> usize {
+    hits.iter()
+        .position(|hit| {
+            hit.page > here.page
+                || hit.page == here.page && hit.href == here.href && hit.start >= here.offset
+                || hit.page == here.page && hit.href != here.href
+        })
+        .unwrap_or(0)
+}
+
+pub fn hit_place(hit: &Hit) -> Place {
+    Place {
+        href: hit.href.clone(),
+        page: hit.page,
+        offset: hit.start,
+    }
+}
+
+pub fn accept_unit(column: &Column, report: &UnitReport, here: &Place) -> (Column, Option<Hit>) {
+    if report.book != column.book
+        || report.query != column.find.query
+        || report.generation != column.find.generation
+        || report.index != column.find.seen
+    {
+        return (column.clone(), None);
+    }
+    let mut next = column.clone();
+    next.find.total = report.total;
+    next.find.seen = next.find.seen.saturating_add(1);
+    let added = match report.read {
+        UnitRead::Text => {
+            next.find.text_units = next.find.text_units.saturating_add(1);
+            let start = next.find.hits.len();
+            next.find.hits.extend(report.hits.iter().cloned());
+            if report.hits.is_empty() {
+                None
+            } else {
+                Some(start)
+            }
+        }
+        UnitRead::Empty => {
+            next.find.empty_units = next.find.empty_units.saturating_add(1);
+            None
+        }
+        UnitRead::Failed => {
+            next.find.failed_units = next.find.failed_units.saturating_add(1);
+            None
+        }
+    };
+    if next.find.seen >= next.find.total {
+        next.find.phase = if next.find.failed_units > 0 {
+            Phase::Incomplete
+        } else {
+            Phase::Done
+        };
+    }
+    let jump = if next.find.pending {
+        added.map(|start| {
+            next.find.pending = false;
+            next.find.index = Some(start);
+            let hit = next.find.hits[start].clone();
+            if hit_place(&hit) != *here {
+                next.find.navigated = true;
+            }
+            hit
+        })
+    } else {
+        None
+    };
+    (next, jump)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scan {
+    pub book: String,
+    pub query: String,
+    pub generation: u64,
+    pub hits: Vec<Hit>,
+    pub seen: u32,
+    pub total: u32,
+    pub text_units: u32,
+    pub empty_units: u32,
+    pub failed_units: u32,
+    pub done: bool,
+}
+
+/// The stage sends the hits it has so far. An older generation or another
+/// book does not replace the list. The first snapshot can take one pending step.
+pub fn replace_scan(column: &Column, scan: &Scan, here: &Place) -> (Column, Option<Hit>) {
+    if scan.book != column.book
+        || scan.query != column.find.query
+        || scan.generation != column.find.generation
+    {
+        return (column.clone(), None);
+    }
+    let mut next = column.clone();
+    let was_empty = next.find.hits.is_empty();
+    next.find.hits = scan.hits.clone();
+    next.find.seen = scan.seen;
+    next.find.total = scan.total;
+    next.find.text_units = scan.text_units;
+    next.find.empty_units = scan.empty_units;
+    next.find.failed_units = scan.failed_units;
+    next.find.phase = if !scan.done {
+        Phase::Searching
+    } else if scan.failed_units > 0 {
+        Phase::Incomplete
+    } else {
+        Phase::Done
+    };
+    let jump = if next.find.pending && was_empty && !next.find.hits.is_empty() {
+        let index = first_from(&next.find.hits, here);
+        next.find.pending = false;
+        next.find.index = Some(index);
+        let hit = next.find.hits[index].clone();
+        if hit_place(&hit) != *here {
+            next.find.navigated = true;
+        }
+        Some(hit)
+    } else {
+        None
+    };
+    (next, jump)
+}
+
+pub fn choose(column: &Column, index: usize, here: &Place) -> (Column, Option<Hit>) {
+    if column.find.composing || index >= column.find.hits.len() {
+        return (column.clone(), None);
+    }
+    let mut next = column.clone();
+    next.find.index = Some(index);
+    let hit = next.find.hits[index].clone();
+    if hit_place(&hit) != *here {
+        next.find.navigated = true;
+    }
+    (next, Some(hit))
+}
+
+pub fn find_line(column: &Column) -> FindLine {
+    let find = &column.find;
+    if find.query.trim().is_empty() || find.phase == Phase::Idle && find.hits.is_empty() {
+        return FindLine {
+            text: String::new(),
+            retry: false,
+        };
+    }
+    if find.failed_units > 0 || find.phase == Phase::Incomplete {
+        let extra = if find.hits.is_empty() {
+            String::new()
+        } else {
+            format!(" · {} 个结果", find.hits.len())
+        };
+        return FindLine {
+            text: format!("查找未完成，可重试{extra}"),
+            retry: true,
+        };
+    }
+    if find.phase == Phase::Searching {
+        return FindLine {
+            text: format!("搜索中 · 已搜 {}/{}", find.seen, find.total),
+            retry: false,
+        };
+    }
+    if find.hits.is_empty() && find.text_units == 0 {
+        return FindLine {
+            text: "没有可搜索的文本".to_string(),
+            retry: false,
+        };
+    }
+    if find.hits.is_empty() {
+        return FindLine {
+            text: "无结果 · 已搜全书可用文本".to_string(),
+            retry: false,
+        };
+    }
+    FindLine {
+        text: format!(
+            "{} 个结果 · 已搜 {}/{}",
+            find.hits.len(),
+            find.seen,
+            find.total
+        ),
+        retry: false,
+    }
+}
+
+pub fn hits_in(text: &str, query: &str, page: u32, href: &str, kind: IndexKind) -> Vec<Hit> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    let mut from = 0;
+    while let Some(at) = text[from..].find(query) {
+        let byte = from + at;
+        let prefix = &text[..byte];
+        let start_chars = prefix.chars().count() as u32;
+        let start_utf16 = prefix.encode_utf16().count() as u32;
+        let (start, end) = match kind {
+            IndexKind::Chars => (start_chars, start_chars + query.chars().count() as u32),
+            IndexKind::Utf16 => (
+                start_utf16,
+                start_utf16 + query.encode_utf16().count() as u32,
+            ),
+        };
+        hits.push(Hit {
+            page,
+            href: href.to_string(),
+            start,
+            end,
+            kind,
+            snippet: snippet(text, byte, query.len()),
+        });
+        let next = byte + query.len();
+        if next <= from {
+            break;
+        }
+        from = next;
+    }
+    hits
+}
+
+fn snippet(text: &str, byte: usize, query_len: usize) -> String {
+    let start = text[..byte].chars().rev().take(12).count();
+    let prefix_chars = text[..byte].chars().count();
+    let from = prefix_chars - start;
+    let query_chars = text[byte..byte + query_len].chars().count();
+    let take = from + query_chars + 12;
+    let mut out: String = text.chars().skip(from).take(take).collect();
+    out = out.replace(['\n', '\r', '\t'], " ");
+    out
+}
+
+/// The first bookmark or search jump fills an empty return slot.
+/// A later jump keeps that place. The same place does not record one.
+pub fn remember_origin(existing: Option<Place>, here: &Place, dest: &Place) -> Option<Place> {
+    if existing.is_some() {
+        return existing;
+    }
+    if here == dest {
+        return None;
+    }
+    Some(here.clone())
+}
+
+pub fn same_place(mark: &Bookmark, page: u32, href: &str, offset: u32) -> bool {
+    mark.page == page && mark.href == href && mark.offset == offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::margin::{begin_card, CardKey, MarginInk, NoteField};
+
+    fn live(book: &str, page: u32) -> LivePage {
+        LivePage {
+            book: book.to_string(),
+            spine: "c1.xhtml".to_string(),
+            page,
+            page_w: 100.0,
+            page_h: 100.0,
+            moving: false,
+        }
+    }
+
+    fn here(page: u32) -> Place {
+        Place {
+            href: "c1.xhtml".to_string(),
+            page,
+            offset: 0,
+        }
+    }
+
+    #[test]
+    fn a_bookmark_survives_reopen_undo_and_stays_on_its_book() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path();
+        let marks = Marks::open(path).unwrap();
+        let mut column = Column {
+            book: "a.epub".to_string(),
+            ..Column::default()
+        };
+        column = toggle_mark(
+            &column,
+            &marks,
+            &Place {
+                href: "c1.xhtml".to_string(),
+                page: 2,
+                offset: 4,
+            },
+            "信",
+            0,
+        )
+        .unwrap();
+        assert_eq!(column.marks.len(), 1);
+        assert_eq!(column.marks[0].label, "信");
+        drop(marks);
+        let marks = Marks::open(path).unwrap();
+        let loaded = marks.list("a.epub").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(marks.list("b.epub").unwrap().is_empty());
+        let id = loaded[0].id;
+        column.marks = loaded;
+        column = delete_mark(&column, &marks, id, 1_000).unwrap();
+        assert!(column.marks.is_empty());
+        assert!(column.undo.is_some());
+        column = undo_delete(&column, &marks).unwrap();
+        assert_eq!(column.marks.len(), 1);
+        let again = Marks::open(path).unwrap();
+        assert_eq!(again.list("a.epub").unwrap().len(), 1);
+        assert!(again.list("b.epub").unwrap().is_empty());
+        let held = Column {
+            undo: column.marks.first().cloned(),
+            undo_until: 5_000,
+            ..column.clone()
+        };
+        assert!(expire_undo(&held, 4_999).undo.is_some());
+        assert!(expire_undo(&held, 5_000).undo.is_none());
+        let other = clear_book(&column, "b.epub");
+        assert!(other.marks.is_empty());
+        assert_eq!(other.book, "b.epub");
+        assert_eq!(clear_book(&other, "b.epub").book, "b.epub");
+    }
+
+    #[test]
+    fn a_query_crosses_units_and_a_late_or_ime_result_does_not_land() {
+        let text = "天亮以后。才想起今天要把信送到镇上。";
+        let first = hits_in(text, "信", 1, "c1.xhtml", IndexKind::Utf16);
+        assert_eq!(first.len(), 1);
+        let prefix = text.split('信').next().unwrap();
+        assert_eq!(first[0].start, prefix.encode_utf16().count() as u32);
+        let more = hits_in("河边还有信。", "信", 2, "c2.xhtml", IndexKind::Utf16);
+        let column = type_find(
+            &Column {
+                book: "a.epub".to_string(),
+                mode: Mode::Find,
+                ..Column::default()
+            },
+            "信",
+        );
+        assert!(column.find.hits.is_empty());
+        assert_eq!(column.find.phase, Phase::Searching);
+        let report = UnitReport {
+            book: "a.epub".to_string(),
+            query: "信".to_string(),
+            generation: column.find.generation,
+            index: 0,
+            total: 2,
+            read: UnitRead::Text,
+            hits: first.clone(),
+        };
+        let (column, jump) = accept_unit(&column, &report, &here(1));
+        assert!(jump.is_none());
+        assert_eq!(column.find.hits.len(), 1);
+        let stale = UnitReport {
+            generation: column.find.generation - 1,
+            index: 1,
+            hits: more.clone(),
+            ..report.clone()
+        };
+        let (held, _) = accept_unit(&column, &stale, &here(1));
+        assert_eq!(held.find.hits.len(), 1);
+        let other_book = UnitReport {
+            book: "b.epub".to_string(),
+            index: 1,
+            hits: more.clone(),
+            ..report.clone()
+        };
+        let (held, _) = accept_unit(&column, &other_book, &here(1));
+        assert_eq!(held.find.hits.len(), 1);
+        let typed = type_find(&column, "袋");
+        assert!(typed.find.hits.is_empty());
+        assert_ne!(typed.find.generation, column.find.generation);
+        let late = UnitReport {
+            query: "信".to_string(),
+            generation: column.find.generation,
+            index: 0,
+            hits: first,
+            ..report
+        };
+        let (still, _) = accept_unit(&typed, &late, &here(1));
+        assert!(still.find.hits.is_empty());
+        let mut marked = column.clone();
+        marked.find.hits = more.clone();
+        marked.find.phase = Phase::Done;
+        marked.find.seen = 2;
+        marked.find.total = 2;
+        marked.find.text_units = 2;
+        let composing = compose_find(&marked, true);
+        let drafted = type_find(&composing, "袋");
+        assert_eq!(drafted.find.query, "信");
+        assert_eq!(drafted.find.hits.len(), 1);
+        let (returned, jump) = find_return(&drafted, &here(1));
+        assert!(jump.is_none());
+        assert_eq!(returned.find.query, "信");
+        let (stepped, jump) = find_return(&compose_find(&returned, false), &here(1));
+        assert!(jump.is_none());
+        assert_eq!(stepped.find.query, "袋");
+        assert!(stepped.find.pending);
+        assert!(stepped.find.hits.is_empty());
+        let scan = Scan {
+            book: "a.epub".to_string(),
+            query: "袋".to_string(),
+            generation: stepped.find.generation,
+            hits: hits_in("我把信放进袋", "袋", 4, "c2.xhtml", IndexKind::Utf16),
+            seen: 2,
+            total: 2,
+            text_units: 2,
+            empty_units: 0,
+            failed_units: 0,
+            done: true,
+        };
+        let late = Scan {
+            query: "信".to_string(),
+            generation: column.find.generation,
+            ..scan.clone()
+        };
+        let (held, jump) = replace_scan(&stepped, &late, &here(1));
+        assert!(jump.is_none());
+        assert!(held.find.hits.is_empty());
+        let (landed, jump) = replace_scan(&stepped, &scan, &here(1));
+        assert!(jump.is_some());
+        assert_eq!(landed.find.hits.len(), 1);
+        assert!(landed.find.navigated);
+        let (again, jump) = replace_scan(&landed, &scan, &here(4));
+        assert!(jump.is_none());
+        assert_eq!(again.find.hits.len(), 1);
+    }
+
+    #[test]
+    fn empty_failed_and_unfinished_are_not_zero_results() {
+        let column = type_find(
+            &Column {
+                book: "a.pdf".to_string(),
+                ..Column::default()
+            },
+            "信",
+        );
+        let base = UnitReport {
+            book: "a.pdf".to_string(),
+            query: "信".to_string(),
+            generation: column.find.generation,
+            index: 0,
+            total: 2,
+            read: UnitRead::Empty,
+            hits: Vec::new(),
+        };
+        let (column, _) = accept_unit(&column, &base, &here(1));
+        assert_eq!(find_line(&column).text, "搜索中 · 已搜 1/2");
+        let failed = UnitReport {
+            index: 1,
+            read: UnitRead::Failed,
+            ..base.clone()
+        };
+        let (column, _) = accept_unit(&column, &failed, &here(1));
+        let line = find_line(&column);
+        assert!(line.retry);
+        assert!(line.text.starts_with("查找未完成，可重试"));
+        assert!(!line.text.contains("无结果"));
+        let mut only_empty = type_find(&Column::default(), "信");
+        only_empty.book = "a.pdf".to_string();
+        let done = UnitReport {
+            total: 1,
+            read: UnitRead::Empty,
+            generation: only_empty.find.generation,
+            ..base
+        };
+        let (only_empty, _) = accept_unit(&only_empty, &done, &here(1));
+        assert_eq!(find_line(&only_empty).text, "没有可搜索的文本");
+        let none = type_find(
+            &Column {
+                book: "a.pdf".to_string(),
+                ..Column::default()
+            },
+            "缺",
+        );
+        let scanned = UnitReport {
+            book: "a.pdf".to_string(),
+            query: "缺".to_string(),
+            generation: none.find.generation,
+            index: 0,
+            total: 1,
+            read: UnitRead::Text,
+            hits: Vec::new(),
+        };
+        let (none, _) = accept_unit(&none, &scanned, &here(1));
+        assert_eq!(find_line(&none).text, "无结果 · 已搜全书可用文本");
+        let retry = retry_find(&none);
+        assert!(retry.find.hits.is_empty());
+        assert_eq!(retry.find.phase, Phase::Searching);
+        assert_eq!(retry.find.query, "缺");
+        assert_ne!(retry.find.generation, none.find.generation);
+    }
+
+    #[test]
+    fn escape_restores_the_same_editor_and_a_jump_does_not() {
+        let ink = MarginInk {
+            new_note: NoteField {
+                body: "草稿".to_string(),
+                composing: false,
+                passage: None,
+                fingerprint: None,
+                notice: String::new(),
+            },
+            place_book: "a.epub".to_string(),
+            place_page: 3,
+            place_spine: "c1.xhtml".to_string(),
+            ..MarginInk::default()
+        };
+        let page = live("a.epub", 3);
+        let column = Column {
+            book: "a.epub".to_string(),
+            mode: Mode::Notes,
+            ..Column::default()
+        };
+        let (open, released) = enter_find(&column, &ink, &page);
+        assert_eq!(open.mode, Mode::Find);
+        assert!(!released.new_note.composing);
+        assert_eq!(released.new_note.body, "草稿");
+        assert!(open.find.seat.is_some());
+        let closed = close_find(&open);
+        assert_eq!(closed.column.mode, Mode::Notes);
+        let focused = refocus_after_find(&released, closed.seat.as_ref(), &page);
+        assert!(focused.focus_new > released.focus_new);
+        assert_eq!(focused.new_note.body, "草稿");
+        let mut moved = open.clone();
+        moved.find.navigated = true;
+        let closed = close_find(&moved);
+        assert!(closed.seat.is_none());
+        let left = refocus_after_find(&released, closed.seat.as_ref(), &page);
+        assert_eq!(left.focus_new, released.focus_new);
+        let elsewhere = live("a.epub", 4);
+        let closed = close_find(&open);
+        let skipped = refocus_after_find(&released, closed.seat.as_ref(), &elsewhere);
+        assert_eq!(skipped.focus_new, released.focus_new);
+        let key = CardKey {
+            book: "a.epub".to_string(),
+            note_id: 7,
+            kind: CardKind::Edit,
+        };
+        let card = begin_card(&MarginInk::default(), key, "卡内");
+        let (open, parked) = enter_marks(&column, &card);
+        assert_eq!(open.mode, Mode::Marks);
+        assert!(matches!(parked.face, Face::New));
+        assert_eq!(parked.drafts[0].body, "卡内");
+        let (open, held) = enter_find(&column, &card, &page);
+        let closed = close_find(&open);
+        let back = restore_after_find(&closed.column, &held, closed.seat.as_ref(), &page);
+        assert!(matches!(back.face, Face::Card(_)));
+        let mut jumped = open.clone();
+        jumped.find.navigated = true;
+        let closed = close_find(&jumped);
+        let parked = restore_after_find(&closed.column, &held, closed.seat.as_ref(), &page);
+        assert!(matches!(parked.face, Face::New));
+        assert_eq!(parked.drafts[0].body, "卡内");
+        let closed = close_find(&open);
+        let other = live("a.epub", 9);
+        let parked = restore_after_find(&closed.column, &held, closed.seat.as_ref(), &other);
+        assert!(matches!(parked.face, Face::New));
+        assert_eq!(parked.drafts[0].body, "卡内");
+    }
+
+    #[test]
+    fn the_first_jump_records_one_origin() {
+        let start = here(2);
+        let dest = Place {
+            href: "c2.xhtml".to_string(),
+            page: 5,
+            offset: 8,
+        };
+        let once = remember_origin(None, &start, &dest);
+        assert_eq!(once.as_ref(), Some(&start));
+        let again = remember_origin(once.clone(), &dest, &here(9));
+        assert_eq!(again, once);
+        assert_eq!(remember_origin(None, &start, &start), None);
+        let mut column = type_find(
+            &Column {
+                book: "a.epub".to_string(),
+                mode: Mode::Find,
+                ..Column::default()
+            },
+            "信",
+        );
+        column.find.hits = hits_in("信送到镇上", "信", 5, "c2.xhtml", IndexKind::Utf16);
+        column.find.phase = Phase::Done;
+        column.find.seen = 1;
+        column.find.total = 1;
+        column.find.text_units = 1;
+        let (next, hit) = find_return(&column, &start);
+        assert!(hit.is_some());
+        assert!(next.find.navigated);
+        let (later, _) = step(&next, true, &dest);
+        assert!(later.find.navigated);
+        let (returned, jump) = find_return(&compose_find(&column, true), &start);
+        assert!(jump.is_none());
+        assert!(!returned.find.navigated);
+    }
+}

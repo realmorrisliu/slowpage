@@ -221,6 +221,115 @@ fn plain_text(xhtml: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Body text in the order a `TreeWalker` of `SHOW_TEXT` visits, with entities
+/// decoded and `script` / `style` left out. Offsets are UTF-16 code units,
+/// the same count as a JavaScript string `.length`. An em dash keeps the
+/// word joiner the page script inserts in front of it.
+pub fn dom_text(xhtml: &str) -> String {
+    join_em_dash(&walk_text(&body_inner(xhtml)))
+}
+
+fn walk_text(html: &str) -> String {
+    let mut out = String::new();
+    let mut rest = html;
+    let mut skip: Option<String> = None;
+    while !rest.is_empty() {
+        if rest.starts_with("<!--") {
+            if let Some(end) = rest.find("-->") {
+                rest = &rest[end + 3..];
+            } else {
+                break;
+            }
+            continue;
+        }
+        if rest.starts_with('<') {
+            let Some(end) = rest.find('>') else {
+                break;
+            };
+            let tag = &rest[1..end];
+            let name = tag_name(tag);
+            if tag.starts_with('/') {
+                if skip.as_deref() == Some(name.as_str()) {
+                    skip = None;
+                }
+            } else if skip.is_none() && (name == "script" || name == "style") {
+                skip = Some(name);
+            }
+            rest = &rest[end + 1..];
+            continue;
+        }
+        let end = rest.find('<').unwrap_or(rest.len());
+        if skip.is_none() {
+            push_decoded(&mut out, &rest[..end]);
+        }
+        rest = &rest[end..];
+    }
+    out
+}
+
+fn tag_name(tag: &str) -> String {
+    let tag = tag.trim_start_matches('/');
+    tag.split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+}
+
+fn push_decoded(out: &mut String, raw: &str) {
+    let mut rest = raw;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at + 1..];
+        let Some(end) = rest.find(';') else {
+            out.push('&');
+            out.push_str(rest);
+            return;
+        };
+        if end > 12 {
+            out.push('&');
+            continue;
+        }
+        let token = &rest[..end];
+        if let Some(ch) = decode_entity(token) {
+            out.push(ch);
+            rest = &rest[end + 1..];
+        } else {
+            out.push('&');
+        }
+    }
+    out.push_str(rest);
+}
+
+fn decode_entity(token: &str) -> Option<char> {
+    match token {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some('\u{00a0}'),
+        _ if token.starts_with("#x") || token.starts_with("#X") => {
+            char::from_u32(u32::from_str_radix(&token[2..], 16).ok()?)
+        }
+        _ if token.starts_with('#') => char::from_u32(token[1..].parse().ok()?),
+        _ => None,
+    }
+}
+
+fn join_em_dash(text: &str) -> String {
+    let mut out = String::new();
+    let mut prev = None;
+    for ch in text.chars() {
+        if ch == '\u{2014}' && prev != Some('\u{2060}') {
+            out.push('\u{2060}');
+        }
+        out.push(ch);
+        prev = Some(ch);
+    }
+    out
+}
+
 pub fn flow_html(css: &str, chapter: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -538,6 +647,22 @@ pub fn anchor_in_chapter(href: &str, plain: &str, needle: &str) -> Option<Anchor
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dom_text_matches_text_nodes_and_utf16_length() {
+        let xhtml = "<html><body><p>信🙂边</p><script>skip</script><p>a&amp;b—c</p></body></html>";
+        let text = dom_text(xhtml);
+        assert!(!text.contains("skip"));
+        assert!(text.contains("信🙂边"));
+        assert!(text.contains("a&b"));
+        let dash = text.find('\u{2014}').expect("em dash");
+        let before: Vec<char> = text[..dash].chars().collect();
+        assert_eq!(before.last().copied(), Some('\u{2060}'));
+        let at = text.find('边').unwrap();
+        let prefix = &text[..at];
+        assert_eq!(prefix.encode_utf16().count(), 3);
+        assert_eq!("信🙂边".encode_utf16().count(), 4);
+    }
 
     #[test]
     fn built_fixtures_keep_a_declared_page_and_a_face() {

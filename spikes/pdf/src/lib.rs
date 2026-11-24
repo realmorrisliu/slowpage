@@ -125,6 +125,26 @@ impl Document {
             Document::Hayro(doc) => text_hayro(doc, index),
         }
     }
+
+    /// Text for a search hit. Pdfium returns the real page text and tight
+    /// quads. Hayro glyph boxes are not hit bounds. A failed read stays
+    /// separate from a page that has no searchable characters.
+    pub fn search_page(&self, index: usize) -> PageRead {
+        match self {
+            Document::Hayro(_) => PageRead::Failed("hayro".to_string()),
+            Document::Pdfium(doc) => match read_pdfium(doc, index) {
+                Ok(text) if text.plain.trim().is_empty() => PageRead::Empty,
+                Ok(text) => PageRead::Text(text),
+                Err(err) => PageRead::Failed(err),
+            },
+        }
+    }
+}
+
+pub enum PageRead {
+    Text(PageText),
+    Empty,
+    Failed(String),
 }
 
 /// Page 1 as a PNG. Hayro draws it, so the call does not need pdfium.
@@ -238,14 +258,20 @@ fn raster_hayro(doc: &HayroDoc, index: usize, scale: PixelScale) -> Result<Rgba,
 }
 
 fn text_pdfium(doc: &PdfiumDoc, index: usize) -> PageText {
-    let page = doc.doc.pages().get(index as i32).expect("page");
+    read_pdfium(doc, index).unwrap_or(PageText {
+        plain: String::new(),
+        glyphs: Vec::new(),
+    })
+}
+
+fn read_pdfium(doc: &PdfiumDoc, index: usize) -> Result<PageText, String> {
+    let page = doc
+        .doc
+        .pages()
+        .get(index as i32)
+        .map_err(|err| format!("pdfium page: {err}"))?;
     let height = page.height().value;
-    let Ok(text) = page.text() else {
-        return PageText {
-            plain: String::new(),
-            glyphs: Vec::new(),
-        };
-    };
+    let text = page.text().map_err(|err| format!("pdfium text: {err}"))?;
     let mut glyphs = Vec::new();
     let mut plain = String::new();
     for ch in text.chars().iter() {
@@ -270,7 +296,7 @@ fn text_pdfium(doc: &PdfiumDoc, index: usize) -> PageText {
             advance: bounds.width().value.max(0.0),
         });
     }
-    PageText { plain, glyphs }
+    Ok(PageText { plain, glyphs })
 }
 
 fn text_hayro(doc: &HayroDoc, index: usize) -> PageText {
@@ -516,6 +542,58 @@ pub fn sample(
 mod tests {
     use super::*;
 
+    #[test]
+    fn hayro_search_does_not_return_glyph_boxes() {
+        let bytes = b"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF".to_vec();
+        let (doc, _, _) =
+            Document::open(PdfEngine::Hayro, bytes, &spike_report::pdfium_lib()).unwrap();
+        assert!(matches!(doc.search_page(0), PageRead::Failed(_)));
+        assert!(matches!(doc, Document::Hayro(_)));
+    }
+
+    #[test]
+    fn a_find_mark_is_lighter_than_the_annotation_and_an_underline_does_not_fill() {
+        let scale = PixelScale::Retina1x;
+        let quad = Quad {
+            x: 0.0,
+            y: 0.0,
+            w: 2.0,
+            h: 2.0,
+        };
+        let white = Rgba {
+            width: 4,
+            height: 4,
+            bytes: vec![255; 64],
+        };
+        let mut note = white.clone();
+        let mut find = white.clone();
+        paint_highlight(&mut note, &[quad], scale);
+        paint_find(
+            &mut find,
+            &[FindMark {
+                quad,
+                current: false,
+                underline: false,
+            }],
+            scale,
+        );
+        let note_ink = note.bytes[0] as u16 + note.bytes[1] as u16 + note.bytes[2] as u16;
+        let find_ink = find.bytes[0] as u16 + find.bytes[1] as u16 + find.bytes[2] as u16;
+        assert!(find_ink > note_ink);
+        let mut line = white;
+        paint_find(
+            &mut line,
+            &[FindMark {
+                quad,
+                current: false,
+                underline: true,
+            }],
+            scale,
+        );
+        assert_eq!(&line.bytes[0..3], &[255, 255, 255]);
+        assert_eq!(&line.bytes[48..51], &[184, 122, 40]);
+    }
+
     fn four_words(line: &str) -> Option<String> {
         let words: Vec<&str> = line.split_whitespace().collect();
         let phrase = words.windows(4).find(|window| {
@@ -697,6 +775,89 @@ mod tests {
             }
         }
         n
+    }
+}
+
+pub struct FindMark {
+    pub quad: Quad,
+    pub current: bool,
+    pub underline: bool,
+}
+
+/// A search mark. Lighter than the annotation yellow. The current hit is
+/// deeper and keeps a thin edge. An underline is the overlap: the annotation
+/// fill stays, and this mark does not cover it.
+pub fn paint_find(image: &mut Rgba, marks: &[FindMark], scale: PixelScale) {
+    for mark in marks {
+        if mark.underline {
+            paint_find_line(image, &mark.quad, scale);
+            continue;
+        }
+        let (red, green, blue, mix) = if mark.current {
+            (232, 160, 48, 5)
+        } else {
+            (255, 236, 190, 4)
+        };
+        paint_find_fill(image, &mark.quad, scale, red, green, blue, mix);
+        if mark.current {
+            paint_find_line(image, &mark.quad, scale);
+        }
+    }
+}
+
+fn paint_find_fill(
+    image: &mut Rgba,
+    quad: &Quad,
+    scale: PixelScale,
+    red: u16,
+    green: u16,
+    blue: u16,
+    mix: u16,
+) {
+    let px = quad.pixels(scale);
+    let x0 = px.x.round().max(0.0) as i32;
+    let y0 = px.y.round().max(0.0) as i32;
+    let x1 = (px.x + px.w).round() as i32;
+    let y1 = (px.y + px.h).round() as i32;
+    let keep = 10 - mix;
+    for y in y0..y1 {
+        if y < 0 || y >= image.height as i32 {
+            continue;
+        }
+        for x in x0..x1 {
+            if x < 0 || x >= image.width as i32 {
+                continue;
+            }
+            let i = ((y as u32 * image.width + x as u32) * 4) as usize;
+            let lum = image.bytes[i] as u16 + image.bytes[i + 1] as u16 + image.bytes[i + 2] as u16;
+            if lum < 540 {
+                continue;
+            }
+            image.bytes[i] = ((image.bytes[i] as u16 * keep + red * mix) / 10) as u8;
+            image.bytes[i + 1] = ((image.bytes[i + 1] as u16 * keep + green * mix) / 10) as u8;
+            image.bytes[i + 2] = ((image.bytes[i + 2] as u16 * keep + blue * mix) / 10) as u8;
+            image.bytes[i + 3] = 255;
+        }
+    }
+}
+
+fn paint_find_line(image: &mut Rgba, quad: &Quad, scale: PixelScale) {
+    let px = quad.pixels(scale);
+    let x0 = px.x.round().max(0.0) as i32;
+    let x1 = (px.x + px.w).round() as i32;
+    let y = (px.y + px.h).round() as i32 - 1;
+    if y < 0 || y >= image.height as i32 {
+        return;
+    }
+    for x in x0..x1 {
+        if x < 0 || x >= image.width as i32 {
+            continue;
+        }
+        let i = ((y as u32 * image.width + x as u32) * 4) as usize;
+        image.bytes[i] = 184;
+        image.bytes[i + 1] = 122;
+        image.bytes[i + 2] = 40;
+        image.bytes[i + 3] = 255;
     }
 }
 

@@ -2,6 +2,7 @@
 
 mod apple;
 mod calibre;
+pub mod column;
 mod cover;
 mod disk;
 pub mod margin;

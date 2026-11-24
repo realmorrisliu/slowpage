@@ -809,8 +809,9 @@ fn inject(bytes: &[u8], language: &str, breaks: &str, bold: bool, doc: u64) -> V
         )
     });
     let fragment = serde_json::to_string(&fragment).unwrap_or_else(|_| "\"\"".to_string());
+    let find = FIND_BOOT.with(|slot| slot.borrow().clone());
     let script = format!(
-        "<script>window.spikeDoc={doc};window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};window.__spikeFragment={fragment};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script>",
+        "<script>window.spikeDoc={doc};window.__spikeBreaks={breaks};window.__spikeWordStarts={starts};window.__spikeStamp=(window.__spikeBreaks&&window.__spikeBreaks.stamp)||\"\";window.__spikeLoad={load};window.__spikeFragment={fragment};window.__spikeFindRanges={find};</script><script>{justify}</script><script>{PAGE_JS}</script><script>{}</script><script>if(window.spikeFind&&window.__spikeFindRanges)window.spikeFind(window.__spikeFindRanges);</script>",
         crate::reading::page_script(language)
     );
     if let Some(at) = html.to_ascii_lowercase().rfind("</body>") {
@@ -1035,6 +1036,30 @@ impl WebChapter {
         eval(
             &web,
             &format!("window.spikeAlign&&window.spikeAlign({quoted})"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    pub fn paint_find(&self, ranges_json: &str) {
+        set_find_boot(ranges_json);
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeFind&&window.spikeFind({ranges_json})"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    pub fn clear_find(&self) {
+        set_find_boot("[]");
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            "window.spikeClearFind&&window.spikeClearFind()",
             self.inbox.clone(),
             href,
             false,
@@ -1438,6 +1463,39 @@ pub fn set_book(book: &str) {
 
 pub fn reader_has_back() -> bool {
     SESSION.with(|session| session.borrow().reader.back.is_some())
+}
+
+pub fn reader_place() -> crate::visit::ReadingPlace {
+    SESSION.with(|session| session.borrow().reader.place.clone())
+}
+
+pub fn reader_back() -> Option<crate::visit::ReadingPlace> {
+    SESSION.with(|session| session.borrow().reader.back.clone())
+}
+
+pub fn set_reader_back(back: Option<crate::visit::ReadingPlace>) {
+    SESSION.with(|session| session.borrow_mut().reader.back = back);
+}
+
+pub fn arm_jump(href: &str, offset: u32) {
+    SESSION.with(|session| {
+        let reader = &mut session.borrow_mut().reader;
+        reader.jump_href = href.to_string();
+        reader.jump_offset = Some(offset);
+    });
+}
+
+thread_local! {
+    static FIND_BOOT: RefCell<String> = RefCell::new("[]".to_string());
+}
+
+pub fn set_find_boot(ranges_json: &str) {
+    let ranges = if ranges_json.trim().is_empty() {
+        "[]".to_string()
+    } else {
+        ranges_json.to_string()
+    };
+    FIND_BOOT.with(|slot| *slot.borrow_mut() = ranges);
 }
 
 /// One parse, one apply, one settings write. The inbox is not consulted.

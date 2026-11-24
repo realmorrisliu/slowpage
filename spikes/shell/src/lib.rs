@@ -437,6 +437,7 @@ pub fn SpikeApp() -> impl IntoElement {
     let margin_hold = signal(spike_library::margin::Hold::default());
     let margin_fault = signal(String::new());
     let margin_note = signal(spike_library::margin::MarginInk::default());
+    let column = signal(spike_library::column::Column::default());
     let margin_gen = signal(0_u64);
     let margin_measures = signal(Vec::<spike_library::margin::FreshMeasure>::new());
     let shell_chrome = signal(form::chrome_off());
@@ -517,7 +518,27 @@ pub fn SpikeApp() -> impl IntoElement {
         },
         {
             let margin_note = margin_note.clone();
+            let column = column.clone();
+            let live = margin_live.clone();
+            let stage = stage.clone();
             move |_| {
+                form::clear_find_escape();
+                if column.get().mode == spike_library::column::Mode::Find {
+                    let closed = spike_library::column::close_find(&column.get());
+                    let ink = spike_library::column::restore_after_find(
+                        &closed.column,
+                        &margin_note.get(),
+                        closed.seat.as_ref(),
+                        &live.get(),
+                    );
+                    column.set(closed.column);
+                    if ink != margin_note.get() {
+                        margin_note.set(ink);
+                    }
+                    stage.command("find-stop", serde_json::json!(null));
+                    form::hold_find_escape();
+                    return;
+                }
                 let current = margin_note.get();
                 if let spike_library::margin::Face::Card(key) = current.face.clone() {
                     margin_note.set(spike_library::margin::cancel_card(&current, &key));
@@ -531,6 +552,9 @@ pub fn SpikeApp() -> impl IntoElement {
         let stage = stage.clone();
         let margin_note = margin_note.clone();
         move |_| {
+            if form::take_find_escape() {
+                return;
+            }
             apply_leave(
                 &visit,
                 &shell_form,
@@ -554,6 +578,57 @@ pub fn SpikeApp() -> impl IntoElement {
                 &stage,
             );
         }
+    });
+    let find_keys = || KeyOptions {
+        when: nsh_core::keymap::When::Always,
+        pass_through: false,
+        ..KeyOptions::default()
+    };
+    on_key_with("mod+f", find_keys(), {
+        let column = column.clone();
+        let note = margin_note.clone();
+        let live = margin_live.clone();
+        let form = shell_form.clone();
+        let stage = stage.clone();
+        let visit = visit.clone();
+        move |_| {
+            if visit.get().surface != visit::Surface::Reading {
+                return;
+            }
+            let (next, ink) =
+                spike_library::column::enter_find(&column.get(), &note.get(), &live.get());
+            column.set(next);
+            if ink != note.get() {
+                note.set(ink);
+            }
+            if !form::immersive_on() {
+                let opened = form::show_reading_margin(form.get());
+                if opened != form.get() {
+                    let shown = form::margin_column_open(opened);
+                    form.set(opened);
+                    form::publish_margin(shown);
+                    stage.command("margin", serde_json::json!(shown));
+                }
+            }
+        }
+    });
+    on_key_with("mod+g", find_keys(), {
+        let column = column.clone();
+        let live = margin_live.clone();
+        let stage = stage.clone();
+        move |_| form::press_find_step(&column, &live, &stage, true);
+    });
+    on_key_with("shift+mod+g", find_keys(), {
+        let column = column.clone();
+        let live = margin_live.clone();
+        let stage = stage.clone();
+        move |_| form::press_find_step(&column, &live, &stage, false);
+    });
+    on_key_with("shift+return", find_keys(), {
+        let column = column.clone();
+        let live = margin_live.clone();
+        let stage = stage.clone();
+        move |_| form::press_find_step(&column, &live, &stage, false);
     });
     on_key_with(IMMERSIVE_KEY, leave_keys, {
         let visit = visit.clone();
@@ -860,6 +935,7 @@ pub fn SpikeApp() -> impl IntoElement {
                             let margin_live = margin_live.clone();
                             let margin_note = margin_note.clone();
                             let margin_gen = margin_gen.clone();
+                            let column = column.clone();
                             move |event: &NativeEvent| {
                                 if event.name.as_ref() == "ease" {
                                     let leg = event.data["leg"].as_u64().unwrap_or(0);
@@ -903,6 +979,23 @@ pub fn SpikeApp() -> impl IntoElement {
                                 };
                                 if margin_live.get() != next_live {
                                     margin_live.set(next_live.clone());
+                                }
+                                let mut shelf = column.get();
+                                if shelf.book != next_live.book {
+                                    shelf =
+                                        spike_library::column::clear_book(&shelf, &next_live.book);
+                                    let path = settings::support_dir().join("annotations.sqlite");
+                                    if let Ok(marks) = spike_library::column::Marks::open(&path) {
+                                        if let Ok(rows) = marks.list(&shelf.book) {
+                                            shelf = spike_library::column::reload(&shelf, rows);
+                                        }
+                                    }
+                                }
+                                let place = form::reading_place(&next_live);
+                                let (shelf, _) =
+                                    form::apply_find_status(&shelf, &event.data, &place);
+                                if shelf != column.get() {
+                                    column.set(shelf);
                                 }
                                 let gen = event.data["book_gen"].as_u64().unwrap_or(0);
                                 if margin_gen.get() != gen {
@@ -1069,6 +1162,7 @@ pub fn SpikeApp() -> impl IntoElement {
                 let note = margin_note.clone();
                 let gen = margin_gen.clone();
                 let measures = margin_measures.clone();
+                let column = column.clone();
                 move || {
                     form::reading_margin(
                         form.clone(),
@@ -1082,6 +1176,7 @@ pub fn SpikeApp() -> impl IntoElement {
                         note.clone(),
                         gen.clone(),
                         measures.clone(),
+                        column.clone(),
                     )
                 }
             },

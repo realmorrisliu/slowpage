@@ -39,6 +39,8 @@ scripts/verify --doctor
 
 This is read-only. It checks `nsh` is 0.6.1, the shell crate pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at `=0.6.1`, the fixtures exist, Cargo.lock has neither the `epub` crate nor `mupdf`, the machine is macOS, and no `spike-shell` process is already running. A running shell belongs to someone else. Do not kill it.
 
+Bookmarks and whole-book find are library tests in `spike-library` (`column`) plus `dom_text` in `spike-epub`. They cover a bookmark that survives reopen, undo, and a second book; a query that crosses units; a late result and an unfinished composition; empty text versus a failed read versus an unfinished scan; Escape restoring only the same editor; and one return origin. The Mac window, WebKit, and `nsh test` are still required before those paths can pass. A green library run is not that pass.
+
 ## Drive
 
 Two drivers. Do not swap them.
