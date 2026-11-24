@@ -898,7 +898,10 @@ impl State {
                 let href = args.get("href").and_then(|v| v.as_str()).unwrap_or("");
                 let page = args.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                 let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let end = args.get("end").and_then(|v| v.as_u64()).unwrap_or(offset) as u32;
+                let end = args
+                    .get("end")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(u64::from(offset)) as u32;
                 self.jump_place(href, page, offset, end);
             }
             _ => {}
