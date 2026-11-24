@@ -1,6 +1,6 @@
 # Official open
 
-Launch Services opens an EPUB and a PDF through NSH 0.5.1's file path. The proof is `opens.log`.
+Launch Services opens an EPUB and a PDF through NSH 0.6.1's file path. The proof is `opens.log`.
 
 ## Sub-features
 

@@ -1,6 +1,24 @@
-# NSH 0.5.1
+# NSH 0.6.1
 
-The shell is pinned at NSH 0.5.1, published on 2026-11-14 as tag `v0.5.1`, commit `224d9a7`. 0.5.1 is a bug-fix release of 0.5.0 with no API change, so the 0.5.0 notes below still describe this shell. crates.io reports `0.5.1` as the max stable version of `nsh-core`. A nightly after that tag is not the pin. The license is Apache-2.0.
+The shell pins `nsh-core`, `nsh-base`, and `nsh-platform-macos` at exactly 0.6.1. Tag `v0.6.1` is commit `2f51d8611677c8a6bbad937b39756e8d0cc45350`, published 2026-11-20. It is a patch on the 0.6.0 line. 0.6.0 is tag `v0.6.0`, commit `554163758e30d2f62f814096a6327937dcb4fe49`, published 2026-11-18. The workspace `rust-version` is 1.97. This repo's toolchain is 1.98.1. The license is Apache-2.0. A nightly after `v0.6.1` is not the pin.
+
+`nsh-platform-macos` is built with `default-features = false`. That leaves `updater`, `svg`, and `websocket` off. `nsh.json` does not set `updater` and this repo does not write `latest.json`. `nsh-engine` 0.6.1 still depends on the `nsh-updater` crate for non-wasm targets. The shell does not call it. An update check is not part of this app.
+
+`nsh.json` does not declare `capabilities`, so the 0.6.0 rule that a declared list must include `application` and `homeDir` does not apply. The shell does not use `clip_chars`, NSH web-view downloads, `ContextMenu`, `Transition`, `ModalConfig`, or `RichEditor`. File open is still `Root::url_schemes(["file"])` and `next_open_files`, which returns `Answer<Vec<PathBuf>>`. A press still goes to one node. `pick_press` gives a tap to the innermost enabled view that listens for a tap. `Press::target` sends `Press` to that node.
+
+## What 0.6.0 changed for this shell
+
+The release notes on [nsh.dev](https://nsh.dev/releases/) and the `v0.6.0` GitHub release list every break. The ones this shell meets are these.
+
+`AppOptions`, `TitleBarOptions`, and `KeyOptions` gained fields. Each still implements `Default`. The shell sets the fields it already set and fills the rest from `Default`. `TitleBarOptions` stays `non_exhaustive`. The hidden title bar and its height are unchanged. `for_focus` on a key binding defaults to false.
+
+`Composition` still has `composing` and `text`. Card and new-note fields still read `composing` from `on_composition_change`.
+
+SVG loading through `asset!` or `assets!` needs the `svg` feature in 0.6.1. This shell does not use those macros. Its icons are rasterized by its own `resvg`.
+
+## What 0.5.1 was
+
+The previous pin was NSH 0.5.1, published on 2026-11-14 as tag `v0.5.1`, commit `224d9a7`. 0.5.1 is a bug-fix release of 0.5.0 with no API change, so the 0.5.0 notes below still describe that shell.
 
 The app stays a Rust root. `spikes/shell/nsh.json` names `SpikeApp`. Headless checks stay in `spikes/shell/shell.test.tsx`, run by `nsh test`.
 

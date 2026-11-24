@@ -13,7 +13,7 @@ The bars in `docs/design/north-star.md` are the single page, the footer, the abs
 - `pdf-highlight-zoom-scale` finds the zoom band at least 1.5 times as tall as the retina band.
 - `pdf-open-to-first` keeps the five-run median under 100 ms.
 - `pdf-later-page` keeps the five-run later-page median at or under 16.7 ms.
-- `nsh-pin` and `nsh-cargo-pin` require NSH 0.5.1.
+- `nsh-pin` and `nsh-cargo-pin` require NSH 0.6.1.
 - `no-agpl-gpl` rejects the `epub` crate and `mupdf`.
 - `library-search-tantivy` is pending. There is no index.
 
