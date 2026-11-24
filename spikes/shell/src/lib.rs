@@ -1790,6 +1790,35 @@ mod launch_tests {
             }
         }
         let restore = Restore(std::env::var("SUPERREADER_SUPPORT_DIR").ok());
+        let prior_margin = form::margin_shown();
+        let prior_immersive = form::immersive_on();
+        let prior_surface = visit::on_library();
+        let prior_scroll = form::shelf_scroll();
+        struct Clean {
+            margin: bool,
+            immersive: bool,
+            library: bool,
+            scroll: f32,
+        }
+        impl Drop for Clean {
+            fn drop(&mut self) {
+                form::publish_margin(self.margin);
+                form::publish_immersive(self.immersive);
+                crate::ease::settle(self.immersive, self.margin);
+                visit::publish_surface(if self.library {
+                    Surface::Library
+                } else {
+                    Surface::Reading
+                });
+                form::restore_shelf_scroll(self.scroll);
+            }
+        }
+        let _clean = Clean {
+            margin: prior_margin,
+            immersive: prior_immersive,
+            library: prior_surface,
+            scroll: prior_scroll,
+        };
         let dir = std::env::temp_dir().join(format!("margin-leave-shell-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1903,23 +1932,27 @@ mod launch_tests {
                 .iter()
                 .any(|note| note.id == id && note.body == "旧批注")
         );
-        let note = signal(same);
-        let visit = signal(visit::open_cover(
-            &visit::Visit::shelf(),
-            &passage.book,
-            passage.page,
-        ));
-        let shell_form = signal(closed);
-        let sent = Sent(std::cell::RefCell::new(Vec::new()));
-        assert_eq!(
-            apply_leave(&visit, &shell_form, &note, visit::LeaveKey::Escape, &sent),
-            None
-        );
-        assert_eq!(visit.get().surface, Surface::Library);
-        assert!(!note.get().draft(&key).unwrap().composing);
-        assert_eq!(note.get().draft(&key).unwrap().body, "改过");
-        let continued =
-            spike_library::margin::retarget(&note.get(), &passage.book, "", passage.page);
+        let runtime = nsh_core::element::reactive::Runtime::default();
+        let _entered = runtime.enter();
+        let (owner, continued) = nsh_core::element::reactive::create_root(|| {
+            let note = signal(same);
+            let visit = signal(visit::open_cover(
+                &visit::Visit::shelf(),
+                &passage.book,
+                passage.page,
+            ));
+            let shell_form = signal(closed);
+            let sent = Sent(std::cell::RefCell::new(Vec::new()));
+            assert_eq!(
+                apply_leave(&visit, &shell_form, &note, visit::LeaveKey::Escape, &sent),
+                None
+            );
+            assert_eq!(visit.get().surface, Surface::Library);
+            assert!(!note.get().draft(&key).unwrap().composing);
+            assert_eq!(note.get().draft(&key).unwrap().body, "改过");
+            spike_library::margin::retarget(&note.get(), &passage.book, "", passage.page)
+        });
+        owner.dispose();
         assert!(!continued.draft(&key).unwrap().composing);
         assert_eq!(continued.draft(&key).unwrap().body, "改过");
         let written = form::commit_card(&continued, &key, "改过");
