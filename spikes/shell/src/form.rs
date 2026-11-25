@@ -864,7 +864,7 @@ pub fn mount(
     menu: Signal<bool>,
     ease: Signal<u64>,
     on_peer: impl Fn(Peer) + Clone + 'static,
-    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
+    on_open: impl Fn(String, Option<Rect>) + Clone + 'static,
 ) -> impl IntoElement {
     let form_b = form;
     let selected_b = selected;
@@ -2103,7 +2103,7 @@ fn paint(
     query: Signal<String>,
     library: LibraryIn,
     on_peer: impl Fn(Peer) + Clone + 'static,
-    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
+    on_open: impl Fn(String, Option<Rect>) + Clone + 'static,
 ) -> AnyElement {
     let grid = crate::shelf_pass::grid_alpha() as f32;
     let veil = crate::shelf_pass::shelf_veil() as f32;
@@ -2158,9 +2158,20 @@ fn paint(
         root = root.child(fade_layer(grid, chat_pane(Some(rect), form, &library)));
     }
     if let CardBox::Placed { rect, radius, .. } = placed.card {
+        let opened = {
+            let form_now = form.get();
+            let chrome = placed.chrome;
+            let painted = library.clone();
+            let window = window;
+            let on_open = on_open.clone();
+            move |path: String, from: CoverFrom| {
+                let slot = cover_slot(window, chrome, &painted, form_now, &path, from);
+                on_open(path, slot);
+            }
+        };
         root = root.child(fade_layer(
             grid,
-            card_face(Some(rect), radius, placed.face, &library, on_peer, on_open),
+            card_face(Some(rect), radius, placed.face, &library, on_peer, opened),
         ));
         if let Some(flight) = crate::shelf_pass::flight(window.width, window.height, rect) {
             if let Some(card) = cover_named(&library, &flight.path) {
@@ -5987,6 +5998,67 @@ mod tests {
         near(scrolled.h, unmoved.h);
         near(scrolled.y, unmoved.y - 48.0);
         restore_shelf_scroll(0.0);
+    }
+
+    #[test]
+    fn a_filtered_click_uses_the_painted_cover() {
+        restore_shelf_scroll(0.0);
+        let chrome = crate::tokens::ChromeIn {
+            lights: false,
+            bar: 0.0,
+            top: 0.0,
+        };
+        let mut library = empty_library();
+        for (title, path) in [
+            ("Essay", "essay.epub"),
+            ("Other", "other.epub"),
+            ("Field Guide", "guide.epub"),
+        ] {
+            library.covers.push(CoverCard {
+                title: title.into(),
+                author: String::new(),
+                cover: None,
+                open_path: Some(path.into()),
+                pdf: false,
+                percent: Some(12),
+                page: Some(1),
+                position: String::new(),
+                opened: String::new(),
+                plate: true,
+                plate_rgb: None,
+                unavailable: None,
+            });
+        }
+        library.empty = false;
+        library.book_count = 3;
+        library.continue_reading = library.covers.clone();
+        let painted = crate::shelf::searched(library.clone(), "guide");
+        assert_eq!(painted.covers.len(), 1);
+        assert_eq!(painted.continue_reading.len(), 1);
+        let placed = place_now(
+            &PlaceIn {
+                form: launch(),
+                window: window(),
+                chrome,
+            },
+            &painted,
+        );
+        let nodes = layout_nodes(&placed, &painted);
+        for (from, node) in [
+            (CoverFrom::Shelf, "cover.0"),
+            (CoverFrom::Continue, "continue.0.cover"),
+        ] {
+            let slot = cover_slot(window(), chrome, &painted, launch(), "guide.epub", from)
+                .expect(node);
+            let frame = frame_of(&nodes, node);
+            near(slot.x, f64::from(frame[0]));
+            near(slot.y, f64::from(frame[1]));
+            near(slot.w, f64::from(frame[2]));
+            near(slot.h, f64::from(frame[3]));
+            let unfiltered =
+                cover_slot(window(), chrome, &library, launch(), "guide.epub", from).expect(node);
+            assert!((unfiltered.x - slot.x).abs() > 100.0, "{node}");
+        }
     }
 
     fn frame_of(nodes: &[serde_json::Value], id: &str) -> [f32; 4] {

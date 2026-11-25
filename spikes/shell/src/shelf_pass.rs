@@ -80,9 +80,8 @@ pub(crate) fn intend_reading(path: &str, cover: Option<Rect>) {
         let already_open = pass.span_ms == 0 && pass.seat == Seat::Reading && from > 1.0 - 1e-3;
         pass.generation = pass.generation.wrapping_add(1);
         pass.path = path.to_string();
-        if cover.is_some() {
-            pass.cover = cover;
-        }
+        // None is a real answer: a file open has no clicked tile, so the previous cover must not fly.
+        pass.cover = cover;
         if already_open {
             pass.from = 1.0;
             pass.to = 1.0;
@@ -671,13 +670,24 @@ mod tests {
         crate::ease::settle(false, false);
         let leaving = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
         assert_eq!(leaving.page, frame.card);
-        crate::ease::retarget(true, true);
-        let parked = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        advance(10_000);
+        intend_shelf();
+        advance(10_000);
         assert!(!moving());
         crate::ease::settle(false, true);
-        crate::ease::retarget(true, true);
-        let clean = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
-        assert_eq!(parked, clean);
+        let idle = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        assert_eq!(settled, idle);
+    }
+
+    #[test]
+    fn a_file_open_does_not_keep_the_previous_cover() {
+        let _clean = Clean;
+        reset();
+        let card = shelf_card(1440.0, 900.0, 0.0);
+        intend_reading("a.pdf", Some(origin()));
+        assert!(flight(1440.0, 900.0, card).is_some());
+        intend_reading("b.epub", None);
+        assert!(flight(1440.0, 900.0, card).is_none());
     }
 
     #[test]

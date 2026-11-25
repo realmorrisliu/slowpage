@@ -1166,7 +1166,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                     form::Peer::Calibre => import_calibre(),
                                     form::Peer::AddFolder => import_folder(),
                                 },
-                                move |path, from| {
+                                move |path, slot| {
                                     // The headless runner never builds the native stage, so
                                     // the open command does not write history there. Record
                                     // the click here, then let the stage replace the row
@@ -1183,14 +1183,6 @@ pub fn SpikeApp() -> impl IntoElement {
                                     notice_open.set(String::new());
                                     let shelf_form = form_open.get();
                                     shelf_pass::note_shelf(shelf_form);
-                                    let slot = form::cover_slot(
-                                        window_open.get(),
-                                        chrome_open.get(),
-                                        &library_open.get(),
-                                        shelf_form,
-                                        &path,
-                                        from,
-                                    );
                                     form::show_reading(&form_open);
                                     let mut current = visit_open.get();
                                     current.scroll = form::shelf_scroll();
