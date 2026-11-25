@@ -44,6 +44,26 @@ pub struct PageText {
     pub glyphs: Vec<Glyph>,
 }
 
+/// One link rectangle in PDF user space. `page` is 1-based when the link
+/// stays in this file and names a page that exists. `None` is a URI, another
+/// file, or a destination this file does not contain.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageLink {
+    pub left: f32,
+    pub bottom: f32,
+    pub right: f32,
+    pub top: f32,
+    pub page: Option<u32>,
+}
+
+/// The topmost link under a PDF point. `Held` occupies the rectangle and
+/// does not change the page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkHit {
+    Page(u32),
+    Held,
+}
+
 pub enum Document {
     Pdfium(PdfiumDoc),
     Hayro(HayroDoc),
@@ -68,10 +88,12 @@ impl Document {
         let started = Instant::now();
         match engine {
             PdfEngine::Pdfium => {
-                let pdfium = Box::leak(Box::new(Pdfium::new(
-                    Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(lib_dir))
-                        .map_err(|e| format!("bind pdfium: {e}"))?,
-                )));
+                let path = Pdfium::pdfium_platform_library_name_at_path(lib_dir);
+                let pdfium = Box::leak(Box::new(match Pdfium::bind_to_library(&path) {
+                    Ok(bindings) => Pdfium::new(bindings),
+                    Err(PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => Pdfium::default(),
+                    Err(err) => return Err(format!("bind pdfium: {err}")),
+                }));
                 let bind_ms = started.elapsed().as_secs_f64() * 1000.0;
                 let opened = Instant::now();
                 let doc = pdfium
@@ -139,12 +161,163 @@ impl Document {
             },
         }
     }
+
+    /// Link rectangles on one page. Hayro does not read annotations.
+    pub fn page_links(&self, index: usize) -> Vec<PageLink> {
+        match self {
+            Document::Pdfium(doc) => pdfium_page_links(doc, index),
+            Document::Hayro(_) => Vec::new(),
+        }
+    }
 }
 
 pub enum PageRead {
     Text(PageText),
     Empty,
     Failed(String),
+}
+
+fn pdfium_page_links(doc: &PdfiumDoc, index: usize) -> Vec<PageLink> {
+    let Ok(page) = doc.doc.pages().get(index as i32) else {
+        return Vec::new();
+    };
+    let (origin_x, origin_y) = rendered_origin(&page);
+    let mut links = Vec::new();
+    for link in page.links().iter() {
+        let Ok(rect) = link.rect() else {
+            continue;
+        };
+        links.push(PageLink {
+            left: rect.left().value - origin_x,
+            bottom: rect.bottom().value - origin_y,
+            right: rect.right().value - origin_x,
+            top: rect.top().value - origin_y,
+            page: same_document_page(&link, doc.count),
+        });
+    }
+    links
+}
+
+/// The bitmap's bottom-left is the crop box when the page has one, and the
+/// media box otherwise. Link rectangles are stored in that painted space.
+fn rendered_origin(page: &PdfPage<'_>) -> (f32, f32) {
+    let bounds = page.boundaries();
+    let rect = bounds.crop().or_else(|_| bounds.media()).ok();
+    match rect {
+        Some(boundary) => (boundary.bounds.left().value, boundary.bounds.bottom().value),
+        None => (0.0, 0.0),
+    }
+}
+
+fn same_document_page(link: &PdfLink<'_>, pages: usize) -> Option<u32> {
+    let index = match link.action() {
+        Some(PdfAction::LocalDestination(action)) => action.destination().ok()?.page_index().ok(),
+        Some(_) => return None,
+        None => link.destination().and_then(|dest| dest.page_index().ok()),
+    }?;
+    if index < 0 || index as usize >= pages {
+        return None;
+    }
+    Some(index as u32 + 1)
+}
+
+/// `y` grows down from `top`, matching the flipped page view.
+/// The returned PDF y grows up from the bottom of the page.
+pub fn pdf_user_point(
+    x: f64,
+    y: f64,
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+    page_w: f32,
+    page_h: f32,
+) -> Option<(f32, f32)> {
+    if !(width > 0.0 && height > 0.0 && page_w > 0.0 && page_h > 0.0) {
+        return None;
+    }
+    if x < left || y < top || x > left + width || y > top + height {
+        return None;
+    }
+    let px = ((x - left) / width) * f64::from(page_w);
+    let down = ((y - top) / height) * f64::from(page_h);
+    Some((px as f32, (f64::from(page_h) - down) as f32))
+}
+
+/// A margin that covers the page owns this point. The page beside it does not.
+pub fn margin_owns_point(
+    x: f64,
+    y: f64,
+    covers: bool,
+    margin: Option<(f64, f64, f64, f64)>,
+) -> bool {
+    if !covers {
+        return false;
+    }
+    let Some((left, top, width, height)) = margin else {
+        return false;
+    };
+    width > 0.0 && height > 0.0 && x >= left && y >= top && x <= left + width && y <= top + height
+}
+
+/// Map a view click through the painted page and test that page's links.
+pub fn hit_fitted_page(
+    x: f64,
+    y: f64,
+    paint_x: f64,
+    paint_y: f64,
+    paint_w: f64,
+    paint_h: f64,
+    page_w: f32,
+    page_h: f32,
+    links: &[PageLink],
+    page: u32,
+) -> Option<(u32, LinkHit)> {
+    let (px, py) = pdf_user_point(x, y, paint_x, paint_y, paint_w, paint_h, page_w, page_h)?;
+    let hit = hit_page_link(links, px, py)?;
+    Some((page, hit))
+}
+
+/// A cross-page GoTo. The same page, a page this file does not contain,
+/// and a page of 0 stay. The first move records `here`. A later move keeps it.
+pub fn pdf_link_jump(
+    here: u32,
+    dest: u32,
+    pages: u32,
+    back: Option<u32>,
+) -> Option<(u32, Option<u32>)> {
+    if dest == 0 || pages == 0 || dest > pages || dest == here {
+        return None;
+    }
+    let back = if back.is_none() { Some(here) } else { back };
+    Some((dest, back))
+}
+
+/// Opening a book drops the return page. The same open book keeps it.
+pub fn link_back_for_book(back: Option<u32>, same_book: bool) -> Option<u32> {
+    if same_book {
+        back
+    } else {
+        None
+    }
+}
+
+/// The last rectangle that contains the point wins. Edges are inside.
+pub fn hit_page_link(links: &[PageLink], x: f32, y: f32) -> Option<LinkHit> {
+    let mut found = None;
+    for link in links {
+        let left = link.left.min(link.right);
+        let right = link.left.max(link.right);
+        let bottom = link.bottom.min(link.top);
+        let top = link.bottom.max(link.top);
+        if x >= left && x <= right && y >= bottom && y <= top {
+            found = Some(match link.page {
+                Some(page) => LinkHit::Page(page),
+                None => LinkHit::Held,
+            });
+        }
+    }
+    found
 }
 
 /// Page 1 as a PNG. Hayro draws it, so the call does not need pdfium.
@@ -752,6 +925,202 @@ mod tests {
             after + 5 >= before,
             "ink survived the tint, before={before} after={after}"
         );
+    }
+
+    #[test]
+    fn a_goto_link_keeps_its_rect_and_page() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/goto-links.pdf");
+        let bytes = std::fs::read(path).unwrap();
+        let (doc, _, _) = Document::open(
+            PdfEngine::Pdfium,
+            bytes.clone(),
+            &spike_report::pdfium_lib(),
+        )
+        .unwrap();
+        assert_eq!(doc.page_count(), 2);
+        let (width, height) = doc.page_size_pt(0);
+        assert!((width - 200.0).abs() < 0.2, "{width}");
+        assert!((height - 300.0).abs() < 0.2, "{height}");
+        let links = doc.page_links(0);
+        let goto = links
+            .iter()
+            .find(|link| link.page == Some(2))
+            .expect("page 1 GoTo");
+        assert!((goto.left - 20.0).abs() < 0.2);
+        assert!((goto.bottom - 260.0).abs() < 0.2);
+        assert!((goto.right - 90.0).abs() < 0.2);
+        assert!((goto.top - 290.0).abs() < 0.2);
+        let uri = links
+            .iter()
+            .find(|link| (link.left - 110.0).abs() < 0.2 && link.bottom > 200.0)
+            .expect("uri");
+        assert_eq!(uri.page, None);
+        let missing = links
+            .iter()
+            .find(|link| (link.left - 20.0).abs() < 0.2 && link.bottom < 40.0)
+            .expect("missing dest");
+        assert_eq!(missing.page, None);
+        let other = links
+            .iter()
+            .find(|link| (link.left - 110.0).abs() < 0.2 && link.bottom < 40.0)
+            .expect("other file");
+        assert_eq!(other.page, None);
+        let same = links
+            .iter()
+            .find(|link| link.page == Some(1))
+            .expect("same page");
+        assert!((same.bottom - 140.0).abs() < 0.2);
+        let back = doc.page_links(1);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].page, Some(1));
+        assert!((back[0].left - 20.0).abs() < 0.2 && (back[0].top - 290.0).abs() < 0.2);
+        assert_eq!(
+            hit_page_link(&links, goto.right, goto.top),
+            Some(LinkHit::Page(2))
+        );
+        assert_eq!(hit_page_link(&links, goto.right + 0.2, goto.top), None);
+        assert_eq!(
+            hit_page_link(&links, uri.left, uri.bottom),
+            Some(LinkHit::Held)
+        );
+        let stacked = [
+            PageLink {
+                left: 0.0,
+                bottom: 0.0,
+                right: 10.0,
+                top: 10.0,
+                page: Some(2),
+            },
+            PageLink {
+                left: 0.0,
+                bottom: 0.0,
+                right: 10.0,
+                top: 10.0,
+                page: None,
+            },
+        ];
+        assert_eq!(hit_page_link(&stacked, 5.0, 5.0), Some(LinkHit::Held));
+        let view = |width: f64, height: f64, px: f32, py: f32| {
+            let x = 100.0 + f64::from(px) / 200.0 * width;
+            let y = 40.0 + (300.0 - f64::from(py)) / 300.0 * height;
+            (x, y)
+        };
+        let (x, y) = view(100.0, 150.0, goto.right, goto.top);
+        assert_eq!(
+            hit_fitted_page(x, y, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0, &links, 1),
+            Some((1, LinkHit::Page(2)))
+        );
+        let (x, y) = view(400.0, 600.0, 55.0, 275.0);
+        assert_eq!(
+            hit_fitted_page(x, y, 100.0, 40.0, 400.0, 600.0, 200.0, 300.0, &links, 1)
+                .map(|(_, hit)| hit),
+            Some(LinkHit::Page(2))
+        );
+        assert_eq!(
+            pdf_user_point(99.9, 40.0, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0),
+            None
+        );
+        let top = pdf_user_point(200.0, 40.0, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0).unwrap();
+        assert!((top.0 - 200.0).abs() < 0.01 && (top.1 - 300.0).abs() < 0.01);
+        let bottom = pdf_user_point(100.0, 190.0, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0).unwrap();
+        assert!(bottom.0.abs() < 0.01 && bottom.1.abs() < 0.01);
+        assert!(margin_owns_point(
+            10.0,
+            10.0,
+            true,
+            Some((0.0, 0.0, 40.0, 40.0))
+        ));
+        assert!(!margin_owns_point(
+            10.0,
+            10.0,
+            false,
+            Some((0.0, 0.0, 40.0, 40.0))
+        ));
+        assert_eq!(pdf_link_jump(1, 2, 2, None), Some((2, Some(1))));
+        assert_eq!(pdf_link_jump(2, 1, 2, Some(1)), Some((1, Some(1))));
+        assert_eq!(pdf_link_jump(1, 2, 2, Some(1)), Some((2, Some(1))));
+        assert_eq!(pdf_link_jump(1, 1, 2, None), None);
+        assert_eq!(pdf_link_jump(1, 0, 2, None), None);
+        assert_eq!(pdf_link_jump(1, 9, 2, None), None);
+        assert_eq!(link_back_for_book(Some(1), true), Some(1));
+        assert_eq!(link_back_for_book(Some(1), false), None);
+        let (hayro, _, _) =
+            Document::open(PdfEngine::Hayro, bytes, &spike_report::pdfium_lib()).unwrap();
+        assert!(hayro.page_links(0).is_empty());
+    }
+
+    #[test]
+    fn a_shifted_page_box_hits_the_painted_ink() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/shifted-box.pdf");
+        let bytes = std::fs::read(path).unwrap();
+        let (doc, _, _) =
+            Document::open(PdfEngine::Pdfium, bytes, &spike_report::pdfium_lib()).unwrap();
+        let (width, height) = doc.page_size_pt(0);
+        assert!((width - 200.0).abs() < 0.2 && (height - 300.0).abs() < 0.2);
+        let links = doc.page_links(0);
+        assert_eq!(links.len(), 1);
+        let link = links[0];
+        assert_eq!(link.page, Some(2));
+        assert!((link.left - 20.0).abs() < 0.2 && (link.bottom - 20.0).abs() < 0.2);
+        assert!((link.right - 90.0).abs() < 0.2 && (link.top - 50.0).abs() < 0.2);
+        let image = doc.raster(0, PixelScale::Retina1x).unwrap();
+        let dark = dark_bbox(&image);
+        assert_eq!(dark, (40, 500, 179, 559), "ink bbox {dark:?}");
+        let (x, y) = painted_click(55.0, 35.0, 200.0, 300.0, 100.0, 150.0);
+        assert_eq!(
+            hit_fitted_page(x, y, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0, &links, 1),
+            Some((1, LinkHit::Page(2)))
+        );
+        let (miss_x, miss_y) = painted_click(55.0, 135.0, 200.0, 300.0, 100.0, 150.0);
+        assert_eq!(
+            hit_fitted_page(miss_x, miss_y, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0, &links, 1),
+            None
+        );
+        let cropped = doc.page_links(1);
+        assert_eq!(cropped.len(), 1);
+        assert_eq!(cropped[0].page, Some(1));
+        assert!((cropped[0].left - 20.0).abs() < 0.2 && (cropped[0].bottom - 260.0).abs() < 0.2);
+        assert!((cropped[0].right - 90.0).abs() < 0.2 && (cropped[0].top - 290.0).abs() < 0.2);
+        let crop = doc.raster(1, PixelScale::Retina1x).unwrap();
+        assert_eq!(dark_bbox(&crop), (40, 20, 179, 79));
+        let (x, y) = painted_click(55.0, 275.0, 200.0, 300.0, 100.0, 150.0);
+        assert_eq!(
+            hit_fitted_page(x, y, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0, &cropped, 2)
+                .map(|(_, hit)| hit),
+            Some(LinkHit::Page(1))
+        );
+    }
+
+    fn painted_click(
+        px: f32,
+        py: f32,
+        page_w: f32,
+        page_h: f32,
+        width: f64,
+        height: f64,
+    ) -> (f64, f64) {
+        let x = 100.0 + f64::from(px) / f64::from(page_w) * width;
+        let y = 40.0 + (f64::from(page_h) - f64::from(py)) / f64::from(page_h) * height;
+        (x, y)
+    }
+
+    fn dark_bbox(image: &Rgba) -> (i32, i32, i32, i32) {
+        let mut left = image.width as i32;
+        let mut top = image.height as i32;
+        let mut right = 0i32;
+        let mut bottom = 0i32;
+        for y in 0..image.height as i32 {
+            for x in 0..image.width as i32 {
+                let i = ((y as u32 * image.width + x as u32) * 4) as usize;
+                if image.bytes[i] < 40 && image.bytes[i + 1] < 40 && image.bytes[i + 2] < 40 {
+                    left = left.min(x);
+                    top = top.min(y);
+                    right = right.max(x);
+                    bottom = bottom.max(y);
+                }
+            }
+        }
+        (left, top, right, bottom)
     }
 
     fn ink_in(image: &Rgba, quads: &[Quad], scale: PixelScale) -> usize {

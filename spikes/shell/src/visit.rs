@@ -3009,6 +3009,38 @@ pub fn page_edge(x: f64, y: f64, left: f64, top: f64, width: f64, height: f64) -
     }
 }
 
+pub use spike_pdf::{
+    hit_fitted_page, link_back_for_book, margin_owns_point, pdf_link_jump, pdf_user_point,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PdfPress {
+    Follow { page: u32, back: Option<u32> },
+    Stay,
+    Turn(PageEdge),
+}
+
+/// A link under the click wins over an edge turn. A link that does not
+/// move still keeps the edge from turning.
+pub fn pdf_press(
+    hit: Option<spike_pdf::LinkHit>,
+    here: u32,
+    pages: u32,
+    back: Option<u32>,
+    edge: PageEdge,
+) -> PdfPress {
+    match hit {
+        Some(spike_pdf::LinkHit::Page(dest)) => {
+            match spike_pdf::pdf_link_jump(here, dest, pages, back) {
+                Some((page, back)) => PdfPress::Follow { page, back },
+                None => PdfPress::Stay,
+            }
+        }
+        Some(spike_pdf::LinkHit::Held) => PdfPress::Stay,
+        None => PdfPress::Turn(edge),
+    }
+}
+
 pub fn step_index(index: usize, count: usize, delta: i64) -> usize {
     if count == 0 || delta == 0 {
         return index.min(count.saturating_sub(1));
@@ -5755,6 +5787,178 @@ mod tests {
         assert_eq!(store.resume().offset, 0);
         assert_eq!((saved_page, saved_offset), (9, 0));
         assert_eq!(flying.write, Some(4));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_pdf_goto_click_lands_on_the_page_and_keeps_one_return() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pdf/fixtures/goto-links.pdf"
+        );
+        let bytes = std::fs::read(path).unwrap();
+        let (doc, _, _) = spike_pdf::Document::open(
+            spike_report::PdfEngine::Pdfium,
+            bytes,
+            &spike_report::pdfium_lib(),
+        )
+        .unwrap();
+        let links = doc.page_links(0);
+        let goto = links
+            .iter()
+            .find(|link| link.page == Some(2))
+            .expect("cross-page GoTo");
+        assert!((goto.left - 20.0).abs() < 0.2 && (goto.top - 290.0).abs() < 0.2);
+        let view = |width: f64, height: f64, px: f32, py: f32| {
+            let x = 100.0 + f64::from(px) / 200.0 * width;
+            let y = 40.0 + (300.0 - f64::from(py)) / 300.0 * height;
+            (x, y)
+        };
+        let (x, y) = view(100.0, 150.0, goto.right, goto.top);
+        assert_eq!(
+            hit_fitted_page(x, y, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0, &links, 1),
+            Some((1, spike_pdf::LinkHit::Page(2)))
+        );
+        let (x, y) = view(400.0, 600.0, 55.0, 275.0);
+        assert_eq!(
+            hit_fitted_page(x, y, 100.0, 40.0, 400.0, 600.0, 200.0, 300.0, &links, 1)
+                .map(|(_, hit)| hit),
+            Some(spike_pdf::LinkHit::Page(2))
+        );
+        assert_eq!(
+            pdf_user_point(99.9, 40.0, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0),
+            None
+        );
+        let top = pdf_user_point(200.0, 40.0, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0).unwrap();
+        assert!((top.0 - 200.0).abs() < 0.01 && (top.1 - 300.0).abs() < 0.01);
+        let bottom = pdf_user_point(100.0, 190.0, 100.0, 40.0, 100.0, 150.0, 200.0, 300.0).unwrap();
+        assert!(bottom.0.abs() < 0.01 && bottom.1.abs() < 0.01);
+        assert_eq!(
+            spike_pdf::hit_page_link(&links, goto.right + 0.2, goto.top),
+            None
+        );
+        assert!(margin_owns_point(
+            10.0,
+            10.0,
+            true,
+            Some((0.0, 0.0, 40.0, 40.0))
+        ));
+        assert!(!margin_owns_point(
+            10.0,
+            10.0,
+            false,
+            Some((0.0, 0.0, 40.0, 40.0))
+        ));
+
+        let first = pdf_press(
+            Some(spike_pdf::LinkHit::Page(2)),
+            1,
+            2,
+            None,
+            PageEdge::Forward,
+        );
+        assert_eq!(
+            first,
+            PdfPress::Follow {
+                page: 2,
+                back: Some(1)
+            }
+        );
+        let second = pdf_press(
+            Some(spike_pdf::LinkHit::Page(1)),
+            2,
+            2,
+            Some(1),
+            PageEdge::Back,
+        );
+        assert_eq!(
+            second,
+            PdfPress::Follow {
+                page: 1,
+                back: Some(1)
+            }
+        );
+        let third = pdf_press(
+            Some(spike_pdf::LinkHit::Page(2)),
+            1,
+            2,
+            Some(1),
+            PageEdge::None,
+        );
+        assert_eq!(
+            third,
+            PdfPress::Follow {
+                page: 2,
+                back: Some(1)
+            }
+        );
+        assert_eq!(
+            pdf_press(
+                Some(spike_pdf::LinkHit::Held),
+                1,
+                2,
+                None,
+                PageEdge::Forward
+            ),
+            PdfPress::Stay
+        );
+        assert_eq!(
+            pdf_press(
+                Some(spike_pdf::LinkHit::Page(1)),
+                1,
+                2,
+                None,
+                PageEdge::Back
+            ),
+            PdfPress::Stay
+        );
+        assert_eq!(
+            pdf_press(None, 1, 2, Some(1), PageEdge::Forward),
+            PdfPress::Turn(PageEdge::Forward)
+        );
+        assert_eq!(link_back_for_book(Some(1), true), Some(1));
+        assert_eq!(link_back_for_book(Some(1), false), None);
+
+        let dir = std::env::temp_dir().join(format!("superreader-pdf-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = "/books/goto-links.pdf";
+        crate::settings::record_progress(&file, book, 1, None, 0, "").unwrap();
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        let flying = FingerGlide {
+            book: 1,
+            page: 1,
+            from: 40.0,
+            to: 400.0,
+            incoming: Some(2),
+            write: Some(1),
+            queued: 0,
+            token: 3,
+        };
+        let mut glide = Some(flying);
+        let mut motion = Some(9u32);
+        let mut drag = 18.0;
+        let mut saved_page = 1u32;
+        let mut saved_offset = 4u32;
+        let PdfPress::Follow { page, back } = first else {
+            panic!("cross-page");
+        };
+        assert_eq!(back, Some(1));
+        assert!(apply_contents_choice(
+            &mut glide,
+            &mut motion,
+            &mut drag,
+            &mut saved_page,
+            &mut saved_offset,
+            &ChapterMove::Page { page },
+            &mut store,
+        ));
+        assert!(glide.is_none());
+        assert!(motion.is_none());
+        assert_eq!(drag, 0.0);
+        assert_eq!(store.resume().page, 2);
+        assert_eq!((saved_page, saved_offset), (2, 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
