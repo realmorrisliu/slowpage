@@ -299,6 +299,32 @@ pub enum CardBox {
 pub const MARGIN_W: f64 = 240.0;
 
 static MARGIN_SHOWN: AtomicBool = AtomicBool::new(true);
+static FIND_ESC: AtomicBool = AtomicBool::new(false);
+
+pub fn clear_find_escape() {
+    FIND_ESC.store(false, Ordering::Relaxed);
+}
+
+pub fn hold_find_escape() {
+    FIND_ESC.store(true, Ordering::Relaxed);
+}
+
+pub fn take_find_escape() -> bool {
+    FIND_ESC.swap(false, Ordering::Relaxed)
+}
+
+pub fn show_reading_margin(form: Form) -> Form {
+    match form {
+        Form::PageAndPanel {
+            sidebar,
+            margin: Presence::Hidden,
+        } => Form::PageAndPanel {
+            sidebar,
+            margin: Presence::Shown,
+        },
+        other => other,
+    }
+}
 
 pub fn margin_shown() -> bool {
     MARGIN_SHOWN.load(Ordering::Relaxed)
@@ -2154,6 +2180,232 @@ fn panel_command(current: Form, floating: bool) -> Form {
     }
 }
 
+thread_local! {
+    static FIND_STEP: RefCell<
+        Option<(
+            Signal<spike_library::column::Column>,
+            Signal<spike_library::margin::LivePage>,
+            ElementRef,
+        )>,
+    > = const { RefCell::new(None) };
+}
+
+/// Shift+Return, ⌘G, and Shift-⌘G step through find. They exist only while
+/// find is open and the field is not composing. A closed find and an open
+/// composition do not register them, so the key still reaches the field.
+#[component]
+fn FindNavigationKeys() -> impl IntoElement {
+    if let Some((column, live, stage)) = FIND_STEP.with(|slot| slot.borrow().clone()) {
+        let current = column.get();
+        if spike_library::column::find_navigation_mounted(current.mode, current.find.composing) {
+            let options = KeyOptions {
+                when: nsh_core::keymap::When::Always,
+                pass_through: false,
+                ..KeyOptions::default()
+            };
+            on_key_with("shift+return", options, {
+                let column = column.clone();
+                let live = live.clone();
+                let stage = stage.clone();
+                move |_| press_find_step(&column, &live, &stage, false)
+            });
+            on_key_with("mod+g", options, {
+                let column = column.clone();
+                let live = live.clone();
+                let stage = stage.clone();
+                move |_| press_find_step(&column, &live, &stage, true)
+            });
+            on_key_with("shift+mod+g", options, {
+                let column = column.clone();
+                let live = live.clone();
+                let stage = stage.clone();
+                move |_| press_find_step(&column, &live, &stage, false)
+            });
+        }
+    }
+    view().absolute().w(px(0.0)).h(px(0.0))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn reading_place(
+    live: &spike_library::margin::LivePage,
+) -> spike_library::column::Place {
+    if live.spine.is_empty() {
+        return spike_library::column::Place {
+            href: String::new(),
+            page: live.page,
+            offset: 0,
+        };
+    }
+    let place = crate::web::reader_place();
+    spike_library::column::Place {
+        href: if place.href.is_empty() {
+            live.spine.clone()
+        } else {
+            place.href
+        },
+        page: if place.page == 0 {
+            live.page
+        } else {
+            place.page
+        },
+        offset: place.offset,
+    }
+}
+
+fn load_marks(column: &spike_library::column::Column) -> spike_library::column::Column {
+    let path = crate::settings::support_dir().join("annotations.sqlite");
+    match spike_library::column::Marks::open(&path) {
+        Ok(marks) => {
+            let rows = marks.list(&column.book).unwrap_or_default();
+            spike_library::column::reload(column, rows)
+        }
+        Err(_) => column.clone(),
+    }
+}
+
+fn send_find(stage: &ElementRef, column: &spike_library::column::Column) {
+    stage.command(
+        "find",
+        serde_json::json!({
+            "book": column.book,
+            "query": column.find.query,
+            "generation": column.find.generation,
+        }),
+    );
+}
+
+pub(crate) fn press_find_step(
+    column: &Signal<spike_library::column::Column>,
+    live: &Signal<spike_library::margin::LivePage>,
+    stage: &ElementRef,
+    forward: bool,
+) {
+    if column.get().mode != spike_library::column::Mode::Find {
+        return;
+    }
+    let place = reading_place(&live.get());
+    let (next, hit) = spike_library::column::step(&column.get(), forward, &place);
+    if let Some(hit) = hit.as_ref() {
+        send_jump(stage, hit);
+    }
+    commit_column(column, next);
+}
+
+pub(crate) fn send_jump(stage: &ElementRef, hit: &spike_library::column::Hit) {
+    stage.command(
+        "jump",
+        serde_json::json!({
+            "href": hit.href,
+            "page": hit.page,
+            "offset": hit.start,
+            "end": hit.end,
+        }),
+    );
+}
+
+pub(crate) fn send_landing(stage: &ElementRef, hit: &spike_library::column::Hit) {
+    stage.command(
+        "jump",
+        serde_json::json!({
+            "href": hit.href,
+            "page": hit.page,
+            "offset": hit.start,
+            "end": hit.end,
+            "landing": true,
+        }),
+    );
+}
+
+pub(crate) fn commit_column(
+    column: &Signal<spike_library::column::Column>,
+    next: spike_library::column::Column,
+) {
+    let settled = spike_library::column::observe_nav(&column.get(), &next);
+    if settled != column.get() {
+        column.set(settled);
+    }
+}
+
+pub fn apply_find_status(
+    column: &spike_library::column::Column,
+    value: &serde_json::Value,
+    here: &spike_library::column::Place,
+) -> (
+    spike_library::column::Column,
+    Option<spike_library::column::Hit>,
+) {
+    let Some(find) = value.get("find") else {
+        return (column.clone(), None);
+    };
+    if find.is_null() {
+        return (column.clone(), None);
+    }
+    let kind = |name: &str| {
+        if name == "chars" {
+            spike_library::column::IndexKind::Chars
+        } else {
+            spike_library::column::IndexKind::Utf16
+        }
+    };
+    let hits = find
+        .get("hits")
+        .and_then(|hits| hits.as_array())
+        .map(|hits| {
+            hits.iter()
+                .filter_map(|hit| {
+                    Some(spike_library::column::Hit {
+                        page: hit.get("page")?.as_u64()? as u32,
+                        href: hit.get("href")?.as_str()?.to_string(),
+                        start: hit.get("start")?.as_u64()? as u32,
+                        end: hit.get("end")?.as_u64()? as u32,
+                        kind: kind(hit.get("kind").and_then(|k| k.as_str()).unwrap_or("utf16")),
+                        snippet: hit.get("snippet")?.as_str()?.to_string(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let scan = spike_library::column::Scan {
+        book: find
+            .get("book")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        query: find
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        generation: find.get("generation").and_then(|v| v.as_u64()).unwrap_or(0),
+        hits,
+        seen: find.get("seen").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        total: find.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        text_units: find.get("text_units").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        empty_units: find
+            .get("empty_units")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        failed_units: find
+            .get("failed_units")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        done: find.get("done").and_then(|v| v.as_bool()).unwrap_or(false),
+        nav: find
+            .get("nav")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .max(spike_library::column::nav_epoch()),
+    };
+    spike_library::column::on_scan_publish(column, &scan, here)
+}
+
 pub fn reading_margin(
     form: Signal<Form>,
     window: Signal<Window>,
@@ -2166,6 +2418,7 @@ pub fn reading_margin(
     note: Signal<spike_library::margin::MarginInk>,
     book_gen: Signal<u64>,
     measures: Signal<Vec<spike_library::margin::FreshMeasure>>,
+    column: Signal<spike_library::column::Column>,
 ) -> AnyElement {
     let _tick = ease.get();
     let _form = form.get();
@@ -2175,6 +2428,23 @@ pub fn reading_margin(
     let top = f64::from(row.top.max(0.0));
     let trip = crate::ease::current();
     let frame = crate::ease::present(size.width, size.height, top, trip);
+    let expired = spike_library::column::expire_undo(&column.get(), now_ms());
+    if expired != column.get() {
+        column.set(expired);
+    }
+    let mode = column.get().mode;
+    let column_rect = frame.margin.or_else(|| {
+        if mode == spike_library::column::Mode::Notes || !immersive_on() {
+            None
+        } else {
+            Some(Rect {
+                x: (size.width - MARGIN_W).max(0.0),
+                y: 0.0,
+                w: MARGIN_W.min(size.width.max(0.0)),
+                h: size.height.max(1.0),
+            })
+        }
+    });
     let live_now = live.get();
     let mut live_for_page = live_now.clone();
     live_for_page.moving = live_for_page.moving || trip.moving();
@@ -2216,7 +2486,7 @@ pub fn reading_margin(
         .absolute()
         .size_full()
         .pointer_events(PointerEvents::BoxNone);
-    if let Some(rect) = frame.margin {
+    if let Some(rect) = column_rect {
         root = root.child(
             view()
                 .absolute()
@@ -2226,6 +2496,13 @@ pub fn reading_margin(
                 .h(px(rect.h as f32))
                 .bg(rgb(FIELD_HEX).to_hsla()),
         );
+        root = root.child(column_tabs(
+            rect,
+            column.clone(),
+            note.clone(),
+            live.clone(),
+            stage.clone(),
+        ));
         for placed in &scene.cards {
             for seg in &placed.segments {
                 if seg.w < 0.5 && seg.h < 0.5 {
@@ -2284,15 +2561,25 @@ pub fn reading_margin(
                 ));
             }
         }
-        root = root.child(clip);
-        let composer_top = band;
-        root = root.child(margin_composer(
-            note.clone(),
-            live.clone(),
-            book_gen.clone(),
-            rect,
-            composer_top,
-        ));
+        if mode == spike_library::column::Mode::Notes {
+            root = root.child(clip);
+            let composer_top = band;
+            root = root.child(margin_composer(
+                note.clone(),
+                live.clone(),
+                book_gen.clone(),
+                rect,
+                composer_top,
+            ));
+        } else {
+            root = root.child(column_body(
+                column.clone(),
+                live.clone(),
+                stage.clone(),
+                rect,
+                size.height,
+            ));
+        }
     }
     if frame.panel_toggle {
         root = root.child(margin_toggle(
@@ -2309,6 +2596,464 @@ pub fn reading_margin(
         stage,
     ));
     root.into_element()
+}
+
+fn column_tabs(
+    rect: Rect,
+    column: Signal<spike_library::column::Column>,
+    note: Signal<spike_library::margin::MarginInk>,
+    live: Signal<spike_library::margin::LivePage>,
+    stage: ElementRef,
+) -> AnyElement {
+    let mode = column.get().mode;
+    let mut row = view()
+        .absolute()
+        .left(px(rect.x as f32 + 12.0))
+        .top(px(rect.y as f32 + 8.0))
+        .h(px(28.0))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(12.0));
+    for (label, next_mode) in [
+        ("批注", spike_library::column::Mode::Notes),
+        ("书签", spike_library::column::Mode::Marks),
+        ("搜索", spike_library::column::Mode::Find),
+    ] {
+        let column = column.clone();
+        let note = note.clone();
+        let live = live.clone();
+        let stage = stage.clone();
+        let active = mode == next_mode;
+        row = row.child(
+            view()
+                .on_press(move || press_column_mode(next_mode, &column, &note, &live, &stage))
+                .child(
+                    line!(
+                        label,
+                        crate::tokens::BODY_SIZE,
+                        if active {
+                            crate::tokens::NAME_WEIGHT
+                        } else {
+                            crate::tokens::BODY_WEIGHT
+                        },
+                        if active { ink() } else { quiet() },
+                        0.0_f32
+                    )
+                    .line_height(px(18.0)),
+                ),
+        );
+    }
+    row.into_element()
+}
+
+fn press_column_mode(
+    mode: spike_library::column::Mode,
+    column: &Signal<spike_library::column::Column>,
+    note: &Signal<spike_library::margin::MarginInk>,
+    live: &Signal<spike_library::margin::LivePage>,
+    stage: &ElementRef,
+) {
+    let current = column.get();
+    let was_find = current.mode == spike_library::column::Mode::Find;
+    match mode {
+        spike_library::column::Mode::Notes => {
+            column.set(spike_library::column::enter_notes(&current))
+        }
+        spike_library::column::Mode::Marks => {
+            let (next, ink) = spike_library::column::enter_marks(&current, &note.get());
+            column.set(load_marks(&next));
+            note.set(ink);
+        }
+        spike_library::column::Mode::Find => {
+            let (next, ink) = spike_library::column::enter_find(&current, &note.get(), &live.get());
+            column.set(next);
+            note.set(ink);
+        }
+    }
+    if was_find && mode != spike_library::column::Mode::Find {
+        stage.command("find-stop", serde_json::json!(null));
+    }
+}
+
+fn column_body(
+    column: Signal<spike_library::column::Column>,
+    live: Signal<spike_library::margin::LivePage>,
+    stage: ElementRef,
+    rect: Rect,
+    window_h: f64,
+) -> AnyElement {
+    let mode = column.get().mode;
+    let top = rect.y + 44.0;
+    let height = (window_h - top - 12.0).max(1.0);
+    let mut body = view()
+        .absolute()
+        .left(px(rect.x as f32))
+        .top(px(top as f32))
+        .w(px(rect.w as f32))
+        .h(px(height as f32))
+        .px(px(12.0))
+        .overflow_hidden()
+        .flex()
+        .flex_col();
+    if mode == spike_library::column::Mode::Marks {
+        body = body.child(mark_list(column, live, stage));
+    } else {
+        body = body.child(find_list(column, live, stage));
+    }
+    body.into_element()
+}
+
+fn mark_list(
+    column: Signal<spike_library::column::Column>,
+    live: Signal<spike_library::margin::LivePage>,
+    stage: ElementRef,
+) -> AnyElement {
+    let place = reading_place(&live.get());
+    let current = column.get();
+    let here = current
+        .marks
+        .iter()
+        .any(|mark| spike_library::column::same_place(mark, place.page, &place.href, place.offset));
+    let label = if here {
+        "取消当前位置书签"
+    } else {
+        "添加当前位置书签"
+    };
+    let mut list = view().w_full().flex().flex_col().gap(px(8.0)).child(
+        view()
+            .on_press({
+                let column = column.clone();
+                let live = live.clone();
+                move || {
+                    let path = crate::settings::support_dir().join("annotations.sqlite");
+                    let Ok(marks) = spike_library::column::Marks::open(&path) else {
+                        return;
+                    };
+                    let place = reading_place(&live.get());
+                    let label = spike_library::column::bookmark_label(
+                        &place,
+                        &crate::web::reading_excerpt(),
+                    );
+                    let Ok(next) = spike_library::column::toggle_mark(
+                        &column.get(),
+                        &marks,
+                        &place,
+                        &label,
+                        now_ms(),
+                    ) else {
+                        return;
+                    };
+                    column.set(next);
+                }
+            })
+            .child(
+                line!(
+                    label,
+                    crate::tokens::BODY_SIZE,
+                    crate::tokens::NAME_WEIGHT,
+                    ink(),
+                    0.0_f32
+                )
+                .line_height(px(18.0)),
+            ),
+    );
+    if let Some(mark) = current.undo.clone() {
+        list = list.child(
+            view()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .child(
+                    line!(
+                        "已删除书签",
+                        crate::tokens::LABEL_SIZE,
+                        crate::tokens::BODY_WEIGHT,
+                        quiet(),
+                        0.0_f32
+                    )
+                    .line_height(px(16.0)),
+                )
+                .child(
+                    view()
+                        .on_press({
+                            let column = column.clone();
+                            move || {
+                                let path =
+                                    crate::settings::support_dir().join("annotations.sqlite");
+                                let Ok(marks) = spike_library::column::Marks::open(&path) else {
+                                    return;
+                                };
+                                let Ok(next) =
+                                    spike_library::column::undo_delete(&column.get(), &marks)
+                                else {
+                                    return;
+                                };
+                                column.set(next);
+                            }
+                        })
+                        .child(
+                            line!(
+                                "撤销",
+                                crate::tokens::LABEL_SIZE,
+                                crate::tokens::NAME_WEIGHT,
+                                ink(),
+                                0.0_f32
+                            )
+                            .line_height(px(16.0)),
+                        ),
+                ),
+        );
+        let _ = mark;
+    }
+    for mark in current.marks {
+        let at = spike_library::column::same_place(&mark, place.page, &place.href, place.offset);
+        let id = mark.id;
+        list = list.child(
+            view()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .items_center()
+                .on_press({
+                    let column = column.clone();
+                    let stage = stage.clone();
+                    let live = live.clone();
+                    let mark = mark.clone();
+                    move || {
+                        let here = reading_place(&live.get());
+                        let dest = spike_library::column::Place {
+                            href: mark.href.clone(),
+                            page: mark.page,
+                            offset: mark.offset,
+                        };
+                        let mut next = spike_library::column::release_landing(&column.get());
+                        if dest != here {
+                            next.find.navigated = true;
+                        }
+                        column.set(next);
+                        stage.command(
+                            "jump",
+                            serde_json::json!({
+                                "href": mark.href,
+                                "page": mark.page,
+                                "offset": mark.offset,
+                                "end": mark.offset,
+                                "intent": "bookmark",
+                            }),
+                        );
+                    }
+                })
+                .child(
+                    line!(
+                        mark.label.clone(),
+                        crate::tokens::BODY_SIZE,
+                        if at {
+                            crate::tokens::NAME_WEIGHT
+                        } else {
+                            crate::tokens::BODY_WEIGHT
+                        },
+                        ink(),
+                        0.0_f32
+                    )
+                    .line_height(px(18.0)),
+                )
+                .child(
+                    view()
+                        .on_press({
+                            let column = column.clone();
+                            move || {
+                                let path =
+                                    crate::settings::support_dir().join("annotations.sqlite");
+                                let Ok(marks) = spike_library::column::Marks::open(&path) else {
+                                    return;
+                                };
+                                let Ok(next) = spike_library::column::delete_mark(
+                                    &column.get(),
+                                    &marks,
+                                    id,
+                                    now_ms(),
+                                ) else {
+                                    return;
+                                };
+                                column.set(next);
+                            }
+                        })
+                        .child(
+                            line!(
+                                "×",
+                                crate::tokens::BODY_SIZE,
+                                crate::tokens::BODY_WEIGHT,
+                                quiet(),
+                                0.0_f32
+                            )
+                            .line_height(px(18.0)),
+                        ),
+                ),
+        );
+    }
+    list.into_element()
+}
+
+fn find_list(
+    column: Signal<spike_library::column::Column>,
+    live: Signal<spike_library::margin::LivePage>,
+    stage: ElementRef,
+) -> AnyElement {
+    let current = column.get();
+    let line = spike_library::column::find_line(&current);
+    let focus = current.find.focus;
+    let mut list = view().w_full().flex().flex_col().gap(px(8.0)).child(
+        nsh_core::element::input()
+            .key(format!("book-find-{focus}"))
+            .auto_focus(current.mode == spike_library::column::Mode::Find)
+            .w_full()
+            .h(px(28.0))
+            .font_family(SharedString::from(crate::tokens::FONT_STACK))
+            .text_size(px(crate::tokens::BODY_SIZE))
+            .font_weight(crate::tokens::BODY_WEIGHT)
+            .text_color(ink())
+            .placeholder_color(quiet())
+            .placeholder("查找正文")
+            .auto_correct(false)
+            .bg(transparent_black())
+            .submit_behavior(SubmitBehavior::Submit)
+            .value({
+                let column = column.clone();
+                move || column.get().find.draft.clone()
+            })
+            .on_change({
+                let column = column.clone();
+                let stage = stage.clone();
+                move |text: &str| {
+                    let before = column.get();
+                    let next = spike_library::column::type_find(&before, text);
+                    if next.find.generation != before.find.generation {
+                        send_find(&stage, &next);
+                    }
+                    column.set(next);
+                }
+            })
+            .on_composition_change({
+                let column = column.clone();
+                let stage = stage.clone();
+                move |event: &Composition| {
+                    let before = column.get();
+                    let next = spike_library::column::compose_find(&before, event.composing);
+                    if next.find.generation != before.find.generation {
+                        send_find(&stage, &next);
+                    }
+                    column.set(next);
+                }
+            })
+            .on_submit({
+                let column = column.clone();
+                let live = live.clone();
+                let stage = stage.clone();
+                move |text: &str| {
+                    let mut current = column.get();
+                    if current.find.draft != text && !current.find.composing {
+                        current = spike_library::column::type_find(&current, text);
+                    }
+                    let place = reading_place(&live.get());
+                    let generation = current.find.generation;
+                    let pending = current.find.pending;
+                    let (next, hit) = spike_library::column::find_return(&current, &place);
+                    if next.find.generation != generation || next.find.pending && !pending {
+                        send_find(&stage, &next);
+                    }
+                    if let Some(hit) = hit {
+                        send_jump(&stage, &hit);
+                    }
+                    commit_column(&column, next);
+                }
+            }),
+    );
+    if !line.text.is_empty() {
+        list = list.child(
+            line!(
+                line.text.clone(),
+                crate::tokens::LABEL_SIZE,
+                crate::tokens::BODY_WEIGHT,
+                quiet(),
+                0.0_f32
+            )
+            .line_height(px(16.0)),
+        );
+    }
+    if line.retry {
+        list = list.child(
+            view()
+                .on_press({
+                    let column = column.clone();
+                    let stage = stage.clone();
+                    move || {
+                        let next = spike_library::column::retry_find(&column.get());
+                        send_find(&stage, &next);
+                        column.set(next);
+                    }
+                })
+                .child(
+                    line!(
+                        "重试",
+                        crate::tokens::BODY_SIZE,
+                        crate::tokens::NAME_WEIGHT,
+                        ink(),
+                        0.0_f32
+                    )
+                    .line_height(px(18.0)),
+                ),
+        );
+    }
+    for (index, hit) in current.find.hits.iter().enumerate() {
+        let hit = hit.clone();
+        let chosen = current.find.index == Some(index);
+        list = list.child(
+            view()
+                .on_press({
+                    let column = column.clone();
+                    let live = live.clone();
+                    let stage = stage.clone();
+                    move || {
+                        let place = reading_place(&live.get());
+                        let (next, hit) =
+                            spike_library::column::choose(&column.get(), index, &place);
+                        if let Some(hit) = hit {
+                            send_jump(&stage, &hit);
+                        }
+                        commit_column(&column, next);
+                    }
+                })
+                .child(
+                    line!(
+                        hit.snippet.clone(),
+                        crate::tokens::BODY_SIZE,
+                        if chosen {
+                            crate::tokens::NAME_WEIGHT
+                        } else {
+                            crate::tokens::BODY_WEIGHT
+                        },
+                        ink(),
+                        0.0_f32
+                    )
+                    .line_height(px(18.0)),
+                ),
+        );
+    }
+    if current.find.composing {
+        list.into_element()
+    } else {
+        FIND_STEP.with(|slot| {
+            slot.replace(Some((column, live, stage)));
+        });
+        view()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(find_navigation_keys())
+            .child(list)
+            .into_element()
+    }
 }
 
 pub(crate) struct MarginView {
@@ -4664,6 +5409,26 @@ mod tests {
         assert!((wide_hidden.card.w - wide_shown.card.w - MARGIN_W).abs() < 0.1);
         assert!(!margin_is_column(817.0));
         assert!(margin_is_column(818.0));
+        let wide = page_frame(1440.0, 900.0, true, false);
+        let narrow = page_frame(817.0, 800.0, true, false);
+        assert_eq!(wide, page_frame(1440.0, 900.0, true, false));
+        assert_eq!(narrow, page_frame(817.0, 800.0, true, false));
+        assert!(
+            (wide.card.w - page_frame(1440.0, 900.0, false, false).card.w + MARGIN_W).abs() < 0.1
+        );
+        assert_eq!(narrow.card, page_frame(817.0, 800.0, false, false).card);
+    }
+
+    #[test]
+    fn a_column_mode_does_not_move_the_page_frame() {
+        let wide = page_frame(1440.0, 900.0, true, false);
+        let narrow = page_frame(578.0, 528.0, true, false);
+        let immersive = page_frame(1440.0, 900.0, true, true);
+        assert_eq!(wide, page_frame(1440.0, 900.0, true, false));
+        assert_eq!(narrow.card, page_frame(578.0, 528.0, false, false).card);
+        assert!(narrow.covers);
+        assert!(immersive.margin.is_none());
+        assert_eq!(immersive, page_frame(1440.0, 900.0, false, true));
     }
 
     #[test]
@@ -5608,7 +6373,10 @@ mod tests {
         assert_eq!(stale.notice_line(), spike_library::margin::NOTICE_STALE);
         assert_eq!(stale.new_note.body, "第二条");
         assert_eq!(stale.parked.as_ref().unwrap().body, "未发送");
-        assert_eq!(load_margin(&passage.book, passage.page, "").unwrap().len(), 1);
+        assert_eq!(
+            load_margin(&passage.book, passage.page, "").unwrap().len(),
+            1
+        );
         let still = spike_library::margin::begin_card(&stale, key.clone(), "种子");
         assert!(matches!(still.face, spike_library::margin::Face::Card(_)));
         let bare_face = spike_library::margin::cancel_card(&still, &key);
@@ -5621,7 +6389,10 @@ mod tests {
         let missing = commit_ink(&bare, "第二条", &here);
         assert_eq!(missing.notice_line(), spike_library::margin::NOTICE_SELECT);
         assert_eq!(missing.new_note.body, "第二条");
-        assert_eq!(load_margin(&passage.book, passage.page, "").unwrap().len(), 1);
+        assert_eq!(
+            load_margin(&passage.book, passage.page, "").unwrap().len(),
+            1
+        );
         let reachable = spike_library::margin::begin_card(&missing, key.clone(), "旧批注");
         assert!(
             matches!(reachable.face, spike_library::margin::Face::Card(_)),

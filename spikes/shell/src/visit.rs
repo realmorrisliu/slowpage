@@ -569,6 +569,31 @@ pub fn chapter_jump(
     }
 }
 
+/// A bookmark or search jump. The return slot is filled once, then kept.
+pub fn place_jump(
+    here: &ReadingPlace,
+    dest: &ReadingPlace,
+    spine: &[String],
+    back: Option<ReadingPlace>,
+) -> ChapterStep {
+    let mark = ChapterMark {
+        title: String::new(),
+        href: dest.href.clone(),
+        offset: dest.offset,
+        page: dest.page,
+    };
+    let go = move_toward(here, &mark, spine);
+    if matches!(go, ChapterMove::Stay) {
+        return ChapterStep { go, back };
+    }
+    let back = if back.is_none() {
+        Some(here.clone())
+    } else {
+        back
+    };
+    ChapterStep { go, back }
+}
+
 pub fn chapter_return(
     here: &ReadingPlace,
     back: Option<ReadingPlace>,
@@ -3184,6 +3209,40 @@ pub fn leave_key(key: LeaveKey, focus: Focus, immersion: Immersion, surface: Sur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_place_jump_keeps_the_first_origin() {
+        let here = ReadingPlace {
+            href: "c1.xhtml".to_string(),
+            page: 2,
+            offset: 10,
+        };
+        let dest = ReadingPlace {
+            href: "c2.xhtml".to_string(),
+            page: 1,
+            offset: 4,
+        };
+        let spine = vec!["c1.xhtml".to_string(), "c2.xhtml".to_string()];
+        let first = place_jump(&here, &dest, &spine, None);
+        assert_eq!(first.back.as_ref(), Some(&here));
+        assert!(matches!(
+            first.go,
+            ChapterMove::Chapter {
+                index: 1,
+                offset: 4
+            }
+        ));
+        let further = ReadingPlace {
+            href: "c1.xhtml".to_string(),
+            page: 2,
+            offset: 80,
+        };
+        let second = place_jump(&dest, &further, &spine, first.back.clone());
+        assert_eq!(second.back, first.back);
+        let same = place_jump(&here, &here, &spine, None);
+        assert_eq!(same.back, None);
+        assert!(matches!(same.go, ChapterMove::Stay));
+    }
 
     fn scrolled(offset: f32) -> Visit {
         note_scroll(&Visit::shelf(), offset)

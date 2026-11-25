@@ -1,9 +1,14 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 
+use html5ever::tendril::TendrilSink;
+use html5ever::tree_builder::TreeBuilderOpts;
+use html5ever::{parse_document, ParseOpts};
+use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use rbook::Epub;
+use spike_report::Anchor;
 #[cfg(feature = "blitz")]
 use std::time::Instant;
-use spike_report::Anchor;
 
 pub const PAGE_W: u32 = 720;
 pub const PAGE_H: u32 = 960;
@@ -186,7 +191,10 @@ fn body_inner(xhtml: &str) -> String {
         return xhtml.to_string();
     };
     let from = start + gt + 1;
-    let end = lower[from..].find("</body>").map(|i| from + i).unwrap_or(xhtml.len());
+    let end = lower[from..]
+        .find("</body>")
+        .map(|i| from + i)
+        .unwrap_or(xhtml.len());
     xhtml[from..end].to_string()
 }
 
@@ -219,6 +227,97 @@ fn plain_text(xhtml: &str) -> String {
         }
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Body text in the order the page script's `TreeWalker` of `SHOW_TEXT`
+/// visits, after `keepEmDash`. The chapter is loaded as text/html with
+/// scripting enabled, the same load the page uses. A snippet with no
+/// `<html>` or `<body>` is that body's content.
+pub fn dom_text(xhtml: &str) -> String {
+    let source = chapter_document(xhtml);
+    let opts = ParseOpts {
+        tree_builder: TreeBuilderOpts {
+            scripting_enabled: true,
+            drop_doctype: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dom = parse_document(RcDom::default(), opts).one(source);
+    let Some(body) = find_element(&dom.document, "body") else {
+        return String::new();
+    };
+    let mut out = String::new();
+    walk_body(&body, false, &mut out);
+    out
+}
+
+fn chapter_document(xhtml: &str) -> String {
+    let lower = xhtml.to_ascii_lowercase();
+    if lower.contains("<html") || lower.contains("<body") {
+        xhtml.to_string()
+    } else {
+        format!("<body>{xhtml}</body>")
+    }
+}
+
+fn find_element(handle: &Handle, name: &str) -> Option<Handle> {
+    if let NodeData::Element { name: tag, .. } = &handle.data {
+        if tag.local.as_ref() == name {
+            return Some(handle.clone());
+        }
+    }
+    for child in handle.children.borrow().iter() {
+        if let Some(found) = find_element(child, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn walk_body(handle: &Handle, footer: bool, out: &mut String) {
+    match &handle.data {
+        NodeData::Element { name, attrs, .. } => {
+            if name.local.as_ref() == "template" {
+                return;
+            }
+            let footer = footer || element_has_id(attrs, "spike-footer");
+            for child in handle.children.borrow().iter() {
+                walk_body(child, footer, out);
+            }
+        }
+        NodeData::Text { contents } => {
+            let text = contents.borrow().to_string();
+            if footer {
+                out.push_str(&text);
+            } else {
+                out.push_str(&join_em_dash_node(&text));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn element_has_id(attrs: &RefCell<Vec<html5ever::Attribute>>, id: &str) -> bool {
+    attrs
+        .borrow()
+        .iter()
+        .any(|attr| attr.name.local.as_ref() == "id" && attr.value.as_ref() == id)
+}
+
+/// The page script inserts U+2060 only when an em dash is not the first
+/// UTF-16 unit of its own text node and the previous unit is not already
+/// U+2060. A dash at the start of a node stays bare.
+fn join_em_dash_node(text: &str) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let mut out = Vec::with_capacity(units.len());
+    for (index, unit) in units.iter().copied().enumerate() {
+        if unit == 0x2014 && index > 0 && units[index - 1] != 0x2060 {
+            out.push(0x2060);
+        }
+        out.push(unit);
+    }
+    String::from_utf16_lossy(&out)
 }
 
 pub fn flow_html(css: &str, chapter: &str) -> String {
@@ -266,15 +365,15 @@ pub struct BlitzPages {
 
 #[cfg(feature = "blitz")]
 pub fn paginate_blitz(html: &str) -> Result<BlitzPages, String> {
-    use anyrender::{PaintScene as _, render_to_buffer};
+    use anyrender::{render_to_buffer, PaintScene as _};
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use blitz_dom::util::Color;
     use blitz_dom::DocumentConfig;
     use blitz_html::HtmlDocument;
     use blitz_paint::paint_scene;
     use blitz_traits::shell::{ColorScheme, Viewport};
-    use peniko::Fill;
     use peniko::kurbo::Rect;
+    use peniko::Fill;
     let scale = 2.0_f64;
     let width = PAGE_W;
     let height = PAGE_H;
@@ -540,6 +639,97 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dom_text_matches_the_page_script() {
+        let xhtml = "<html><body><p>信🙂边</p><script>skip</script><style>css</style><!-- hidden — --><template><p>—gone</p></template><p>—开头</p><p>a&amp;b—c</p><p>a&mdash;b</p><p>a&#8212;b</p><p>a&#x2014;b</p><p>&#128512;边</p><p>a&#x97;b</p><div id=\"spike-footer\">a—b</div><p>a</p><p>—b</p></body></html>";
+        let text = dom_text(xhtml);
+        let wj = "\u{2060}";
+        let expected =
+            format!("信🙂边skipcss—开头a&b{wj}—ca{wj}—ba{wj}—ba{wj}—b\u{1F600}边a{wj}—ba—ba—b");
+        assert_eq!(text, expected);
+        assert!(!text.contains("hidden"));
+        assert!(!text.contains("gone"));
+        assert!(!text.contains("&mdash;"));
+        let at = text.find('边').unwrap();
+        assert_eq!(text[..at].encode_utf16().count(), 3);
+        let astral = text.find('\u{1F600}').unwrap();
+        let after = astral + "\u{1F600}".len();
+        assert_eq!(
+            text[..after].encode_utf16().count() - text[..astral].encode_utf16().count(),
+            2
+        );
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let query: Vec<u16> = "边".encode_utf16().collect();
+        let mut spans = Vec::new();
+        for index in 0..=units.len().saturating_sub(query.len()) {
+            if units[index..index + query.len()] == query[..] {
+                spans.push((index as u32, (index + query.len()) as u32));
+            }
+        }
+        assert!(spans.contains(&(3, 4)), "{spans:?}");
+    }
+
+    /// These four strings are body content of a text/html chapter with
+    /// scripting enabled. The expected text is the page's TreeWalker after
+    /// keepEmDash, not a second copy of the extractor.
+    #[test]
+    fn text_html_body_matches_the_page_rules() {
+        let cases = [
+            (
+                "<noscript><p>甲&amp;乙</p></noscript><p>丙</p>",
+                "<p>甲&amp;乙</p>丙",
+            ),
+            ("前<![CDATA[甲—乙]]>后", "前后"),
+            ("<p title=\"a>b\">丙—丁</p>", "丙\u{2060}—丁"),
+            ("a&nbsp b &amp c", "a\u{00a0} b & c"),
+        ];
+        for (html, expect) in cases {
+            assert_eq!(dom_text(html), expect, "{html}");
+        }
+        let astral = dom_text("<p>🙂—边</p><p>—b</p>");
+        assert_eq!(astral, "🙂\u{2060}—边—b");
+        assert_eq!(
+            astral.encode_utf16().count(),
+            "🙂—边—b".encode_utf16().count() + 1
+        );
+    }
+
+    #[test]
+    fn search_offsets_follow_the_rendered_word_starts() {
+        let html = "<html><head></head><body><p>a—b</p></body></html>";
+        let plain = dom_text(html);
+        assert_eq!(plain, "a\u{2060}—b");
+        assert_eq!(spike_bold_word_starts::decorate(html, false), html);
+        let painted = spike_bold_word_starts::decorate(html, true);
+        assert!(painted.contains(
+            "<span class=\"sr-word-start\">a</span>—<span class=\"sr-word-start\">b</span>"
+        ));
+        let bold = dom_text(&painted);
+        assert!(!bold.contains('\u{2060}'), "{bold:?}");
+        assert!(bold.contains('—'));
+        assert!(!bold.contains("font-weight"));
+        let query: Vec<u16> = "—b".encode_utf16().collect();
+        let at = |text: &str| {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            units
+                .windows(query.len())
+                .position(|window| window == query)
+        };
+        assert_eq!(at(&plain), Some(2));
+        assert_eq!(at(&bold), Some(1));
+        let next = "<html><head></head><body><p>下一章信</p></body></html>";
+        assert_eq!(
+            dom_text(next),
+            dom_text(&spike_bold_word_starts::decorate(next, true))
+        );
+        let joined_plain = format!("{plain}{}", dom_text(next));
+        let joined_bold = format!("{bold}{}", dom_text(next));
+        assert_ne!(
+            joined_plain.encode_utf16().count(),
+            joined_bold.encode_utf16().count()
+        );
+    }
+
+    #[test]
     fn built_fixtures_keep_a_declared_page_and_a_face() {
         let root = "/tmp/superreader-fixtures";
         let fixed = format!("{root}/fixed.epub");
@@ -572,7 +762,10 @@ mod tests {
 
     #[test]
     fn viewport_pair_reads_a_fixed_page() {
-        assert_eq!(viewport_pair("width=1000, height=1000"), Some((1000.0, 1000.0)));
+        assert_eq!(
+            viewport_pair("width=1000, height=1000"),
+            Some((1000.0, 1000.0))
+        );
         assert_eq!(viewport_pair("width=device-width"), None);
     }
 
@@ -580,7 +773,13 @@ mod tests {
     fn anchor_uses_the_chapter_text_not_a_page_number() {
         let plain = "It is a truth universally acknowledged";
         let anchor = anchor_in_chapter("chapter-1.xhtml", plain, "truth universally").unwrap();
-        let Anchor::Epub { start, end, spine_href, .. } = anchor else {
+        let Anchor::Epub {
+            start,
+            end,
+            spine_href,
+            ..
+        } = anchor
+        else {
             panic!("epub");
         };
         assert_eq!(spine_href, "chapter-1.xhtml");
@@ -612,8 +811,14 @@ mod tests {
             );
         }
         let pride = open_book(&pride).unwrap();
-        assert!(pride.chapters[0].href.contains("chapter-1"), "{}", pride.chapters[0].href);
-        assert!(pride.chapters[0].plain.contains("truth universally acknowledged"));
+        assert!(
+            pride.chapters[0].href.contains("chapter-1"),
+            "{}",
+            pride.chapters[0].href
+        );
+        assert!(pride.chapters[0]
+            .plain
+            .contains("truth universally acknowledged"));
         let zhaohua = open_book(&zhaohua).unwrap();
         let href = &zhaohua.chapters[0].href;
         assert!(
@@ -636,7 +841,10 @@ mod tests {
         assert!(out.contains("《讀賣新聞》"), "{out}");
         assert!(out.contains("中國來的"), "{out}");
         assert!(out.contains("互相恐嚇"), "{out}");
-        assert!(out.contains("class=\"spike-dateline\">十月十二日。"), "{out}");
+        assert!(
+            out.contains("class=\"spike-dateline\">十月十二日。"),
+            "{out}"
+        );
         assert!(out.contains("<p>大家一怔。"), "{out}");
         assert!(!out.contains("讀賣 新"));
         let latin = normalize_chapter("<html><body><p>Mr Bennet</p></body></html>");

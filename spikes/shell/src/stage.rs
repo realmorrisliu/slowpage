@@ -16,7 +16,9 @@ use nsh_platform_macos::objc2_foundation::{
 use nsh_platform_macos::{ComponentContext, Components, NativeComponent};
 use objc2_core_graphics::CGContext;
 use serde_json::{json, Value};
-use spike_pdf::{paint_highlight, select_points, Document, PageText, Rgba};
+use spike_pdf::{
+    paint_find, paint_highlight, select_points, Document, FindMark, PageRead, PageText, Rgba,
+};
 use spike_report::{Anchor, PdfEngine, PixelScale};
 
 use crate::bitmap;
@@ -48,14 +50,20 @@ define_class!(
         fn show_contents(&self, _sender: Option<&AnyObject>) {
             let titles = {
                 let state = self.ivars().state.borrow();
-                let Some(web) = state.web.as_ref() else {
-                    return;
-                };
-                let marks = crate::visit::contents_marks(&web.book_title, &web.spine());
-                if marks.is_empty() && !crate::web::reader_has_back() {
+                let titles = state
+                    .web
+                    .as_ref()
+                    .map(|web| {
+                        crate::visit::contents_marks(&web.book_title, &web.spine())
+                            .into_iter()
+                            .map(|mark| mark.title)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if titles.is_empty() && !crate::web::reader_has_back() {
                     return;
                 }
-                marks.into_iter().map(|mark| mark.title).collect::<Vec<_>>()
+                titles
             };
             pop_chapters(self, &titles, crate::web::reader_has_back());
         }
@@ -125,6 +133,11 @@ define_class!(
                     }
                 }
                 self.ivars().state.borrow().note_probe(self);
+                let progressed = self.ivars().state.borrow_mut().pump_find();
+                if progressed {
+                    self.ivars().state.borrow_mut().publish();
+                    let _: () = unsafe { msg_send![self, setNeedsDisplay: true] };
+                }
             }
             // afterDelay alone is NSDefaultRunLoopMode. A drag tracks in
             // NSEventTrackingRunLoopMode, so that timer does not run until
@@ -313,8 +326,12 @@ define_class!(
                     crate::visit::PageEdge::None
                 };
                 match edge {
-                    crate::visit::PageEdge::Back => state.command("page", &json!(-1)),
-                    crate::visit::PageEdge::Forward => state.command("page", &json!(1)),
+                    crate::visit::PageEdge::Back => {
+                        state.command("page", &json!({"delta": -1, "intent": "edge"}))
+                    }
+                    crate::visit::PageEdge::Forward => {
+                        state.command("page", &json!({"delta": 1, "intent": "edge"}))
+                    }
                     crate::visit::PageEdge::None => state.finish_drag(start, point),
                 }
             }
@@ -428,6 +445,50 @@ struct State {
     ease_started: Option<Instant>,
     ease_flag: bool,
     ease_sent: bool,
+    find: Option<FindJob>,
+    find_paint: Vec<FindPaint>,
+    find_current: Option<(u32, u32, u32)>,
+    excerpt_key: String,
+    excerpt_text: String,
+}
+
+#[derive(Clone)]
+struct FindPaint {
+    page: usize,
+    start: u32,
+    end: u32,
+    quad: spike_report::Quad,
+}
+
+struct PageDecoration {
+    anchor_page: Option<u32>,
+    notes: Vec<spike_report::Quad>,
+    paint: Vec<FindPaint>,
+    current: Option<(u32, u32, u32)>,
+    scale: PixelScale,
+}
+
+/// The characters a search offset counts. The same order the page uses:
+/// normalize, then the word-start decoration, then the em-dash joiner.
+fn search_chapter(raw: &str) -> String {
+    let html = spike_epub::normalize_chapter(raw);
+    let bold = crate::settings::bold_word_starts(&crate::settings::path());
+    let html = crate::bold_word::decorate(&html, bold);
+    spike_epub::dom_text(&html)
+}
+
+struct FindJob {
+    book: String,
+    query: String,
+    generation: u64,
+    next: usize,
+    total: usize,
+    ready: bool,
+    spine: Vec<(String, String)>,
+    hits: Vec<spike_library::column::Hit>,
+    text_units: u32,
+    empty_units: u32,
+    failed_units: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -559,6 +620,7 @@ impl State {
         }
         let (origin_x, origin_y) = self.pdf_origin();
         let display = self.scale.display() as f64;
+        let decoration = self.page_decoration();
         let Some(pdf) = self.pdf.as_mut() else {
             return;
         };
@@ -577,13 +639,10 @@ impl State {
                         pdf.cache.insert(key, image);
                     }
                 }
-                if let Some(image) = pdf.cache.get(&key).cloned() {
+                let image = pdf.cache.get(&key).cloned();
+                if let Some(image) = image {
                     let mut shown = image;
-                    if self.anchor_page == Some(index as u32) {
-                        if let Some(Anchor::Pdf { quads, .. }) = &self.anchor {
-                            paint_highlight(&mut shown, quads, self.scale);
-                        }
-                    }
+                    decorate_page(&mut shown, index, &decoration);
                     let bytes = bitmap::flip_rows(shown.width, &shown.bytes);
                     if let Some(cg) = bitmap::rgba_image(
                         shown.width,
@@ -608,6 +667,7 @@ impl State {
             return;
         }
         if matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            spike_library::column::arm_nav(spike_library::column::NavIntent::Trackpad);
             self.offset = (self.offset - dy).max(0.0);
             self.note_page();
             self.publish();
@@ -653,6 +713,9 @@ impl State {
     }
 
     fn apply_pdf_wheel(&mut self, decision: crate::visit::PdfWheel) {
+        if !matches!(decision, crate::visit::PdfWheel::Pass) {
+            spike_library::column::arm_nav(spike_library::column::NavIntent::PdfGlide);
+        }
         match decision {
             crate::visit::PdfWheel::Pass => {}
             crate::visit::PdfWheel::Follow { shift } => {
@@ -810,8 +873,28 @@ impl State {
                 self.publish();
             }
             "bold" => {
-                let on = args.as_bool().unwrap_or(false);
+                let on = args
+                    .as_bool()
+                    .or_else(|| args.get("on").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
                 let _ = crate::settings::store_bold(&crate::settings::path(), on);
+                self.find_paint.clear();
+                self.find_current = None;
+                self.excerpt_text.clear();
+                self.excerpt_key.clear();
+                if let Some(web) = &self.web {
+                    web.clear_find();
+                } else {
+                    crate::web::set_find_boot("[]");
+                }
+                let book = args.get("book").and_then(|v| v.as_str()).unwrap_or("");
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                let generation = args.get("generation").and_then(|v| v.as_u64()).unwrap_or(0);
+                if !book.is_empty() && !query.is_empty() {
+                    self.begin_find(book, query, generation);
+                } else {
+                    self.stop_find();
+                }
                 if let Some(web) = &self.web {
                     web.word_starts_changed();
                 }
@@ -826,7 +909,15 @@ impl State {
             }
             "page" => {
                 crate::web::abandon_swipe();
-                let delta = args.as_i64().unwrap_or(0);
+                let delta = args
+                    .as_i64()
+                    .unwrap_or_else(|| args.get("delta").and_then(|v| v.as_i64()).unwrap_or(0));
+                let name = args.get("intent").and_then(|v| v.as_str());
+                let dispatched = spike_library::column::page_command(delta, name);
+                if let Some(intent) = dispatched.intent {
+                    spike_library::column::arm_nav(intent);
+                }
+                let delta = dispatched.delta;
                 if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
                         web.turn(delta as i32, crate::visit::TurnSource::User);
@@ -841,12 +932,478 @@ impl State {
                 self.publish();
             }
             "immersive" => self.release_for_ease(),
+            "find" => {
+                let book = args.get("book").and_then(|v| v.as_str()).unwrap_or("");
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                let generation = args.get("generation").and_then(|v| v.as_u64()).unwrap_or(0);
+                self.begin_find(book, query, generation);
+            }
+            "find-stop" => self.stop_find(),
+            "jump" => {
+                let landing = args
+                    .get("landing")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !landing {
+                    let intent = match args.get("intent").and_then(|v| v.as_str()) {
+                        Some("bookmark") => spike_library::column::NavIntent::Bookmark,
+                        _ => spike_library::column::NavIntent::Key,
+                    };
+                    spike_library::column::arm_nav(intent);
+                }
+                let href = args.get("href").and_then(|v| v.as_str()).unwrap_or("");
+                let page = args.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let end = args
+                    .get("end")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(u64::from(offset)) as u32;
+                self.jump_place(href, page, offset, end);
+            }
             _ => {}
+        }
+    }
+
+    fn begin_find(&mut self, book: &str, query: &str, generation: u64) {
+        self.stop_find();
+        let query = query.trim();
+        if book.is_empty() || query.is_empty() || book != self.book_path {
+            return;
+        }
+        self.find = Some(FindJob {
+            book: book.to_string(),
+            query: query.to_string(),
+            generation,
+            next: 0,
+            total: 0,
+            ready: self.web.is_none(),
+            spine: Vec::new(),
+            hits: Vec::new(),
+            text_units: 0,
+            empty_units: 0,
+            failed_units: 0,
+        });
+    }
+
+    fn stop_find(&mut self) {
+        self.find = None;
+        self.find_paint.clear();
+        self.find_current = None;
+        if let Some(web) = &self.web {
+            web.clear_find();
+        }
+        crate::web::set_find_boot("[]");
+    }
+
+    fn pump_find(&mut self) -> bool {
+        if self.find.is_none() {
+            return false;
+        }
+        let book = self
+            .find
+            .as_ref()
+            .map(|job| job.book.clone())
+            .unwrap_or_default();
+        if book != self.book_path {
+            self.stop_find();
+            return true;
+        }
+        let done = self
+            .find
+            .as_ref()
+            .is_some_and(|job| job.total > 0 && job.next >= job.total);
+        if done {
+            return false;
+        }
+        if self.web.is_some() {
+            self.pump_epub_find()
+        } else if self.pdf.is_some() {
+            self.pump_pdf_find()
+        } else {
+            self.fail_find()
+        }
+    }
+
+    fn fail_find(&mut self) -> bool {
+        if let Some(job) = self.find.as_mut() {
+            job.total = 1;
+            job.next = 1;
+            job.failed_units = 1;
+            job.ready = true;
+        }
+        true
+    }
+
+    fn pump_pdf_find(&mut self) -> bool {
+        let index = self.find.as_ref().map(|job| job.next).unwrap_or(0);
+        let total = self
+            .pdf
+            .as_ref()
+            .map(|pdf| pdf.doc.page_count())
+            .unwrap_or(0);
+        if total == 0 {
+            return self.fail_find();
+        }
+        if let Some(job) = self.find.as_mut() {
+            job.total = total;
+        }
+        if index >= total {
+            return false;
+        }
+        let query = self
+            .find
+            .as_ref()
+            .map(|job| job.query.clone())
+            .unwrap_or_default();
+        let read = {
+            let Some(pdf) = self.pdf.as_ref() else {
+                return self.fail_find();
+            };
+            pdf.doc.search_page(index)
+        };
+        match read {
+            PageRead::Text(text) => {
+                let hits = spike_library::column::hits_in(
+                    &text.plain,
+                    &query,
+                    index as u32 + 1,
+                    "",
+                    spike_library::column::IndexKind::Chars,
+                );
+                for hit in &hits {
+                    for glyph in text
+                        .glyphs
+                        .iter()
+                        .filter(|glyph| glyph.index >= hit.start && glyph.index < hit.end)
+                    {
+                        self.find_paint.push(FindPaint {
+                            page: index,
+                            start: hit.start,
+                            end: hit.end,
+                            quad: glyph.quad,
+                        });
+                    }
+                }
+                if let Some(job) = self.find.as_mut() {
+                    job.text_units = job.text_units.saturating_add(1);
+                    job.hits.extend(hits);
+                    job.next += 1;
+                }
+                if let Some(pdf) = self.pdf.as_mut() {
+                    pdf.text.insert(index, text);
+                }
+            }
+            PageRead::Empty => {
+                if let Some(job) = self.find.as_mut() {
+                    job.empty_units = job.empty_units.saturating_add(1);
+                    job.next += 1;
+                }
+            }
+            PageRead::Failed(_) => {
+                if let Some(job) = self.find.as_mut() {
+                    job.failed_units = job.failed_units.saturating_add(1);
+                    job.next += 1;
+                }
+            }
+        }
+        true
+    }
+
+    fn pump_epub_find(&mut self) -> bool {
+        let ready = self.find.as_ref().is_some_and(|job| job.ready);
+        if !ready {
+            let path = self.book_path.clone();
+            match spike_epub::pack(&path) {
+                Ok(packed) => {
+                    let spine = packed
+                        .spine
+                        .iter()
+                        .filter_map(|href| {
+                            let bytes = packed.files.get(href)?;
+                            let raw = String::from_utf8_lossy(bytes);
+                            let text = search_chapter(&raw);
+                            Some((href.clone(), text))
+                        })
+                        .collect::<Vec<_>>();
+                    if let Some(job) = self.find.as_mut() {
+                        job.total = spine.len();
+                        job.ready = true;
+                        job.spine = spine;
+                        if job.total == 0 {
+                            job.empty_units = 1;
+                            job.total = 1;
+                            job.next = 1;
+                        }
+                    }
+                }
+                Err(_) => return self.fail_find(),
+            }
+        }
+        let index = self.find.as_ref().map(|job| job.next).unwrap_or(0);
+        let total = self.find.as_ref().map(|job| job.total).unwrap_or(0);
+        if index >= total {
+            return true;
+        }
+        let unit = self
+            .find
+            .as_ref()
+            .and_then(|job| job.spine.get(index).cloned());
+        let Some((href, text)) = unit else {
+            return true;
+        };
+        let query = self
+            .find
+            .as_ref()
+            .map(|job| job.query.clone())
+            .unwrap_or_default();
+        let web_href = self
+            .web
+            .as_ref()
+            .and_then(|web| {
+                web.spine().into_iter().find(|item| {
+                    spike_epub::normalize_href(item) == spike_epub::normalize_href(&href)
+                })
+            })
+            .unwrap_or(href);
+        let unit = self
+            .web
+            .as_ref()
+            .and_then(|web| {
+                web.spine().iter().position(|item| {
+                    spike_epub::normalize_href(item) == spike_epub::normalize_href(&web_href)
+                })
+            })
+            .map(|at| at as u32 + 1)
+            .unwrap_or(index as u32 + 1);
+        let hits = if text.trim().is_empty() {
+            Vec::new()
+        } else {
+            spike_library::column::hits_in(
+                &text,
+                &query,
+                unit,
+                &web_href,
+                spike_library::column::IndexKind::Utf16,
+            )
+        };
+        if let Some(job) = self.find.as_mut() {
+            if text.trim().is_empty() {
+                job.empty_units = job.empty_units.saturating_add(1);
+            } else {
+                job.text_units = job.text_units.saturating_add(1);
+                job.hits.extend(hits);
+            }
+            job.next += 1;
+        }
+        self.paint_epub_hits();
+        true
+    }
+
+    fn paint_epub_hits(&self) {
+        let Some(web) = &self.web else {
+            return;
+        };
+        let shown = spike_epub::normalize_href(&web.href());
+        let current = self.find_current;
+        let hits = self
+            .find
+            .as_ref()
+            .map(|job| {
+                job.hits
+                    .iter()
+                    .filter(|hit| spike_epub::normalize_href(&hit.href) == shown)
+                    .map(|hit| {
+                        json!({
+                            "start": hit.start,
+                            "end": hit.end,
+                            "current": current.is_some_and(|(_, start, end)| hit.start == start && hit.end == end),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        web.paint_find(&Value::Array(hits).to_string());
+    }
+
+    fn jump_place(&mut self, href: &str, page: u32, offset: u32, end: u32) {
+        self.find_current = Some((page, offset, end));
+        let here = self.visit_place();
+        let dest = crate::visit::ReadingPlace {
+            href: href.to_string(),
+            page,
+            offset,
+        };
+        let spine = self.web.as_ref().map(|web| web.spine()).unwrap_or_default();
+        let step = crate::visit::place_jump(&here, &dest, &spine, crate::web::reader_back());
+        crate::web::set_reader_back(step.back);
+        match step.go {
+            crate::visit::ChapterMove::Reveal { offset } => {
+                if let Some(web) = &self.web {
+                    web.reveal(offset);
+                }
+            }
+            crate::visit::ChapterMove::Chapter { index, offset } => {
+                crate::web::arm_jump(href, offset);
+                if let Some(web) = &self.web {
+                    let _ = web.show_chapter(index);
+                }
+            }
+            crate::visit::ChapterMove::Page { page } => {
+                let _ = self.show_pdf_page(page);
+            }
+            crate::visit::ChapterMove::Stay if href.is_empty() => {
+                let _ = self.show_pdf_page(page);
+            }
+            crate::visit::ChapterMove::Stay => {}
+        }
+        self.paint_epub_hits();
+        self.publish();
+    }
+
+    fn reading_excerpt(&mut self) -> String {
+        let place = self.visit_place();
+        if place.href.is_empty() {
+            let index = place.page.saturating_sub(1) as usize;
+            return excerpt_window(&self.pdf_plain(index), 0);
+        }
+        let key = format!("{}|{}", self.book_path, place.href);
+        if self.excerpt_key != key {
+            let text = self.chapter_text(&place.href);
+            self.excerpt_text = text;
+            self.excerpt_key = key;
+        }
+        excerpt_window(&self.excerpt_text, place.offset)
+    }
+
+    fn pdf_plain(&mut self, index: usize) -> String {
+        if let Some(pdf) = self.pdf.as_ref() {
+            if let Some(text) = pdf.text.get(&index) {
+                return text.plain.clone();
+            }
+        }
+        let Some(pdf) = self.pdf.as_mut() else {
+            return String::new();
+        };
+        let text = pdf.doc.text(index);
+        let plain = text.plain.clone();
+        pdf.text.insert(index, text);
+        plain
+    }
+
+    fn chapter_text(&self, href: &str) -> String {
+        let Ok(packed) = spike_epub::pack(&self.book_path) else {
+            return String::new();
+        };
+        let want = spike_epub::normalize_href(href);
+        let Some(key) = packed
+            .spine
+            .iter()
+            .find(|item| spike_epub::normalize_href(item) == want)
+        else {
+            return String::new();
+        };
+        let Some(bytes) = packed.files.get(key) else {
+            return String::new();
+        };
+        let raw = String::from_utf8_lossy(bytes);
+        search_chapter(&raw)
+    }
+
+    fn visit_place(&self) -> crate::visit::ReadingPlace {
+        if let Some(web) = &self.web {
+            let place = crate::web::reader_place();
+            if !place.href.is_empty() {
+                return place;
+            }
+            return crate::visit::ReadingPlace {
+                href: web.href(),
+                page: place.page.max(1),
+                offset: place.offset,
+            };
+        }
+        crate::visit::ReadingPlace {
+            href: String::new(),
+            page: self.current_page() as u32 + 1,
+            offset: 0,
+        }
+    }
+
+    fn show_pdf_page(&mut self, page: u32) -> bool {
+        self.ensure_pdf_sizes(page);
+        let Some(pdf) = self.pdf.as_ref() else {
+            return false;
+        };
+        if page == 0 || page as usize > pdf.sizes.len() {
+            return false;
+        }
+        let sizes = pdf.sizes.clone();
+        self.offset = page_offset(&sizes, page, self.scale);
+        self.pdf_motion = None;
+        self.pdf_glide = None;
+        self.pdf_drag = 0.0;
+        true
+    }
+
+    fn ensure_pdf_sizes(&mut self, page: u32) {
+        let Some(pdf) = self.pdf.as_mut() else {
+            return;
+        };
+        let count = pdf.doc.page_count();
+        let need = (page as usize).min(count);
+        while pdf.sizes.len() < need {
+            let index = pdf.sizes.len();
+            pdf.sizes.push(pdf.doc.page_size_pt(index));
+        }
+    }
+
+    fn find_snapshot(&self) -> Value {
+        let Some(job) = &self.find else {
+            return Value::Null;
+        };
+        json!({
+            "book": job.book,
+            "query": job.query,
+            "generation": job.generation,
+            "seen": job.next,
+            "total": job.total,
+            "text_units": job.text_units,
+            "empty_units": job.empty_units,
+            "failed_units": job.failed_units,
+            "done": job.total > 0 && job.next >= job.total,
+            "nav": spike_library::column::nav_epoch(),
+            "hits": job.hits.iter().map(|hit| json!({
+                "page": hit.page,
+                "href": hit.href,
+                "start": hit.start,
+                "end": hit.end,
+                "kind": match hit.kind {
+                    spike_library::column::IndexKind::Chars => "chars",
+                    spike_library::column::IndexKind::Utf16 => "utf16",
+                },
+                "snippet": hit.snippet,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn page_decoration(&self) -> PageDecoration {
+        let notes = match &self.anchor {
+            Some(Anchor::Pdf { quads, .. }) => quads.clone(),
+            _ => Vec::new(),
+        };
+        PageDecoration {
+            anchor_page: self.anchor_page,
+            notes,
+            paint: self.find_paint.clone(),
+            current: self.find_current,
+            scale: self.scale,
         }
     }
 
     fn apply_chapter(&mut self, tag: isize) {
         let Some(web) = self.web.as_ref() else {
+            if tag < 0 {
+                self.return_saved_place();
+            }
             return;
         };
         let spine = web.spine();
@@ -856,6 +1413,7 @@ impl State {
         if !decided.accepted {
             return;
         }
+        spike_library::column::arm_nav(spike_library::column::NavIntent::Toc);
         crate::web::cancel_swipe();
         let _ = self.pdf_swipe.cancel_release();
         let go = decided
@@ -893,6 +1451,19 @@ impl State {
             self.clear_selection();
         }
         let _ = (moved, go);
+    }
+
+    fn return_saved_place(&mut self) {
+        let Some(back) = crate::web::reader_back() else {
+            return;
+        };
+        if back.href.is_empty() {
+            spike_library::column::arm_nav(spike_library::column::NavIntent::Toc);
+            if self.show_pdf_page(back.page) {
+                crate::web::set_reader_back(None);
+                self.publish();
+            }
+        }
     }
 
     fn select_phrase(&mut self, phrase: &str) {
@@ -1191,6 +1762,7 @@ impl State {
 
     fn paint_pdf_page(&mut self, ctx: &CGContext, index: usize, x: f64, y: f64, dw: f64, dh: f64) {
         let key = (index, scale_key(self.scale));
+        let decoration = self.page_decoration();
         let Some(pdf) = self.pdf.as_mut() else {
             return;
         };
@@ -1199,15 +1771,12 @@ impl State {
                 pdf.cache.insert(key, image);
             }
         }
-        let Some(image) = pdf.cache.get(&key).cloned() else {
+        let image = pdf.cache.get(&key).cloned();
+        let Some(image) = image else {
             return;
         };
         let mut shown = image;
-        if self.anchor_page == Some(index as u32) {
-            if let Some(Anchor::Pdf { quads, .. }) = &self.anchor {
-                paint_highlight(&mut shown, quads, self.scale);
-            }
-        }
+        decorate_page(&mut shown, index, &decoration);
         let bytes = bitmap::flip_rows(shown.width, &shown.bytes);
         if let Some(cg) = bitmap::rgba_image(
             shown.width,
@@ -1426,6 +1995,7 @@ impl State {
         self.clear_selection();
         self.anchor_payload.clear();
         self.book_path = book.path.clone();
+        self.stop_find();
         let mut replaced_href = String::new();
         let mut offset = 0u32;
         let opened = if plan.pdf {
@@ -2077,6 +2647,8 @@ impl State {
                 web.set_footer(&left, &right);
             }
         }
+        let margin_order = self.web.as_ref().map(|web| web.spine()).unwrap_or_default();
+        let margin_excerpt = self.reading_excerpt();
         let mut status = json!({
             "title": title,
             "variant": variant,
@@ -2094,6 +2666,8 @@ impl State {
             "pages": shown_pages,
             "margin_book": margin_book,
             "margin_spine": margin_spine,
+            "margin_order": margin_order,
+            "margin_excerpt": margin_excerpt,
             "margin_page": margin_page,
             "margin_moving": margin_moving,
             "margin_pw": margin_pw,
@@ -2108,6 +2682,7 @@ impl State {
         });
         status["passage"] = crate::visit::passage_value(self.published_passage());
         status["book_gen"] = json!(self.book_gen);
+        status["find"] = self.find_snapshot();
         self.context.emit("status", status);
     }
 
@@ -2508,6 +3083,17 @@ fn elapsed_ms(at: Option<Instant>) -> u32 {
         .unwrap_or(0)
 }
 
+fn excerpt_window(text: &str, offset: u32) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    if units.is_empty() {
+        return String::new();
+    }
+    let at = (offset as usize).min(units.len() - 1);
+    let from = at.saturating_sub(12);
+    let to = (at + 36).min(units.len());
+    String::from_utf16_lossy(&units[from..to])
+}
+
 fn pages_left(left: usize) -> String {
     if left == 1 {
         "1 page left in this chapter".into()
@@ -2588,6 +3174,11 @@ impl Stage {
             ease_started: None,
             ease_flag: false,
             ease_sent: false,
+            find: None,
+            find_paint: Vec::new(),
+            find_current: None,
+            excerpt_key: String::new(),
+            excerpt_text: String::new(),
         }));
         let view = mtm.alloc::<StageView>().set_ivars(Ivars {
             state: state.clone(),
@@ -2819,6 +3410,44 @@ fn fill_round(
         CGContext::close_path(Some(ctx));
         CGContext::fill_path(Some(ctx));
     }
+}
+
+fn decorate_page(shown: &mut Rgba, index: usize, decoration: &PageDecoration) {
+    let notes = if decoration.anchor_page == Some(index as u32) {
+        decoration.notes.clone()
+    } else {
+        Vec::new()
+    };
+    let marks = decoration
+        .paint
+        .iter()
+        .filter(|paint| paint.page == index)
+        .map(|paint| {
+            let underline = notes.iter().any(|note| boxes_overlap(&paint.quad, note));
+            let current = decoration.current.is_some_and(|(page, start, end)| {
+                page == index as u32 + 1 && paint.start == start && paint.end == end
+            });
+            FindMark {
+                quad: paint.quad,
+                current,
+                underline,
+            }
+        })
+        .collect::<Vec<_>>();
+    let (fills, lines): (Vec<_>, Vec<_>) = marks.into_iter().partition(|mark| !mark.underline);
+    if !fills.is_empty() {
+        paint_find(shown, &fills, decoration.scale);
+    }
+    if !notes.is_empty() {
+        paint_highlight(shown, &notes, decoration.scale);
+    }
+    if !lines.is_empty() {
+        paint_find(shown, &lines, decoration.scale);
+    }
+}
+
+fn boxes_overlap(a: &spike_report::Quad, b: &spike_report::Quad) -> bool {
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 }
 
 fn page_offset(sizes: &[(f32, f32)], page: u32, scale: PixelScale) -> f64 {

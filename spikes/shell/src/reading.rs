@@ -903,6 +903,44 @@ const SCRIPT: &str = r#"
     }
     return "ok";
   };
+  function ensureFindStyle() {
+    if (document.getElementById("spike-find-style")) return;
+    const style = document.createElement("style");
+    style.id = "spike-find-style";
+    style.textContent = "mark.find{background:rgba(255,214,160,0.45);color:inherit}mark.find.here{background:rgba(232,160,48,0.55);outline:1px solid rgba(184,122,40,0.9)}mark.find.overlap{background:transparent;text-decoration:underline;text-decoration-color:rgb(184,122,40);text-underline-offset:2px}";
+    (document.head || document.documentElement).appendChild(style);
+  }
+  function unwrapFind() {
+    document.querySelectorAll("mark.find").forEach(function (mark) {
+      const parent = mark.parentNode;
+      if (!parent) return;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+      parent.normalize();
+    });
+  }
+  window.spikeClearFind = function () {
+    unwrapFind();
+  };
+  window.spikeFind = function (ranges) {
+    ensureFindStyle();
+    unwrapFind();
+    if (!ranges || !ranges.length) return "empty";
+    const ordered = ranges.slice().sort(function (a, b) { return b.start - a.start; });
+    ordered.forEach(function (hit) {
+      const slices = textSlices(hit.start, hit.end);
+      slices.forEach(function (slice) {
+        const range = document.createRange();
+        range.setStart(slice.node, slice.start);
+        range.setEnd(slice.node, slice.end);
+        const mark = document.createElement("mark");
+        const inside = slice.node.parentElement && slice.node.parentElement.closest("mark.spike");
+        mark.className = inside ? "find overlap" : (hit.current ? "find here" : "find");
+        try { range.surroundContents(mark); } catch (err) {}
+      });
+    });
+    return "ok";
+  };
   function measureCaret() {
     const x = Math.max(24, Math.min(80, window.innerWidth * 0.2));
     const y = Math.max(48, Math.min(140, window.innerHeight * 0.18));

@@ -86,6 +86,7 @@ fn public_fns_are_the_word_and_the_count() {
             "as_str".to_string(),
             "at".to_string(),
             "bold_prefix_len".to_string(),
+            "decorate".to_string(),
             "parse".to_string(),
             "run".to_string(),
             "words".to_string(),
