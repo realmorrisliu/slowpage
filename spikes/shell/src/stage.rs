@@ -343,6 +343,7 @@ define_class!(
                     crate::visit::PdfPress::Follow { page, back } => {
                         state.pdf_link_back = back;
                         let _ = state.show_pdf_page(page);
+                        state.publish();
                     }
                     crate::visit::PdfPress::Stay => {}
                     crate::visit::PdfPress::Turn(crate::visit::PageEdge::Back) => {
