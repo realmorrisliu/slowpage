@@ -5980,55 +5980,34 @@ mod tests {
         );
         crate::web::record_pdf_goto(page, 1);
         assert_eq!(crate::web::reader_back().expect("kept").page, 1);
+        crate::web::set_reader_back(None);
+        let bookmark = ReadingPlace {
+            href: "chapter-1.xhtml".to_string(),
+            page: 4,
+            offset: 12,
+        };
         let marked = place_jump(
+            &bookmark,
             &ReadingPlace {
-                href: String::new(),
-                page,
-                offset: 0,
+                href: "chapter-2.xhtml".to_string(),
+                page: 9,
+                offset: 3,
             },
-            &ReadingPlace {
-                href: String::new(),
-                page: 1,
-                offset: 0,
-            },
-            &[],
-            crate::web::reader_back(),
+            &["chapter-1.xhtml".to_string(), "chapter-2.xhtml".to_string()],
+            None,
         );
-        crate::web::set_reader_back(marked.back);
-        assert_eq!(
-            crate::web::reader_back().expect("bookmark keeps it").page,
-            1
-        );
-        let back = crate::web::reader_back().expect("返回");
-        assert!(apply_contents_choice(
-            &mut glide,
-            &mut motion,
-            &mut drag,
-            &mut saved_page,
-            &mut saved_offset,
-            &ChapterMove::Page { page: back.page },
-            &mut store,
+        assert!(matches!(
+            marked.go,
+            ChapterMove::Chapter {
+                index: 1,
+                offset: 3
+            }
         ));
-        crate::web::set_reader_back(None);
-        assert!(!crate::web::reader_has_back());
-        assert_eq!(store.resume().page, 1);
-        assert_eq!((saved_page, saved_offset), (1, 0));
-        let returned = crate::stage::pdf_index_at(
-            crate::stage::page_offset(&sizes, 1, scale),
-            &sizes,
-            f64::from(scale.display()),
-        );
-        let shown = margin_page_number(
-            margin_pdf_index(sizes.len(), returned, returned, false).expect("origin"),
-        );
-        assert_eq!(shown, 1);
-        assert_eq!(
-            crate::reading::shown_page_footer(false, shown, sizes.len() as u32).0,
-            "1/2"
-        );
+        crate::web::set_reader_back(marked.back.clone());
+        assert_eq!(crate::web::reader_back(), Some(bookmark.clone()));
         crate::web::record_pdf_goto(1, 2);
+        assert_eq!(crate::web::reader_back(), Some(bookmark));
         crate::web::set_reader_back(None);
-        assert!(!crate::web::reader_has_back());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
