@@ -44,7 +44,7 @@ A hidden title bar with that height no longer installs an empty toolbar. NSH cen
 
 `nsh test` on macOS starts the test host in the background and does not activate its window. Pass `--foreground` when a check needs the window in front.
 
-`nsh-updater` is in this stable release. This shell does not set `updater` in `nsh.json` and does not write `latest.json`. What α2 needs is in `docs/release.md`.
+`nsh-updater` is in this stable release. `nsh.json` `version` is `0.1.0-alpha.2`. This shell does not set `updater` and does not write `latest.json`. Production updates are not supported. What a later key still needs is in `docs/release.md`.
 
 ## What moved onto NSH
 
