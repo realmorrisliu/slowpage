@@ -64,6 +64,10 @@ For an established route, the necessary cloud build, tests, and artifact checks,
 
 An older profile, or a `blocked` row in `scripts/verify`, is not a reason to require that local run before merge. Leave the row `blocked`. Do not mark it `pass`. A check that failed on a state the product did enter stays a failure. Do not rename it so the bar drops. A new visual design or an architecture tradeoff still waits for Morris. Do not wait for a separate approval on each pull request of an established route. Do not weaken an assertion to make a check green.
 
+## After a merge
+
+When `docs/roadmap.md` names the next phase of a sequence Morris has approved, and the pull request for the previous phase has merged, start that next phase. Do not sit idle for a new message. Do not reopen the merged head. Do not run that head again without a hypothesis the new run can falsify. The current phase stays one product pull request. The next phase is a later pull request. This file does not add a second scheduler or a poll.
+
 ## History
 
 Pull request #53 merged to main as `aa1f2e0`. Its shell tests are on main. The earlier resume that named `.worktrees/shell-s2-1`, head `c194bca`, and a baseline build of `fdd8183c5d43e0fbf623c188eebf29551254ab03` is retired. Those steps are not a current action.

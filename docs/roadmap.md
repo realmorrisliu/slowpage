@@ -27,15 +27,28 @@ The checklist document records the rule. It does not build an item, the margin m
 
 ## Reader first
 
-Morris chose this himself on 2026-11-25 at 16:37 Asia/Shanghai through widget t425u. Mochi forwarded the note. The words were: 先不管alan，先把作为阅读器本身的能力打磨好.
+Morris approved this plan himself on 2026-11-25 at 16:37 Asia/Shanghai, in the Mochi chat, through widget t425u. The words were: 先不管alan，先把作为阅读器本身的能力打磨好.
 
-The near term leaves the Alan prototype, the embed, and an AI hookup unbuilt. The 2026-11-17 embed record under `@alan` stays as a record.
+The current visual stays. Morris's Mac stays free. A window, WebKit, `nsh test`, or `just verify` that was not run stays unverified, and it does not block a merge. A landed slice stays as delivered. The same head is not run again without a hypothesis the new run can falsify. Alan's prototype, the embed, and model calls stay paused, with no resume date. The 2026-11-17 embed record under `@alan` stays as a record. Cross-book tantivy, MCP, sync, Calibre writes, a new theme, and a rename-wide cleanup stay out. A public Release and a tag wait for a later approval. A signing key is not read out of a log, and permissions are not widened for that candidate.
 
-The open product change is the fitted PDF GoTo click, pull request 89. After that change, the next work collects real gaps in reading, annotation, navigation, and import reliability. The collection is one limited batch of fixes and one regression. The batch stays closed. A window, WebKit, `nsh test`, or `just verify` that was not run stays unverified. A landed slice stays as delivered. A new visual still waits for one prototype and an approval. This work leaves Morris's Mac free, and the local-machine gate stays off.
+The order is four phases. The open phase is pull request 89. Each later phase is its own pull request.
 
-Install and security updates are a later close. This note does not authorize a version or a public release.
+1. Fitted PDF GoTo. The functions are `Document::page_links`, `pdf_user_point`, `hit_page_link`, `pdf_press`, and `show_pdf_page` through `apply_contents_choice`. This phase is complete when those functions are on the reviewed head and the production tests named in the S3 PDF link section have run for that head. Implemented on `66076cf56a11734da33597c7402cf737305bbc66`: Linux `cargo test -p spike-pdf --lib` reported 8 passed, including `a_goto_link_keeps_its_rect_and_page` and `a_shifted_page_box_hits_the_painted_ink`, with pdfium at `/tmp/pdfium/lib`. Not verified: a Mac window and a click on the painted page. Mac CI run `45585756380`, test job `139106806041`, stopped in Fetch pdfium. `curl` exited 56. The URL `https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/pdfium-mac-arm64.tgz` returned HTTP 403. That download is not sent again through another host or a token. The Mac job did not run those two tests. That is not a pass. `a_pdf_goto_click_lands_on_the_page_and_keeps_one_return` calls `pdf_press` and `apply_contents_choice` without binding pdfium, so the shell job can run it.
 
-The roadmap changes in the product pull request. Roadmap edits ride that pull request.
+2. One grouped check, then one root-cause batch, after phase 1 is accepted. The targets are the reading place (`resume_page`, `resume_href`, `place_jump`, `show_pdf_page`), the local annotation draft (`CardDraft`, `commit_card`), bookmark and find (`remember_origin`, `find_return`), a read-only Apple Books or Calibre import (`Import::apple`, `Import::calibre`, `import_tally`), and a rapid second jump or open (`pdf_link_jump`, `open_at`, `arm_nav`). The entry is those functions and the fixtures and tests they already have. A row is a product defect only when that state was entered. The non-goals are the paused and excluded work in the paragraph above, a new visual, and a rebuild of a landed slice. The hypotheses, each able to fail:
+   - After a GoTo, `resume_page` for that book is the destination page, and a completion from the book just left does not write the book now open.
+   - A failed `commit_card` keeps the draft, including across a second book and a rapid leave.
+   - The first bookmark or find jump fills `remember_origin` once. A later jump keeps it.
+   - `Import::apple` and `Import::calibre` leave the source bytes unchanged, list an on-disk book as openable, and leave a missing file missing. They do not write the catalog.
+   - A second jump keeps one return slot. `open_at` for another book clears it.
+
+   This phase is complete when one pull request fixes the hypotheses that failed, by root cause, and its production tests have run. A hypothesis that held is recorded and left alone. Not verified until a window runs: the GUI of each path.
+
+3. One regression on the fixed head from phase 2. The production tests named by that batch run once. This phase is complete when that run's `headSha` is that head. An unchanged head is not run again. A window that was not in the run stays unverified.
+
+4. Prepare a named α2 install candidate and an NSH official security-update candidate. This phase is complete when those artifacts exist and are not published. A public Release and a tag are a later approval. No version is authorized by this note.
+
+Roadmap edits ride the product pull request for the phase they describe.
 
 ## After the shell
 
@@ -140,7 +153,7 @@ The reading form shows a highlight, a note, and an agent response in the annotat
 
 Picked on 2026-11-17. This decision supersedes the 2026-11-03 one-shot process. The full decision is in `docs/design/north-star.md`. SuperReader embeds alan in-process through `alan_os_host::embed` in [alan pull request 1109](https://github.com/realmorrisliu/alan/pull/1109). A reply is `EmbedEvent::TextDelta` from `EmbedEventStream::next_event`. SuperReader's SQLite owns the thread. Each ask sends that thread as context.
 
-Morris paused that start on 2026-11-25 at 16:37 Asia/Shanghai through widget t425u. The reader-first section is the order. This repository does not start the prototype, the embed, or an AI hookup in the near term.
+Morris paused that start on 2026-11-25 at 16:37 Asia/Shanghai, in the Mochi chat, through widget t425u. The pause has no resume date. The reader-first section is the order. This repository does not start the prototype, the embed, or a model call in the near term.
 
 ## Distribution
 
@@ -306,7 +319,7 @@ Scope. `Document::page_links` reads each link rectangle and, for a GoTo inside t
 
 Non-goals. Checklist item 4 is not done. No footnote popup, no return stack on reopen, no new scroll inside the page, no toolbar, and no external URI open. A page with `/Rotate` is not in this slice. EPUB bookmarks, search, and links stay the slices that already landed.
 
-Evidence. `a_goto_link_keeps_its_rect_and_page` opens `spikes/pdf/fixtures/goto-links.pdf` through pdfium and checks the rectangle, the destination page, the URI, the missing destination, and the other file. Hayro's `page_links` for that file is empty. It also maps that PDF point at two fitted sizes, misses a point outside the page, and hits the rectangle boundary. `a_shifted_page_box_hits_the_painted_ink` opens `spikes/pdf/fixtures/shifted-box.pdf`. A media box that does not start at the origin, and a crop box, store the link in the painted page, and the click on the black ink hits. Linux ran both pdf tests with pdfium at `/tmp/pdfium/lib`. `a_pdf_goto_click_lands_on_the_page_and_keeps_one_return` leaves a URI and a same-page link in place, lets a link beat an edge turn, retires the glide through `apply_contents_choice`, writes page 2, keeps the first return page across a second and a third jump, and clears it when the book changes. The CI `test` filter names that shell test. `spike-shell` did not compile on Linux, so the shell test has not printed ok here. The Release `macos` job compiles, packages, signs, and notarizes. It does not run the tests.
+Evidence. `a_goto_link_keeps_its_rect_and_page` opens `spikes/pdf/fixtures/goto-links.pdf` through pdfium and checks the rectangle, the destination page, the URI, the missing destination, and the other file. Hayro's `page_links` for that file is empty. It also maps that PDF point at two fitted sizes, misses a point outside the page, and hits the rectangle boundary. `a_shifted_page_box_hits_the_painted_ink` opens `spikes/pdf/fixtures/shifted-box.pdf`. A media box that does not start at the origin, and a crop box, store the link in the painted page, and the click on the black ink hits. Linux ran both pdf tests with pdfium at `/tmp/pdfium/lib` on `66076cf56a11734da33597c7402cf737305bbc66`: 8 passed, 0 failed. `a_pdf_goto_click_lands_on_the_page_and_keeps_one_return` does not bind pdfium. It leaves a URI and a same-page link in place, lets a link beat an edge turn, retires the glide through `apply_contents_choice`, writes page 2, keeps the first return page across a second and a third jump, and clears it when the book changes. The CI `test` filter names that shell test. `spike-shell` did not compile on Linux, so the shell test has not printed ok here. Mac CI run `45585756380` test job `139106806041` stopped in Fetch pdfium: `curl` exited 56 and the chromium/8125 mac arm64 tarball returned HTTP 403. The two pdfium fixture tests are filtered out of the later Mac `spike-pdf` command. They are not a pass on that job. The Release `macos` job compiles, packages, signs, and notarizes. It does not run the tests.
 
 Not run. A Mac window, a click on the painted page, WebKit, `nsh test`, and `just verify`. That is not a pass.
 
