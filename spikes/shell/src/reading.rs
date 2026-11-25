@@ -350,6 +350,17 @@ pub fn product_page_footer(page: u32, pages: u32) -> (String, String) {
     footer_zh(page, pages)
 }
 
+/// The page row `publish` emits. The installed app uses the Chinese footer.
+/// The dev spike keeps the English row.
+pub fn shown_page_footer(product: bool, current: u32, pages: u32) -> (String, String) {
+    if product {
+        product_page_footer(current, pages)
+    } else {
+        let left = pages.saturating_sub(current);
+        (format!("{current}/{pages}"), format!("{left} pages left"))
+    }
+}
+
 pub fn title_alpha(shown_ms: u32) -> f32 {
     fade_down(shown_ms, TITLE_DELAY_MS, TITLE_OVER_MS).clamp(0.0, 1.0)
 }

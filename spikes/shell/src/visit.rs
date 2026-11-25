@@ -3015,25 +3015,26 @@ pub use spike_pdf::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PdfPress {
-    Follow { page: u32, back: Option<u32> },
+    Follow { page: u32 },
     Stay,
     Turn(PageEdge),
 }
 
 /// A link under the click wins over an edge turn. A link that does not
-/// move still keeps the edge from turning.
+/// move still keeps the edge from turning. The return place is
+/// `web::record_pdf_goto`, the same slot the contents menu reads.
 pub fn pdf_press(
     hit: Option<spike_pdf::LinkHit>,
     here: u32,
     pages: u32,
-    back: Option<u32>,
     edge: PageEdge,
 ) -> PdfPress {
     match hit {
         Some(spike_pdf::LinkHit::Page(dest)) => {
-            match spike_pdf::pdf_link_jump(here, dest, pages, back) {
-                Some((page, back)) => PdfPress::Follow { page, back },
-                None => PdfPress::Stay,
+            if dest >= 1 && pages > 0 && dest <= pages && dest != here {
+                PdfPress::Follow { page: dest }
+            } else {
+                PdfPress::Stay
             }
         }
         Some(spike_pdf::LinkHit::Held) => PdfPress::Stay,
@@ -5850,54 +5851,57 @@ mod tests {
             Some((0.0, 0.0, 40.0, 40.0))
         ));
 
+        let stage = include_str!("stage.rs");
+        assert!(!stage.contains("pdf_link_back"));
+        let mouse_up = stage
+            .split("fn mouse_up")
+            .nth(1)
+            .and_then(|rest| rest.split("fn opened_at_ms").next())
+            .unwrap_or("");
+        assert!(mouse_up.contains("record_pdf_goto"));
+        assert!(mouse_up.contains("show_pdf_page"));
+        assert!(mouse_up.contains("publish()"));
+        let menu = stage
+            .split("fn show_contents")
+            .nth(1)
+            .and_then(|rest| rest.split("fn pick_chapter").next())
+            .unwrap_or("");
+        assert!(menu.contains("reader_has_back"));
+        let pop = stage
+            .split("fn pop_chapters")
+            .nth(1)
+            .and_then(|rest| rest.split("fn fill_card").next())
+            .unwrap_or("");
+        assert!(pop.contains("\"返回\""));
+        let back_to = stage
+            .split("fn return_saved_place")
+            .nth(1)
+            .and_then(|rest| rest.split("fn select_phrase").next())
+            .unwrap_or("");
+        assert!(back_to.contains("reader_back"));
+        assert!(back_to.contains("show_pdf_page"));
+        assert!(back_to.contains("set_reader_back(None)"));
+        assert!(back_to.contains("publish()"));
+        let opened = stage
+            .split("fn open_at")
+            .nth(1)
+            .and_then(|rest| rest.split("fn open_requested").next())
+            .unwrap_or("");
+        assert!(opened.contains("set_reader_back(None)"));
+
+        crate::web::set_reader_back(None);
         let first = pdf_press(
             Some(spike_pdf::LinkHit::Page(2)),
             1,
-            2,
-            None,
+            doc.page_count() as u32,
             PageEdge::Forward,
         );
-        assert_eq!(
-            first,
-            PdfPress::Follow {
-                page: 2,
-                back: Some(1)
-            }
-        );
-        let second = pdf_press(
-            Some(spike_pdf::LinkHit::Page(1)),
-            2,
-            2,
-            Some(1),
-            PageEdge::Back,
-        );
-        assert_eq!(
-            second,
-            PdfPress::Follow {
-                page: 1,
-                back: Some(1)
-            }
-        );
-        let third = pdf_press(
-            Some(spike_pdf::LinkHit::Page(2)),
-            1,
-            2,
-            Some(1),
-            PageEdge::None,
-        );
-        assert_eq!(
-            third,
-            PdfPress::Follow {
-                page: 2,
-                back: Some(1)
-            }
-        );
+        assert_eq!(first, PdfPress::Follow { page: 2 });
         assert_eq!(
             pdf_press(
                 Some(spike_pdf::LinkHit::Held),
                 1,
-                2,
-                None,
+                doc.page_count() as u32,
                 PageEdge::Forward
             ),
             PdfPress::Stay
@@ -5906,18 +5910,15 @@ mod tests {
             pdf_press(
                 Some(spike_pdf::LinkHit::Page(1)),
                 1,
-                2,
-                None,
+                doc.page_count() as u32,
                 PageEdge::Back
             ),
             PdfPress::Stay
         );
         assert_eq!(
-            pdf_press(None, 1, 2, Some(1), PageEdge::Forward),
+            pdf_press(None, 1, doc.page_count() as u32, PageEdge::Forward),
             PdfPress::Turn(PageEdge::Forward)
         );
-        assert_eq!(link_back_for_book(Some(1), true), Some(1));
-        assert_eq!(link_back_for_book(Some(1), false), None);
 
         let dir = std::env::temp_dir().join(format!("superreader-pdf-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -5941,10 +5942,14 @@ mod tests {
         let mut drag = 18.0;
         let mut saved_page = 1u32;
         let mut saved_offset = 4u32;
-        let PdfPress::Follow { page, back } = first else {
+        let PdfPress::Follow { page } = first else {
             panic!("cross-page");
         };
-        assert_eq!(back, Some(1));
+        crate::web::record_pdf_goto(1, page);
+        assert!(crate::web::reader_has_back());
+        let origin = crate::web::reader_back().expect("contents return");
+        assert!(origin.href.is_empty());
+        assert_eq!(origin.page, 1);
         assert!(apply_contents_choice(
             &mut glide,
             &mut motion,
@@ -5959,6 +5964,71 @@ mod tests {
         assert_eq!(drag, 0.0);
         assert_eq!(store.resume().page, 2);
         assert_eq!((saved_page, saved_offset), (2, 0));
+        let sizes = [doc.page_size_pt(0), doc.page_size_pt(1)];
+        let scale = spike_report::PixelScale::Retina1x;
+        let landed = crate::stage::pdf_index_at(
+            crate::stage::page_offset(&sizes, page, scale),
+            &sizes,
+            f64::from(scale.display()),
+        );
+        let shown =
+            margin_page_number(margin_pdf_index(sizes.len(), landed, landed, false).expect("page"));
+        assert_eq!(shown, 2);
+        assert_eq!(
+            crate::reading::shown_page_footer(false, shown, sizes.len() as u32),
+            ("2/2".to_string(), "0 pages left".to_string())
+        );
+        crate::web::record_pdf_goto(page, 1);
+        assert_eq!(crate::web::reader_back().expect("kept").page, 1);
+        let marked = place_jump(
+            &ReadingPlace {
+                href: String::new(),
+                page,
+                offset: 0,
+            },
+            &ReadingPlace {
+                href: String::new(),
+                page: 1,
+                offset: 0,
+            },
+            &[],
+            crate::web::reader_back(),
+        );
+        crate::web::set_reader_back(marked.back);
+        assert_eq!(
+            crate::web::reader_back().expect("bookmark keeps it").page,
+            1
+        );
+        let back = crate::web::reader_back().expect("返回");
+        assert!(apply_contents_choice(
+            &mut glide,
+            &mut motion,
+            &mut drag,
+            &mut saved_page,
+            &mut saved_offset,
+            &ChapterMove::Page { page: back.page },
+            &mut store,
+        ));
+        crate::web::set_reader_back(None);
+        assert!(!crate::web::reader_has_back());
+        assert_eq!(store.resume().page, 1);
+        assert_eq!((saved_page, saved_offset), (1, 0));
+        let returned = crate::stage::pdf_index_at(
+            crate::stage::page_offset(&sizes, 1, scale),
+            &sizes,
+            f64::from(scale.display()),
+        );
+        let shown = margin_page_number(
+            margin_pdf_index(sizes.len(), returned, returned, false).expect("origin"),
+        );
+        assert_eq!(shown, 1);
+        assert_eq!(
+            crate::reading::shown_page_footer(false, shown, sizes.len() as u32).0,
+            "1/2"
+        );
+        crate::web::record_pdf_goto(1, 2);
+        crate::web::set_reader_back(None);
+        assert!(!crate::web::reader_has_back());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -338,10 +338,9 @@ define_class!(
                     .as_ref()
                     .map(|pdf| pdf.doc.page_count() as u32)
                     .unwrap_or(0);
-                let back = crate::visit::link_back_for_book(state.pdf_link_back, true);
-                match crate::visit::pdf_press(hit, here, pages, back, edge) {
-                    crate::visit::PdfPress::Follow { page, back } => {
-                        state.pdf_link_back = back;
+                match crate::visit::pdf_press(hit, here, pages, edge) {
+                    crate::visit::PdfPress::Follow { page } => {
+                        crate::web::record_pdf_goto(here, page);
                         let _ = state.show_pdf_page(page);
                         state.publish();
                     }
@@ -428,7 +427,6 @@ struct State {
     product: bool,
     pdf_saved_page: u32,
     pdf_saved_offset: u32,
-    pdf_link_back: Option<u32>,
     page_total: Option<u32>,
     epub_page: usize,
     anchor: Option<Anchor>,
@@ -2098,7 +2096,7 @@ impl State {
         };
         let mut page = page.max(1);
         self.book_gen = self.book_gen.wrapping_add(1);
-        self.pdf_link_back = crate::visit::link_back_for_book(self.pdf_link_back, false);
+        crate::web::set_reader_back(None);
         self.pdf_motion = None;
         self.pdf_drag = 0.0;
         self.pdf_glide = None;
@@ -2656,7 +2654,6 @@ impl State {
                 let current = self.current_page().saturating_add(1);
                 shown_page = current as u32;
                 shown_pages = pages as u32;
-                let left_pages = pages.saturating_sub(current);
                 let title = if self.book_path.is_empty() || self.book_path.ends_with("gpt3.pdf") {
                     "Language Models are Few-Shot Learners".to_string()
                 } else {
@@ -2683,14 +2680,8 @@ impl State {
                         self.scale.name()
                     )
                 };
-                let (left, right) = if self.product {
-                    crate::reading::product_page_footer(current as u32, pages as u32)
-                } else {
-                    (
-                        format!("{current}/{pages}"),
-                        format!("{left_pages} pages left"),
-                    )
-                };
+                let (left, right) =
+                    crate::reading::shown_page_footer(self.product, current as u32, pages as u32);
                 (title, variant, left, right, false, String::new())
             }
             Mode::WebKit => {
@@ -3098,17 +3089,20 @@ impl State {
         let Some(pdf) = self.pdf.as_ref() else {
             return 0;
         };
-        let display = self.scale.display() as f64;
-        let mut y = 0.0;
-        for (index, (_, ph)) in pdf.sizes.iter().enumerate() {
-            let dh = *ph as f64 * display;
-            if self.offset < y + dh {
-                return index;
-            }
-            y += dh + 16.0;
-        }
-        0
+        pdf_index_at(self.offset, &pdf.sizes, self.scale.display() as f64)
     }
+}
+
+pub(crate) fn pdf_index_at(offset: f64, sizes: &[(f32, f32)], display: f64) -> usize {
+    let mut y = 0.0;
+    for (index, (_, ph)) in sizes.iter().enumerate() {
+        let dh = *ph as f64 * display;
+        if offset < y + dh {
+            return index;
+        }
+        y += dh + 16.0;
+    }
+    0
 }
 
 fn pdf_origin_of(product: bool) -> (f64, f64) {
@@ -3353,7 +3347,6 @@ impl Stage {
             product: false,
             pdf_saved_page: 0,
             pdf_saved_offset: 0,
-            pdf_link_back: None,
             page_total: None,
             epub_page: 0,
             anchor: None,
@@ -3670,7 +3663,7 @@ fn boxes_overlap(a: &spike_report::Quad, b: &spike_report::Quad) -> bool {
     a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 }
 
-fn page_offset(sizes: &[(f32, f32)], page: u32, scale: PixelScale) -> f64 {
+pub(crate) fn page_offset(sizes: &[(f32, f32)], page: u32, scale: PixelScale) -> f64 {
     let display = scale.display() as f64;
     let index = page.saturating_sub(1) as usize;
     let mut y = 0.0;
