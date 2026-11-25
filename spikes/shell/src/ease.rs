@@ -209,6 +209,7 @@ pub fn settle(immersive: bool, margin: bool) {
 }
 
 pub fn retarget(immersive: bool, margin: bool) -> Trip {
+    crate::shelf_pass::park_reading();
     let mut trip = lock();
     *trip = trip.aim(immersive, margin);
     *trip
@@ -282,7 +283,7 @@ pub fn present(width: f64, height: f64, top: f64, trip: Trip) -> Presented {
         Some(false) => hidden.card,
     };
     let page = held_page(trip, fitted);
-    Presented {
+    let mut presented = Presented {
         card,
         radius: CARD_RADIUS * (1.0 - pose.immersive),
         shadow: 1.0 - pose.immersive,
@@ -291,7 +292,17 @@ pub fn present(width: f64, height: f64, top: f64, trip: Trip) -> Presented {
         page,
         plate: pose.immersive >= LANDED,
         panel_toggle: pose.immersive < LANDED,
+    };
+    if pose.immersive < 1e-3 {
+        if let Some(card) = crate::shelf_pass::card_blend(width, height, top) {
+            let frame = reading_frame(width, height, top, 0.0, crate::form::margin_shown());
+            presented.card = card;
+            presented.page = frame.card;
+            presented.margin = frame.margin.filter(|rect| rect.w > 0.5);
+            presented.covers = frame.covers;
+        }
     }
+    presented
 }
 
 fn held_page(trip: Trip, fitted: Rect) -> Rect {

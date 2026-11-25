@@ -445,6 +445,9 @@ struct State {
     ease_started: Option<Instant>,
     ease_flag: bool,
     ease_sent: bool,
+    shelf_leg: u64,
+    shelf_started: Option<Instant>,
+    shelf_alpha: f64,
     find: Option<FindJob>,
     find_paint: Vec<FindPaint>,
     find_current: Option<(u32, u32, u32)>,
@@ -1616,22 +1619,56 @@ impl State {
             self.ease_leg = trip.leg();
             self.ease_started = Some(Instant::now());
         }
-        let trip = if trip.moving() {
-            let elapsed = self
-                .ease_started
+        let trip_elapsed = if trip.moving() {
+            self.ease_started
                 .map(|started| started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32)
-                .unwrap_or(0);
-            let next = crate::ease::advance(elapsed);
-            self.context
-                .emit("ease", json!({"u": next.u(), "leg": next.leg()}));
-            if next.moving() {
-                schedule_chrome_pump(view, 0.016);
-            }
-            next
+                .unwrap_or(0)
         } else {
-            trip
+            0
         };
-        self.mark_ease(trip.moving());
+        let shelf_leg = crate::shelf_pass::leg();
+        if shelf_leg != self.shelf_leg {
+            self.shelf_leg = shelf_leg;
+            self.shelf_started = Some(Instant::now());
+        }
+        let shelf_elapsed = if crate::shelf_pass::moving() {
+            self.shelf_started
+                .map(|started| started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let pumped = pump_ease(trip_elapsed, shelf_elapsed);
+        if pumped.trip_moving {
+            schedule_chrome_pump(view, 0.016);
+        }
+        if pumped.shelf_moving {
+            schedule_chrome_pump(view, 0.016);
+        }
+        if pumped.emit {
+            self.context.emit(
+                "ease",
+                json!({
+                    "u": pumped.trip.u(),
+                    "leg": pumped.trip.leg(),
+                    "shelf": crate::shelf_pass::progress(),
+                    "shelf_leg": crate::shelf_pass::leg(),
+                }),
+            );
+        }
+        self.sync_web_opacity();
+        self.mark_ease(pumped.trip_moving);
+    }
+
+    fn sync_web_opacity(&mut self) {
+        let alpha = crate::shelf_pass::body_alpha();
+        if (self.shelf_alpha - alpha).abs() < 0.002 {
+            return;
+        }
+        self.shelf_alpha = alpha;
+        if let Some(web) = &self.web {
+            web.set_opacity(alpha);
+        }
     }
 
     fn release_for_ease(&mut self) {
@@ -1723,6 +1760,7 @@ impl State {
                     objc2_core_foundation::CGSize::new(card.w, card.h),
                 ),
             );
+            CGContext::set_alpha(Some(ctx), crate::shelf_pass::body_alpha());
         }
         self.paint_pdf_page(ctx, from, x - shift, y, dw, dh);
         if let Some((next, (nx, ny, ndw, ndh))) = next_page {
@@ -3212,6 +3250,9 @@ impl Stage {
             ease_started: None,
             ease_flag: false,
             ease_sent: false,
+            shelf_leg: 0,
+            shelf_started: None,
+            shelf_alpha: -1.0,
             find: None,
             find_paint: Vec::new(),
             find_current: None,
@@ -3682,9 +3723,78 @@ pub(crate) fn shell_publish_key(
     }
 }
 
+fn ease_tick_due(trip_moving: bool, trip_was: bool, shelf_was: bool) -> bool {
+    trip_moving || trip_was || shelf_was
+}
+
+pub(crate) struct EasePump {
+    pub emit: bool,
+    pub trip_moving: bool,
+    pub shelf_moving: bool,
+    pub trip: crate::ease::Trip,
+}
+
+/// The production clock `sync_ease` runs. `trip_was` is the trip before
+/// `ease::advance`, and the emit flag stays on for the landing call.
+pub(crate) fn pump_ease(trip_elapsed: u32, shelf_elapsed: u32) -> EasePump {
+    let trip = crate::ease::current();
+    let trip_was = trip.moving();
+    let trip = if trip_was {
+        crate::ease::advance(trip_elapsed)
+    } else {
+        trip
+    };
+    let shelf_was = crate::shelf_pass::moving();
+    if shelf_was {
+        crate::shelf_pass::advance(shelf_elapsed);
+    }
+    EasePump {
+        emit: ease_tick_due(trip.moving(), trip_was, shelf_was),
+        trip_moving: trip.moving(),
+        shelf_moving: crate::shelf_pass::moving(),
+        trip,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{layout_target, shell_publish_key};
+    use super::{layout_target, pump_ease, shell_publish_key};
+
+    #[test]
+    fn the_immersive_landing_tick_is_emitted_after_the_trip_stops() {
+        crate::shelf_pass::reset();
+        crate::ease::settle(false, false);
+        crate::ease::retarget(true, true);
+        assert!(crate::ease::current().moving());
+        let early = pump_ease(0, 0);
+        assert!(early.emit);
+        assert!(early.trip_moving);
+        assert!(crate::ease::current().moving());
+        let landed = pump_ease(10_000, 0);
+        assert!(landed.emit);
+        assert!(!landed.trip_moving);
+        assert!(!crate::ease::current().moving());
+        let idle = pump_ease(10_000, 0);
+        assert!(!idle.emit);
+        assert!(!idle.trip_moving);
+
+        crate::shelf_pass::reset();
+        crate::ease::settle(false, false);
+        crate::shelf_pass::intend_reading("a.pdf", None);
+        assert!(crate::shelf_pass::moving());
+        assert!(!crate::ease::current().moving());
+        let shelf_early = pump_ease(0, 0);
+        assert!(shelf_early.emit);
+        assert!(shelf_early.shelf_moving);
+        let shelf_landed = pump_ease(0, 10_000);
+        assert!(shelf_landed.emit);
+        assert!(!shelf_landed.shelf_moving);
+        assert!(!crate::shelf_pass::moving());
+        let shelf_idle = pump_ease(0, 10_000);
+        assert!(!shelf_idle.emit);
+        crate::shelf_pass::reset();
+        crate::ease::settle(false, false);
+    }
 
     #[test]
     fn a_smaller_placement_is_the_layout_target() {

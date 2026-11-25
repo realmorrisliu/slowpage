@@ -151,6 +151,19 @@ jobs:
             a_closed_drawer_or_the_shelf_ends_composition_and_return_saves \
             a_selection_with_a_page_is_not_a_column_report \
             a_node_selection_posts_scalars_and_a_reflow_remeasures \
+            shelf_enter_and_leave_follow_the_cosine \
+            a_reverse_continues_from_the_current_progress \
+            the_last_book_lands_and_a_missed_book_keeps_its_draft \
+            the_cover_keeps_its_aspect_inside_each_window \
+            a_narrow_window_does_not_squeeze_the_page \
+            an_idle_pass_does_not_change_the_immersive_frame \
+            a_continue_click_uses_that_card_and_a_shelf_click_uses_the_grid \
+            the_immersive_landing_tick_is_emitted_after_the_trip_stops \
+            the_clicked_cover_uses_the_shelf_that_is_showing \
+            the_flight_starts_on_the_painted_cover \
+            a_filtered_click_uses_the_painted_cover \
+            a_file_open_does_not_keep_the_previous_cover \
+            the_shelf_picture_owns_the_flight \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -225,7 +238,20 @@ jobs:
             a_second_draft_stays_visible_and_the_card_still_opens \
             a_closed_drawer_or_the_shelf_ends_composition_and_return_saves \
             a_selection_with_a_page_is_not_a_column_report \
-            a_node_selection_posts_scalars_and_a_reflow_remeasures
+            a_node_selection_posts_scalars_and_a_reflow_remeasures \
+            shelf_enter_and_leave_follow_the_cosine \
+            a_reverse_continues_from_the_current_progress \
+            the_last_book_lands_and_a_missed_book_keeps_its_draft \
+            the_cover_keeps_its_aspect_inside_each_window \
+            a_narrow_window_does_not_squeeze_the_page \
+            an_idle_pass_does_not_change_the_immersive_frame \
+            a_continue_click_uses_that_card_and_a_shelf_click_uses_the_grid \
+            the_immersive_landing_tick_is_emitted_after_the_trip_stops \
+            the_clicked_cover_uses_the_shelf_that_is_showing \
+            the_flight_starts_on_the_painted_cover \
+            a_filtered_click_uses_the_painted_cover \
+            a_file_open_does_not_keep_the_previous_cover \
+            the_shelf_picture_owns_the_flight
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done
