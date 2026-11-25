@@ -1619,7 +1619,8 @@ impl State {
             self.ease_leg = trip.leg();
             self.ease_started = Some(Instant::now());
         }
-        let trip = if trip.moving() {
+        let trip_was = trip.moving();
+        let trip = if trip_was {
             let elapsed = self
                 .ease_started
                 .map(|started| started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32)
@@ -1648,7 +1649,7 @@ impl State {
                 schedule_chrome_pump(view, 0.016);
             }
         }
-        if trip.moving() || shelf_was {
+        if trip.moving() || trip_was || shelf_was {
             self.context.emit(
                 "ease",
                 json!({

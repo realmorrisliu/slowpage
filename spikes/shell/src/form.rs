@@ -864,7 +864,7 @@ pub fn mount(
     menu: Signal<bool>,
     ease: Signal<u64>,
     on_peer: impl Fn(Peer) + Clone + 'static,
-    on_open: impl Fn(String) + Clone + 'static,
+    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
 ) -> impl IntoElement {
     let form_b = form;
     let selected_b = selected;
@@ -962,12 +962,21 @@ pub fn shelf_scroll() -> f32 {
     SHELF_OFFSET.with(|stored| stored.get())
 }
 
+/// Which cover the reader pressed. A book in 继续阅读 is also on the shelf,
+/// so the path alone cannot tell the two tiles apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CoverFrom {
+    Shelf,
+    Continue,
+}
+
 /// The cover the reader clicked, in window points, after the shelf has scrolled.
 pub(crate) fn cover_slot(
     window: Window,
     chrome: crate::tokens::ChromeIn,
     library: &LibraryIn,
     path: &str,
+    from: CoverFrom,
 ) -> Option<Rect> {
     let placed = place_now(
         &PlaceIn {
@@ -994,45 +1003,49 @@ pub(crate) fn cover_slot(
     }
     y += crate::tokens::section_block();
     let scroll = shelf_scroll();
-    if let Some(index) = library
-        .covers
-        .iter()
-        .position(|card| card.open_path.as_deref() == Some(path))
-    {
-        let grid = spike_library::shelf_grid(content_w);
-        let columns = grid.columns.max(1);
-        let col = index as u32 % columns;
-        let row_i = index as u32 / columns;
-        let row_h = grid.cover_h + grid.caption_h;
-        let x = origin_x + col as f32 * (grid.cover_w + grid.column_gap);
-        let cover_y = y + row_i as f32 * (row_h + grid.row_gap) - scroll;
-        return Some(Rect {
-            x: f64::from(x),
-            y: f64::from(cover_y),
-            w: f64::from(grid.cover_w),
-            h: f64::from(grid.cover_h),
-        });
-    }
-    if let Some(index) = library
-        .continue_reading
-        .iter()
-        .position(|card| card.open_path.as_deref() == Some(path))
-    {
-        if continued.cards == 0 {
-            return None;
+    match from {
+        CoverFrom::Shelf => {
+            let index = library
+                .covers
+                .iter()
+                .position(|card| card.open_path.as_deref() == Some(path))?;
+            let grid = spike_library::shelf_grid(content_w);
+            let columns = grid.columns.max(1);
+            let col = index as u32 % columns;
+            let row_i = index as u32 / columns;
+            let row_h = grid.cover_h + grid.caption_h;
+            let x = origin_x + col as f32 * (grid.cover_w + grid.column_gap);
+            let cover_y = y + row_i as f32 * (row_h + grid.row_gap) - scroll;
+            Some(Rect {
+                x: f64::from(x),
+                y: f64::from(cover_y),
+                w: f64::from(grid.cover_w),
+                h: f64::from(grid.cover_h),
+            })
         }
-        let x = origin_x
-            + index as f32 * (continued.card_w + continued.gap)
-            + crate::tokens::CONTINUE_PAD;
-        let cover_y = continue_y + crate::tokens::CONTINUE_PAD - scroll;
-        return Some(Rect {
-            x: f64::from(x),
-            y: f64::from(cover_y),
-            w: f64::from(continued.cover_w),
-            h: f64::from(continued.cover_h),
-        });
+        CoverFrom::Continue => {
+            if continued.cards == 0 {
+                return None;
+            }
+            let index = library
+                .continue_reading
+                .iter()
+                .position(|card| card.open_path.as_deref() == Some(path))?;
+            if index as u32 >= continued.cards {
+                return None;
+            }
+            let x = origin_x
+                + index as f32 * (continued.card_w + continued.gap)
+                + crate::tokens::CONTINUE_PAD;
+            let cover_y = continue_y + crate::tokens::CONTINUE_PAD - scroll;
+            Some(Rect {
+                x: f64::from(x),
+                y: f64::from(cover_y),
+                w: f64::from(continued.cover_w),
+                h: f64::from(continued.cover_h),
+            })
+        }
     }
-    None
 }
 
 pub fn restore_shelf_scroll(offset: f32) {
@@ -2066,7 +2079,7 @@ fn paint(
     query: Signal<String>,
     library: LibraryIn,
     on_peer: impl Fn(Peer) + Clone + 'static,
-    on_open: impl Fn(String) + Clone + 'static,
+    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
 ) -> AnyElement {
     let grid = crate::shelf_pass::grid_alpha() as f32;
     let veil = crate::shelf_pass::shelf_veil() as f32;
@@ -4507,7 +4520,7 @@ fn card_face(
     face: CardFace,
     library: &LibraryIn,
     on_peer: impl Fn(Peer) + Clone + 'static,
-    on_open: impl Fn(String) + Clone + 'static,
+    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
 ) -> AnyElement {
     let title = selected_title(&library.selected);
     let content_w = rect
@@ -4704,7 +4717,7 @@ fn card_header(title: &str, count: u32) -> AnyElement {
 fn book_grid(
     library: &LibraryIn,
     width: f32,
-    on_open: impl Fn(String) + Clone + 'static,
+    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
 ) -> AnyElement {
     let mut column = view().flex().flex_col().w_full();
     if !library.continue_reading.is_empty() {
@@ -4757,7 +4770,7 @@ fn book_grid(
 fn continue_row(
     library: &LibraryIn,
     width: f32,
-    on_open: impl Fn(String) + Clone + 'static,
+    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
 ) -> AnyElement {
     let layout = crate::tokens::continue_layout(width, library.continue_reading.len() as u32);
     let mut row = view().w(px(width)).flex().flex_row().gap(px(layout.gap));
@@ -4804,7 +4817,7 @@ fn section_label(label: &str, note: Option<&str>) -> AnyElement {
 fn continue_card(
     card: &CoverCard,
     layout: crate::tokens::ContinueLayout,
-    on_open: impl Fn(String) + 'static,
+    on_open: impl Fn(String, CoverFrom) + 'static,
 ) -> AnyElement {
     let path = card.open_path.clone();
     let mut tile = view()
@@ -4819,7 +4832,7 @@ fn continue_card(
         .accessible(true)
         .label(format!("继续阅读 {}", card.title));
     if let Some(path) = path {
-        tile = tile.on_press(move || on_open(path.clone()));
+        tile = tile.on_press(move || on_open(path.clone(), CoverFrom::Continue));
     }
     tile.child(cover_art(card, layout.cover_w, layout.cover_h))
         .child(
@@ -4893,7 +4906,7 @@ fn progress_line(card: &CoverCard) -> AnyElement {
 
 fn cover_tile(
     card: &CoverCard,
-    on_open: impl Fn(String) + 'static,
+    on_open: impl Fn(String, CoverFrom) + 'static,
     grid: spike_library::ShelfGrid,
 ) -> AnyElement {
     let path = card.open_path.clone();
@@ -4905,7 +4918,7 @@ fn cover_tile(
         .accessible(true)
         .label(card.title.clone());
     if let Some(path) = path {
-        tile = tile.on_press(move || on_open(path.clone()));
+        tile = tile.on_press(move || on_open(path.clone(), CoverFrom::Shelf));
     }
     tile = tile
         .child(cover_art(card, grid.cover_w, grid.cover_h))
@@ -5686,6 +5699,74 @@ mod tests {
             &library,
         );
         assert_eq!(placed.face, CardFace::Grid);
+    }
+
+    #[test]
+    fn a_continue_click_uses_that_card_and_a_shelf_click_uses_the_grid() {
+        restore_shelf_scroll(0.0);
+        let book = CoverCard {
+            title: "Field Guide".into(),
+            author: String::new(),
+            cover: None,
+            open_path: Some("guide.epub".into()),
+            pdf: false,
+            percent: Some(40),
+            page: Some(3),
+            position: String::new(),
+            opened: String::new(),
+            plate: true,
+            plate_rgb: None,
+            unavailable: None,
+        };
+        let mut library = empty_library();
+        library.empty = false;
+        library.book_count = 1;
+        library.covers.push(book.clone());
+        library.continue_reading.push(book);
+        let chrome = crate::tokens::ChromeIn {
+            lights: true,
+            bar: 92.0,
+            top: 0.0,
+        };
+        let placed = place_now(
+            &PlaceIn {
+                form: launch(),
+                window: window(),
+                chrome,
+            },
+            &library,
+        );
+        let nodes = layout_nodes(&placed, &library);
+        let shelf = cover_slot(window(), chrome, &library, "guide.epub", CoverFrom::Shelf)
+            .expect("shelf tile");
+        let continued = cover_slot(
+            window(),
+            chrome,
+            &library,
+            "guide.epub",
+            CoverFrom::Continue,
+        )
+        .expect("continue tile");
+        let grid = frame_of(&nodes, "cover.0");
+        let row = frame_of(&nodes, "continue.0.cover");
+        near(shelf.x, f64::from(grid[0]));
+        near(shelf.y, f64::from(grid[1]));
+        near(shelf.w, f64::from(grid[2]));
+        near(shelf.h, f64::from(grid[3]));
+        near(continued.x, f64::from(row[0]));
+        near(continued.y, f64::from(row[1]));
+        near(continued.w, f64::from(row[2]));
+        near(continued.h, f64::from(row[3]));
+        assert!(continued.y < shelf.y);
+        assert!(cover_slot(window(), chrome, &library, "missing.epub", CoverFrom::Shelf).is_none());
+        assert!(cover_slot(
+            window(),
+            chrome,
+            &library,
+            "missing.epub",
+            CoverFrom::Continue,
+        )
+        .is_none());
     }
 
     fn frame_of(nodes: &[serde_json::Value], id: &str) -> [f32; 4] {

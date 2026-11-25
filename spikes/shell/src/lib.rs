@@ -1166,7 +1166,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                     form::Peer::Calibre => import_calibre(),
                                     form::Peer::AddFolder => import_folder(),
                                 },
-                                move |path| {
+                                move |path, from| {
                                     // The headless runner never builds the native stage, so
                                     // the open command does not write history there. Record
                                     // the click here, then let the stage replace the row
@@ -1186,6 +1186,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                         chrome_open.get(),
                                         &library_open.get(),
                                         &path,
+                                        from,
                                     );
                                     form::show_reading(&form_open);
                                     let mut current = visit_open.get();
