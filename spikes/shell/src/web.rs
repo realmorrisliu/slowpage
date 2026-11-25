@@ -1571,6 +1571,23 @@ pub fn set_reader_back(back: Option<crate::visit::ReadingPlace>) {
     SESSION.with(|session| session.borrow_mut().reader.back = back);
 }
 
+/// A same-file PDF GoTo uses the contents return. A bookmark or a search
+/// jump that already filled the slot stays. The same page does not record one.
+pub fn record_pdf_goto(here: u32, dest: u32) {
+    let here_place = crate::visit::ReadingPlace {
+        href: String::new(),
+        page: here,
+        offset: 0,
+    };
+    let dest_place = crate::visit::ReadingPlace {
+        href: String::new(),
+        page: dest,
+        offset: 0,
+    };
+    let step = crate::visit::place_jump(&here_place, &dest_place, &[], reader_back());
+    set_reader_back(step.back);
+}
+
 pub fn arm_jump(href: &str, offset: u32) {
     SESSION.with(|session| {
         let reader = &mut session.borrow_mut().reader;

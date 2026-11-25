@@ -57,6 +57,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Detach mount regression
+        run: bash ../scripts/detach-mount.test.sh
       - name: Install Rust 1.98.1
         run: rustup toolchain install 1.98.1 && rustup default 1.98.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -67,6 +69,20 @@ jobs:
       - run: cargo test -p spike-report -p spike-epub --lib -- --skip fixtures_open_on_chapter_text
       - run: cargo test -p spike-bold-word-starts
       - run: cargo test -p spike-library
+      - name: Fetch pdfium
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            arm64) name=pdfium-mac-arm64.tgz ;;
+            x86_64) name=pdfium-mac-x64.tgz ;;
+            *) echo "no pdfium build for $arch" >&2; exit 1 ;;
+          esac
+          mkdir -p /tmp/pdfium
+          curl -fsSL -L -o "/tmp/pdfium/$name" \
+            "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/$name"
+          tar -xzf "/tmp/pdfium/$name" -C /tmp/pdfium
+          test -f /tmp/pdfium/lib/libpdfium.dylib
       - run: cargo test -p spike-pdf --lib
       # nsh-platform-macos and objc2 need the macOS SDK on this macos-latest
       # runner. One package, not the workspace: spike-measure in the same
@@ -164,6 +180,7 @@ jobs:
             a_filtered_click_uses_the_painted_cover \
             a_file_open_does_not_keep_the_previous_cover \
             the_shelf_picture_owns_the_flight \
+            a_pdf_goto_click_lands_on_the_page_and_keeps_one_return \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -251,7 +268,8 @@ jobs:
             the_flight_starts_on_the_painted_cover \
             a_filtered_click_uses_the_painted_cover \
             a_file_open_does_not_keep_the_previous_cover \
-            the_shelf_picture_owns_the_flight
+            the_shelf_picture_owns_the_flight \
+            a_pdf_goto_click_lands_on_the_page_and_keeps_one_return
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

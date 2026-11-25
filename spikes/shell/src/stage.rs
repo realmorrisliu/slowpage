@@ -315,24 +315,45 @@ define_class!(
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
-            let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
-            let turns = crate::ease::pointer_turns(crate::ease::current());
-            let edge = if click
-                && turns
-                && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on())
-            {
+                let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
+                let turns = crate::ease::pointer_turns(crate::ease::current());
+                let on_page = click
+                    && turns
+                    && !crate::visit::wheel_scrolls_shelf(crate::chrome::shell_on());
+                let edge = if on_page {
                     state.page_edge_at(point.0, point.1, bounds.size.width, bounds.size.height)
                 } else {
                     crate::visit::PageEdge::None
                 };
-                match edge {
-                    crate::visit::PageEdge::Back => {
+                let found = if on_page {
+                    state.pdf_link_target(point.0, point.1, bounds.size.width, bounds.size.height)
+                } else {
+                    None
+                };
+                let here = found.map(|(page, _)| page).unwrap_or(1);
+                let hit = found.map(|(_, hit)| hit);
+                // Open loads at most 80 page sizes. A link may name a later page.
+                let pages = state
+                    .pdf
+                    .as_ref()
+                    .map(|pdf| pdf.doc.page_count() as u32)
+                    .unwrap_or(0);
+                match crate::visit::pdf_press(hit, here, pages, edge) {
+                    crate::visit::PdfPress::Follow { page } => {
+                        crate::web::record_pdf_goto(here, page);
+                        let _ = state.show_pdf_page(page);
+                        state.publish();
+                    }
+                    crate::visit::PdfPress::Stay => {}
+                    crate::visit::PdfPress::Turn(crate::visit::PageEdge::Back) => {
                         state.command("page", &json!({"delta": -1, "intent": "edge"}))
                     }
-                    crate::visit::PageEdge::Forward => {
+                    crate::visit::PdfPress::Turn(crate::visit::PageEdge::Forward) => {
                         state.command("page", &json!({"delta": 1, "intent": "edge"}))
                     }
-                    crate::visit::PageEdge::None => state.finish_drag(start, point),
+                    crate::visit::PdfPress::Turn(crate::visit::PageEdge::None) => {
+                        state.finish_drag(start, point)
+                    }
                 }
             }
             drop(state);
@@ -678,6 +699,7 @@ impl State {
     }
 
     fn wheel_pdf(&mut self, phase: u64, momentum: u64, dx: f64, dy: f64) {
+        self.ensure_forward_size();
         let pages = self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0) as u32;
         if pages == 0 {
             return;
@@ -1364,6 +1386,21 @@ impl State {
         true
     }
 
+    /// Open measures at most 80 pages. A link can land past that, and the
+    /// next turn needs the following page's size or it stays put.
+    fn ensure_forward_size(&mut self) {
+        let Some(pdf) = self.pdf.as_ref() else {
+            return;
+        };
+        let count = pdf.doc.page_count();
+        if count == 0 {
+            return;
+        }
+        let index = self.current_page().min(count - 1);
+        let next = (index + 1).min(count - 1);
+        self.ensure_pdf_sizes(next as u32 + 1);
+    }
+
     fn ensure_pdf_sizes(&mut self, page: u32) {
         let Some(pdf) = self.pdf.as_mut() else {
             return;
@@ -1950,6 +1987,7 @@ impl State {
     }
 
     fn begin_pdf_slide(&mut self, delta: i64, token: u64) -> bool {
+        self.ensure_forward_size();
         let Some(pdf) = self.pdf.as_ref() else {
             return false;
         };
@@ -2058,6 +2096,7 @@ impl State {
         };
         let mut page = page.max(1);
         self.book_gen = self.book_gen.wrapping_add(1);
+        crate::web::set_reader_back(None);
         self.pdf_motion = None;
         self.pdf_drag = 0.0;
         self.pdf_glide = None;
@@ -2615,7 +2654,6 @@ impl State {
                 let current = self.current_page().saturating_add(1);
                 shown_page = current as u32;
                 shown_pages = pages as u32;
-                let left_pages = pages.saturating_sub(current);
                 let title = if self.book_path.is_empty() || self.book_path.ends_with("gpt3.pdf") {
                     "Language Models are Few-Shot Learners".to_string()
                 } else {
@@ -2642,14 +2680,8 @@ impl State {
                         self.scale.name()
                     )
                 };
-                let (left, right) = if self.product {
-                    crate::reading::product_page_footer(current as u32, pages as u32)
-                } else {
-                    (
-                        format!("{current}/{pages}"),
-                        format!("{left_pages} pages left"),
-                    )
-                };
+                let (left, right) =
+                    crate::reading::shown_page_footer(self.product, current as u32, pages as u32);
                 (title, variant, left, right, false, String::new())
             }
             Mode::WebKit => {
@@ -3057,17 +3089,20 @@ impl State {
         let Some(pdf) = self.pdf.as_ref() else {
             return 0;
         };
-        let display = self.scale.display() as f64;
-        let mut y = 0.0;
-        for (index, (_, ph)) in pdf.sizes.iter().enumerate() {
-            let dh = *ph as f64 * display;
-            if self.offset < y + dh {
-                return index;
-            }
-            y += dh + 16.0;
-        }
-        0
+        pdf_index_at(self.offset, &pdf.sizes, self.scale.display() as f64)
     }
+}
+
+pub(crate) fn pdf_index_at(offset: f64, sizes: &[(f32, f32)], display: f64) -> usize {
+    let mut y = 0.0;
+    for (index, (_, ph)) in sizes.iter().enumerate() {
+        let dh = *ph as f64 * display;
+        if offset < y + dh {
+            return index;
+        }
+        y += dh + 16.0;
+    }
+    0
 }
 
 fn pdf_origin_of(product: bool) -> (f64, f64) {
@@ -3127,6 +3162,105 @@ impl State {
         }
         crate::visit::PageEdge::None
     }
+
+    fn pdf_link_target(
+        &self,
+        x: f64,
+        y: f64,
+        stage_w: f64,
+        stage_h: f64,
+    ) -> Option<(u32, spike_pdf::LinkHit)> {
+        if !self.fits_card() || !matches!(self.mode, Mode::Pdfium | Mode::Hayro) {
+            return None;
+        }
+        let pdf = self.pdf.as_ref()?;
+        if pdf.sizes.is_empty() {
+            return None;
+        }
+        let shown = self.presented_at(stage_w, stage_h);
+        let frame = crate::form::ReadingFrame {
+            card: shown.page,
+            margin: shown.margin,
+            covers: shown.covers,
+        };
+        let margin = frame.margin.map(|rect| (rect.x, rect.y, rect.w, rect.h));
+        if crate::visit::margin_owns_point(x, y, frame.covers, margin) {
+            return None;
+        }
+        let index = self.current_page().min(pdf.sizes.len() - 1);
+        let (from, incoming, shift) = self.pdf_shift(index);
+        let page = shown.page;
+        let key_forward = self
+            .pdf_motion
+            .as_ref()
+            .map(|motion| motion.slide.forward)
+            .unwrap_or(true);
+        let forward = crate::visit::neighbor_on_the_right(shift, key_forward);
+        let mut painted = Vec::new();
+        if let Some(slot) = fitted_link_page(pdf, from, page, 0.0, shift) {
+            painted.push(slot);
+        }
+        if let Some(next) = incoming {
+            let step = fitted_link_page(pdf, from, page, 0.0, 0.0)
+                .map(|slot| if forward { slot.w } else { -slot.w })
+                .unwrap_or(0.0);
+            if let Some(slot) = fitted_link_page(pdf, next, page, step, shift) {
+                painted.push(slot);
+            }
+        }
+        for slot in painted.into_iter().rev() {
+            let links = pdf.doc.page_links(slot.index);
+            if let Some(hit) = crate::visit::hit_fitted_page(
+                x,
+                y,
+                slot.x,
+                slot.y,
+                slot.w,
+                slot.h,
+                slot.pw,
+                slot.ph,
+                &links,
+                slot.index as u32 + 1,
+            ) {
+                return Some(hit);
+            }
+        }
+        None
+    }
+}
+
+struct FittedLinkPage {
+    index: usize,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    pw: f32,
+    ph: f32,
+}
+
+fn fitted_link_page(
+    pdf: &PdfView,
+    index: usize,
+    page: crate::form::Rect,
+    step: f64,
+    shift: f64,
+) -> Option<FittedLinkPage> {
+    let (pw, ph) = pdf.sizes.get(index).copied()?;
+    if pw < 1.0 || ph < 1.0 {
+        return None;
+    }
+    let (x, y, w, h) =
+        spike_report::fitted_pdf_page(page.x, page.y, page.w, page.h, f64::from(pw), f64::from(ph));
+    Some(FittedLinkPage {
+        index,
+        x: x - shift + step,
+        y,
+        w,
+        h,
+        pw,
+        ph,
+    })
 }
 
 fn locate(
@@ -3529,7 +3663,7 @@ fn boxes_overlap(a: &spike_report::Quad, b: &spike_report::Quad) -> bool {
     a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 }
 
-fn page_offset(sizes: &[(f32, f32)], page: u32, scale: PixelScale) -> f64 {
+pub(crate) fn page_offset(sizes: &[(f32, f32)], page: u32, scale: PixelScale) -> f64 {
     let display = scale.display() as f64;
     let index = page.saturating_sub(1) as usize;
     let mut y = 0.0;
