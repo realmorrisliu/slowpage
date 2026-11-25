@@ -1088,11 +1088,21 @@ impl WebChapter {
         );
     }
 
-    /// A contents choice that stays in this chapter. The drop uses the epoch
-    /// the page still has. The choice then advances that epoch, and the page
-    /// is told the new one before it reveals, so a later report still lands.
+    /// A person chose this sentence in the chapter already open.
+    /// The drop uses the epoch the page still has. The choice then advances
+    /// that epoch, and the page is told the new one before it reveals.
     pub fn choose_sentence(&self, offset: u32) {
-        let load = self.retire_epoch();
+        self.drop_swipe();
+        let Some(load) = SESSION.with(|session| {
+            crate::visit::sentence_in_open_document(
+                &mut session.borrow_mut().reader,
+                offset,
+                crate::visit::SentenceCause::Chosen,
+            )
+            .load
+        }) else {
+            return;
+        };
         let (web, _, href) = self.shown();
         eval(
             &web,
@@ -1105,10 +1115,21 @@ impl WebChapter {
         );
     }
 
-    /// The contents row is the place already on screen. An older report does
+    /// The chosen row is the sentence already on screen. An older report does
     /// not write it, and the page can still post under the new epoch.
     pub fn retire_open_document(&self) {
-        let load = self.retire_epoch();
+        self.drop_swipe();
+        let offset = SESSION.with(|session| session.borrow().reader.place.offset);
+        let Some(load) = SESSION.with(|session| {
+            crate::visit::sentence_in_open_document(
+                &mut session.borrow_mut().reader,
+                offset,
+                crate::visit::SentenceCause::Chosen,
+            )
+            .load
+        }) else {
+            return;
+        };
         let (web, _, href) = self.shown();
         eval(
             &web,
@@ -1117,12 +1138,6 @@ impl WebChapter {
             href,
             false,
         );
-    }
-
-    fn retire_epoch(&self) -> u64 {
-        self.drop_swipe();
-        SESSION
-            .with(|session| crate::visit::advance_open_document(&mut session.borrow_mut().reader))
     }
 
     pub fn turn(&self, delta: i32, source: crate::visit::TurnSource) {
@@ -1422,13 +1437,14 @@ fn on_link(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
             if crate::visit::spine_key(target) != crate::visit::spine_key(&href) {
                 let _ = chapter.show_chapter(index);
             } else if offset > 0 {
-                chapter.reveal(offset);
+                chapter.choose_sentence(offset);
             } else if let Some(offset) = applied.reveal {
-                chapter.reveal(offset);
+                chapter.choose_sentence(offset);
             }
         }
-        crate::visit::ChapterMove::Reveal { offset } => chapter.reveal(offset),
-        crate::visit::ChapterMove::Page { .. } | crate::visit::ChapterMove::Stay => {}
+        crate::visit::ChapterMove::Reveal { offset } => chapter.choose_sentence(offset),
+        crate::visit::ChapterMove::Stay => chapter.retire_open_document(),
+        crate::visit::ChapterMove::Page { .. } => {}
     }
 }
 

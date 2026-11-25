@@ -1239,7 +1239,7 @@ impl State {
         match step.go {
             crate::visit::ChapterMove::Reveal { offset } => {
                 if let Some(web) = &self.web {
-                    web.reveal(offset);
+                    web.choose_sentence(offset);
                 }
             }
             crate::visit::ChapterMove::Chapter { index, offset } => {
@@ -1254,7 +1254,11 @@ impl State {
             crate::visit::ChapterMove::Stay if href.is_empty() => {
                 let _ = self.show_pdf_page(page);
             }
-            crate::visit::ChapterMove::Stay => {}
+            crate::visit::ChapterMove::Stay => {
+                if let Some(web) = &self.web {
+                    web.retire_open_document();
+                }
+            }
         }
         self.paint_epub_hits();
         self.publish();
@@ -1330,17 +1334,30 @@ impl State {
 
     fn show_pdf_page(&mut self, page: u32) -> bool {
         self.ensure_pdf_sizes(page);
-        let Some(pdf) = self.pdf.as_ref() else {
-            return false;
+        let sizes = {
+            let Some(pdf) = self.pdf.as_ref() else {
+                return false;
+            };
+            if page == 0 || page as usize > pdf.sizes.len() {
+                return false;
+            }
+            pdf.sizes.clone()
         };
-        if page == 0 || page as usize > pdf.sizes.len() {
-            return false;
-        }
-        let sizes = pdf.sizes.clone();
         self.offset = page_offset(&sizes, page, self.scale);
-        self.pdf_motion = None;
-        self.pdf_glide = None;
-        self.pdf_drag = 0.0;
+        let path = crate::settings::path();
+        let mut store = crate::settings::SettingsBook {
+            file: &path,
+            book: &self.book_path,
+        };
+        let _ = crate::visit::apply_contents_choice(
+            &mut self.pdf_glide,
+            &mut self.pdf_motion,
+            &mut self.pdf_drag,
+            &mut self.pdf_saved_page,
+            &mut self.pdf_saved_offset,
+            &crate::visit::ChapterMove::Page { page },
+            &mut store,
+        );
         true
     }
 
@@ -1420,11 +1437,20 @@ impl State {
             .go
             .clone()
             .unwrap_or(crate::visit::ChapterMove::Stay);
-        if crate::visit::contents_choice_retires_pdf_motion(&go) {
-            self.pdf_glide = None;
-            self.pdf_motion = None;
-            self.pdf_drag = 0.0;
-        }
+        let path = crate::settings::path();
+        let mut store = crate::settings::SettingsBook {
+            file: &path,
+            book: &self.book_path,
+        };
+        let saved = crate::visit::apply_contents_choice(
+            &mut self.pdf_glide,
+            &mut self.pdf_motion,
+            &mut self.pdf_drag,
+            &mut self.pdf_saved_page,
+            &mut self.pdf_saved_offset,
+            &go,
+            &mut store,
+        );
         let moved = match &go {
             crate::visit::ChapterMove::Stay => {
                 if self.mode == Mode::WebKit {
@@ -1446,7 +1472,9 @@ impl State {
                     if let Some(pdf) = self.pdf.as_ref() {
                         let sizes = pdf.sizes.clone();
                         self.offset = page_offset(&sizes, *page, self.scale);
-                        self.note_page();
+                        if !saved {
+                            self.note_page();
+                        }
                         true
                     } else {
                         false
@@ -3719,15 +3747,13 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split("fn return_saved_place").next())
             .unwrap_or("");
-        let choice = chapter
-            .find("contents_choice_retires_pdf_motion")
-            .unwrap_or(usize::MAX);
+        let choice = chapter.find("apply_contents_choice").unwrap_or(usize::MAX);
         let page = chapter.find("ChapterMove::Page").unwrap_or(0);
         assert!(
             choice < page,
-            "a contents choice drops the unfinished PDF slide before that page is written"
+            "a contents choice drops the unfinished PDF slide before that page is shown"
         );
-        assert!(chapter.contains("pdf_glide = None"));
+        assert!(chapter.contains("pdf_glide"));
         let edge = source
             .split("fn page_edge_at")
             .nth(1)

@@ -1950,6 +1950,7 @@ mod tests {
         assert_eq!(v["ease"]["fresh"], "glide");
         assert_eq!(v["ease"]["freshScroll"], 400);
         assert_eq!(v["epoch"]["issued"], 1);
+        assert_eq!(v["epoch"]["held"], 1);
         assert_eq!(v["epoch"]["next"], 2);
     }
 
@@ -3601,11 +3602,14 @@ const ease = {
 boot();
 press('ArrowLeft', false);
 const issued = turns()[0] && turns()[0].load;
+window.spikeReveal(0);
+press('ArrowLeft', false);
+const held = turns()[turns().length - 1] && turns()[turns().length - 1].load;
 window.spikeLoad(2);
 posts.length = 0;
 press('ArrowRight', false);
 sample();
-const epoch = { issued: issued, next: turns()[0] && turns()[0].load };
+const epoch = { issued: issued, held: held, next: turns()[0] && turns()[0].load };
 
 console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease, epoch }));
 "#;
