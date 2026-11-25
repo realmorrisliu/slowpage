@@ -48,7 +48,7 @@ nsh keygen "$HOME/Library/Application Support/Slowpage/update-keys/update"
 
 The official example `nsh keygen keys/update` is a relative path. Run inside a clone and the files land in the worktree. Use the absolute path above, which is outside every clone. The command writes:
 
-- `update.secret`, opened with mode `0o600` and `create_new`. Unix still applies the process umask. After it returns, `ls -l` must show owner read/write only. If the mode is wider, `chmod 600` that file before copying it.
+- `update.secret`, opened with mode `0o600` and `create_new`. The kernel stores `mode & ~umask`. A umask only clears bits, so the file is `0600` or narrower. It is not opened wider than `0600`. `ls -l` should show owner read and write, and no group or other bits. A narrower mode stays narrower. Do not add permissions.
 - `update.pub`, written with `fs::write`. That is not mode `0o600`.
 
 If either path already exists, the command stops with `<path> exists; keys are never overwritten` and writes nothing. The secret file is the base64 seed plus a newline. There is no passphrase. The command prints a key id and both paths to the terminal. Do not paste that output into a pull request, a log, or chat.
@@ -57,9 +57,22 @@ If either path already exists, the command stops with `<path> exists; keys are n
 
 ### Backup, recovery, rotation
 
-Copy `update.secret` to a second place on a machine Morris controls before deleting any working copy. Keep the copy out of the repo, out of iCloud folders that sync into a clone, and out of mail. The `.pub` file is not a backup of the secret. NSH 0.6.1 has `keygen`, `certify`, `publish`, `verify`, `revoke`, and `update-manifest`. It has no recover command and no rotate command. `revoke` is for package certificates. It does not replace `updater.publicKey`.
+The working `update.secret` may stay on the Mac that generated it. A second copy has to leave that Mac. A second file on the same disk, or a Time Machine backup of that Mac, is not this copy. Losing the Mac must not destroy every copy of the seed. `update.pub` cannot rebuild it. GitHub cannot return a secret's value. `gh secret list` fields are `name`, `numSelectedRepos`, `selectedReposURL`, `updatedAt`, and `visibility`.
 
-GitHub Actions does not return a secret's value. `gh secret list` fields are `name`, `numSelectedRepos`, `selectedReposURL`, `updatedAt`, and `visibility`. Recovery is the file copy. A lost `.secret`, with no copy, cannot be rebuilt.
+This note does not assume a drive or a vault already exists. Choose one of these before `nsh keygen`, and create it if it does not exist:
+
+- An encrypted removable volume that is not the generation Mac's disk. In Disk Utility, that is an APFS (Encrypted) volume with a password. The password is not stored only in that Mac's keychain. The drive is kept somewhere that is not the Mac.
+- A secrets vault Morris already operates, if he has one. This note does not name a product and does not treat a missing vault as present.
+
+Keep either copy out of the repo, out of a directory that syncs into a clone, and out of mail. NSH 0.6.1 has `keygen`, `certify`, `publish`, `verify`, `revoke`, and `update-manifest`. It has no recover command, no rotate command, and no command that prints the public half of a `.secret` file. `revoke` is for package certificates. It does not replace `updater.publicKey`. `SecretKey::to_base64` is standard base64 of the 32-byte seed. `writeln!` adds a newline, so the file is 45 bytes. `from_base64` trims whitespace.
+
+The recovery drill uses the copy after it has left the Mac. Do not `cat` the file, do not run `nsh keygen`, and do not call `gh secret set`.
+
+1. Copy `update.secret` to the chosen medium. Eject a drive and mount it again, or fetch the vault item again, so the check is not the write cache.
+2. On the generation Mac, `cmp` the original and that copy. No output means the bytes match.
+3. Write the SHA-256 of the file on paper and keep the paper with the medium, not on the Mac and not in git. `shasum -a 256` prints the hash only.
+4. Take the medium off the Mac, or confirm the vault item is not stored on that Mac.
+5. On a second machine Morris controls, copy the backup to a temporary file and `chmod 600` it. `shasum -a 256` must match the paper. `wc -c` must be 45. `openssl enc -base64 -d -A` of the file, piped to `wc -c`, must be 32. Then delete the temporary file. This checks the bytes and the encoding. It does not sign a manifest. The CLI cannot do this check by itself.
 
 `latest.json` has `id`, `version`, `notes`, `localizedNotes`, `platforms`, and `package`. It has no next key. `Config::open` verifies with the `publicKey` already in the running app, or, when that field is absent, it does not verify. A signature from a different key fails with `the signature does not match the app's publicKey`. An OTA package cannot change this: the updater reads the shipped `nsh-updater.json`, not the package's. This app does not write that file and does not call the updater.
 
@@ -75,7 +88,16 @@ Name: `NSH_UPDATE_SECRET`. Scope: an Actions environment secret on environment `
 
 This repo's Release and CI workflows run on `pull_request` from branches in the same repository. GitHub does not pass secrets to a workflow triggered from a forked repository, except `GITHUB_TOKEN`. A same-repo pull request is not that exception. GitHub's hardening guide says required reviewers can hold an environment secret until a reviewer approves that job. A repository-level secret has no such wait. Any workflow on `pull_request` that references it, including a pull request that edits the workflow, can receive it.
 
-The environment does not exist yet. `GET /repos/realmorrisliu/slowpage/environments` returned no environments, and `GET .../environments/update-signing` returned 404. The owner is a user account, not an organization. GitHub's secret guide says the repository owner creates an environment secret on a personal-account repository.
+The environment does not exist yet. `GET /repos/realmorrisliu/slowpage/environments` returned no environments, and `GET .../environments/update-signing` returned 404. The owner is a user account, not an organization. Nothing below is configured. It is the protection to approve before anyone creates the environment.
+
+This repository is public. GitHub's deployment docs say environments, environment secrets, and deployment protection rules are available on public repositories for current plans, and required reviewers are available on public repositories for GitHub Free, Pro, and Team. The repository owner configures an environment in a personal-account repository. The settings, as named in [Manage environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments):
+
+- Required reviewers: the repository owner, and no one else.
+- Leave `Prevent self-review` unselected. That setting blocks the person who started the run from approving it. The owner is the only reviewer, so selecting it and also turning off administrator bypass locks the signing job. Nobody else can approve it.
+- `Allow administrators to bypass configured protection rules` may be turned off. The owner then approves through the environment review instead of skipping it. With `Prevent self-review` left off, he can still approve a run he started.
+- Choosing `Prevent self-review` requires a second required reviewer who is a real person with read access. This note does not name one.
+- Deployment branches: Selected branches and tags, limited to the protected branch and the version tags chosen later. A pull request head is not in that list.
+- The secret is referenced only by a manual `workflow_dispatch` on one of those refs, or by a signing job on one of those refs. The `pull_request` job does not set `environment: update-signing` and does not read `NSH_UPDATE_SECRET`. Do not approve the environment for a pull request.
 
 This agent's `gh` token cannot do that step. `GET /repos/realmorrisliu/slowpage/actions/secrets`, the secrets public-key endpoint, the Agents and Dependabot secret lists, and Actions permissions all returned `403 Resource not accessible by integration`. `gh secret set` is installed and was not run. A 403 on the public-key endpoint means this token cannot encrypt a secret for storage. Do not work around that with a browser or another token. The list API was not available, so this note does not say which secret names already exist. The workflow file reading six Apple names does not answer that either.
 
