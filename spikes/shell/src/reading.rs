@@ -777,7 +777,7 @@ const SCRIPT: &str = r#"
   function post(extra) {
     const box = column();
     const fill = columnFill();
-    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, view_h: window.innerHeight, layout_gen: layoutGen, doc: window.spikeDoc|0, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
+    const body = { page: busy ? settled : box.page, pages: box.pages, sx: root.scrollLeft, view_w: window.innerWidth, view_h: window.innerHeight, layout_gen: layoutGen, doc: window.spikeDoc|0, load: pageLoad, leaf: !!document.getElementById("spike-leaf"), sentence: heldOffset() };
     body.fill_gap = fill.fill_gap;
     body.line_h = fill.line_h;
     body.content_bottom = fill.content_bottom;
@@ -1157,6 +1157,10 @@ const SCRIPT: &str = r#"
       });
     });
   }
+  window.spikeLoad = function (load) {
+    window.__spikeLoad = load | 0;
+    pageLoad = window.__spikeLoad;
+  };
   window.spikeReveal = function (offset) {
     endFollow();
     const gen = followGen;
@@ -1945,6 +1949,8 @@ mod tests {
         assert_eq!(v["ease"]["lateScroll"], 0);
         assert_eq!(v["ease"]["fresh"], "glide");
         assert_eq!(v["ease"]["freshScroll"], 400);
+        assert_eq!(v["epoch"]["issued"], 1);
+        assert_eq!(v["epoch"]["next"], 2);
     }
 
     #[test]
@@ -3592,7 +3598,16 @@ const ease = {
   freshScroll: body.scrollLeft,
 };
 
-console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease }));
+boot();
+press('ArrowLeft', false);
+const issued = turns()[0] && turns()[0].load;
+window.spikeLoad(2);
+posts.length = 0;
+press('ArrowRight', false);
+sample();
+const epoch = { issued: issued, next: turns()[0] && turns()[0].load };
+
+console.log(JSON.stringify({ back, shift, space, edge, right, track, cancel, forward, last, only, rapid, reverse, drop, reveal, link, reload, restore, ease, epoch }));
 "#;
 
 /// Node is not WebKit. This drive records the production script's mouseup and remeasure.

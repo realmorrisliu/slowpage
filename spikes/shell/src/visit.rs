@@ -1585,6 +1585,24 @@ pub fn message_is_this_document(live: u64, posted: u64) -> bool {
     live == 0 || posted == live
 }
 
+/// A place report names the restore epoch it was posted under.
+/// No `load` is a test that never ran the page script. A loaded reader
+/// rejects an older epoch. The epoch the page was just given still applies.
+pub fn report_is_this_epoch(live: u64, value: &serde_json::Value) -> bool {
+    let Some(posted) = value.get("load").and_then(|load| load.as_u64()) else {
+        return true;
+    };
+    live == 0 || posted == live
+}
+
+/// A contents choice that stays on the open document. Reports already posted
+/// keep the epoch they were issued under. `reveal` tells the page this epoch
+/// next, so a later report is accepted.
+pub fn advance_open_document(reader: &mut Reader) -> u64 {
+    reset_restore_epoch(reader);
+    reader.restore_load
+}
+
 /// The handler reports only while its view is the one on screen.
 /// Dismissing it is what stops the previous book. Both books count documents
 /// from zero, so the document number alone is not a book.
@@ -1614,6 +1632,9 @@ pub fn handle_page(
 ) -> Apply {
     let posted_doc = value["doc"].as_u64().unwrap_or(0);
     if !message_is_this_document(reader.doc, posted_doc) {
+        return apply_idle(false);
+    }
+    if !report_is_this_epoch(reader.restore_load, value) {
         return apply_idle(false);
     }
     let report = page_report(value);
@@ -5296,6 +5317,7 @@ mod tests {
         let stale = serde_json::json!({
             "kind": "turn",
             "doc": 2,
+            "load": 2,
             "page": 8,
             "pages": 12,
             "sentence": 400,
@@ -5303,6 +5325,17 @@ mod tests {
         });
         let ignored = handle_page(&mut reader, &stale, third, &mut store);
         assert!(!ignored.accepted && !ignored.wrote);
+        let same_doc_old_epoch = serde_json::json!({
+            "kind": "turn",
+            "doc": reader.doc,
+            "load": reader.restore_load - 1,
+            "page": 8,
+            "pages": 12,
+            "sentence": 400,
+            "frames": []
+        });
+        let aged = handle_page(&mut reader, &same_doc_old_epoch, third, &mut store);
+        assert!(!aged.accepted && !aged.wrote);
         assert_eq!(reader.place.href, third);
         assert_eq!(reader.place.page, 1);
         assert_eq!(reader.place.offset, 0);
@@ -5312,7 +5345,8 @@ mod tests {
 
         let current = serde_json::json!({
             "kind": "turn",
-            "doc": 3,
+            "doc": reader.doc,
+            "load": reader.restore_load,
             "page": 2,
             "pages": 12,
             "sentence": 20,
@@ -5329,24 +5363,118 @@ mod tests {
     }
 
     #[test]
-    fn a_dismissed_book_does_not_write_the_book_now_open() {
-        assert!(!accept_place_message(false, 1, 1));
-        assert!(!accept_place_message(true, 3, 2));
-        assert!(accept_place_message(true, 3, 3));
-        assert!(accept_place_message(true, 0, 0));
-        let web = include_str!("web.rs");
-        let dismiss = web
-            .split("fn dismiss")
+    fn a_same_chapter_choice_keeps_its_sentence_when_the_old_turn_arrives() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-same-chapter-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        let chapter = "/OEBPS/chapter.xhtml";
+        let spine = [chapter.to_string()];
+        let marks = [
+            ChapterMark {
+                title: "Middle".to_string(),
+                href: chapter.to_string(),
+                offset: 400,
+                page: 0,
+            },
+            ChapterMark {
+                title: "Start".to_string(),
+                href: chapter.to_string(),
+                offset: 0,
+                page: 0,
+            },
+        ];
+        crate::settings::record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let mut reader = Reader::default();
+        reader.doc = 1;
+        reader.restore_load = 1;
+        reader.place = ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        let stage = include_str!("stage.rs");
+        let contents = stage
+            .split("fn apply_chapter")
             .nth(1)
-            .and_then(|rest| rest.split("fn trim_changed").next())
+            .and_then(|rest| rest.split("fn return_saved_place").next())
             .unwrap_or("");
-        assert!(
-            dismiss.contains("reports.set(false)"),
-            "dismissing the view stops a queued message from the book just left"
-        );
-        assert!(web.contains("accept_place_message"));
-        assert!(web.contains("claim_loaded_document"));
+        assert!(contents.contains("choose_sentence"));
+        let web = include_str!("web.rs");
+        let choice = web
+            .split("fn choose_sentence")
+            .nth(1)
+            .and_then(|rest| rest.split("fn retire_open_document").next())
+            .unwrap_or("");
+        assert!(choice.contains("retire_epoch"));
+        assert!(choice.contains("spikeLoad"));
+        let epoch = web
+            .split("fn retire_epoch")
+            .nth(1)
+            .and_then(|rest| rest.split("pub fn turn").next())
+            .unwrap_or("");
+        let dropped = epoch.find("drop_swipe").unwrap_or(usize::MAX);
+        let advanced = epoch.find("advance_open_document").unwrap_or(0);
+        assert!(dropped < advanced);
+        let first = handle_chapter(&mut reader, 0, &marks, &spine, chapter, &mut store);
+        assert_eq!(first.go, Some(ChapterMove::Reveal { offset: 400 }));
+        assert_eq!(advance_open_document(&mut reader), 2);
+        let last = handle_chapter(&mut reader, 1, &marks, &spine, chapter, &mut store);
+        assert_eq!(last.go, Some(ChapterMove::Reveal { offset: 0 }));
+        assert_eq!(advance_open_document(&mut reader), 3);
+        assert_eq!(store.resume().href, chapter);
+        assert_eq!(store.resume().page, 4);
+        assert_eq!(store.resume().offset, 0);
 
+        let issued = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 1,
+            "page": 8,
+            "pages": 12,
+            "sentence": 400,
+            "frames": []
+        });
+        let ignored = handle_page(&mut reader, &issued, chapter, &mut store);
+        assert!(!ignored.accepted && !ignored.wrote);
+        let between = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 2,
+            "page": 6,
+            "pages": 12,
+            "sentence": 10,
+            "frames": []
+        });
+        let held = handle_page(&mut reader, &between, chapter, &mut store);
+        assert!(!held.accepted && !held.wrote);
+        assert_eq!(store.resume().page, 4);
+        assert_eq!(store.resume().offset, 0);
+        assert_eq!(reader.place.offset, 0);
+
+        let fresh = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": reader.restore_load,
+            "page": 2,
+            "pages": 12,
+            "sentence": 20,
+            "frames": []
+        });
+        let written = handle_page(&mut reader, &fresh, chapter, &mut store);
+        assert!(written.accepted && written.wrote);
+        assert_eq!(store.resume().href, chapter);
+        assert_eq!(store.resume().page, 2);
+        assert_eq!(store.resume().offset, 20);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dismissed_book_does_not_write_the_book_now_open() {
         let dir =
             std::env::temp_dir().join(format!("superreader-reopen-doc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -5354,17 +5482,20 @@ mod tests {
         let file = dir.join("settings.json");
         let left = "/books/left.epub";
         let opened = "/books/opened.epub";
+        let same = "/books/left.epub";
         let left_href = "/OEBPS/left.xhtml";
         let opened_href = "/OEBPS/opened.xhtml";
         crate::settings::record_progress(&file, left, 4, None, 80, left_href).unwrap();
         crate::settings::record_progress(&file, opened, 1, None, 0, opened_href).unwrap();
         let mut reader = Reader::default();
-        reader.place = ReadingPlace {
-            href: opened_href.to_string(),
-            page: 1,
-            offset: 0,
-        };
         claim_loaded_document(&mut reader, 1);
+        open_place(&mut reader, 4, 80, left_href, true);
+        assert_eq!(reader.restore_load, 1);
+        leave(&mut reader);
+        claim_loaded_document(&mut reader, 1);
+        open_place(&mut reader, 1, 0, opened_href, false);
+        assert_eq!(reader.doc, 1);
+        assert_eq!(reader.restore_load, 2);
         let mut opened_store = crate::settings::SettingsBook {
             file: &file,
             book: opened,
@@ -5372,25 +5503,13 @@ mod tests {
         let stale = serde_json::json!({
             "kind": "turn",
             "doc": 1,
+            "load": 1,
             "page": 9,
             "pages": 12,
             "sentence": 50,
             "frames": []
         });
-        assert_eq!(stale["doc"].as_u64(), Some(reader.doc));
-        assert!(
-            !accept_place_message(false, reader.doc, stale["doc"].as_u64().unwrap_or(0)),
-            "the dismissed view does not deliver this body"
-        );
-        let foreign = serde_json::json!({
-            "kind": "turn",
-            "doc": 4,
-            "page": 9,
-            "pages": 12,
-            "sentence": 50,
-            "frames": []
-        });
-        let ignored = handle_page(&mut reader, &foreign, opened_href, &mut opened_store);
+        let ignored = handle_page(&mut reader, &stale, opened_href, &mut opened_store);
         assert!(!ignored.accepted && !ignored.wrote);
         assert_eq!(opened_store.resume().page, 1);
         assert_eq!(opened_store.resume().offset, 0);
@@ -5405,7 +5524,8 @@ mod tests {
 
         let own = serde_json::json!({
             "kind": "turn",
-            "doc": 1,
+            "doc": reader.doc,
+            "load": reader.restore_load,
             "page": 2,
             "pages": 12,
             "sentence": 15,
@@ -5417,7 +5537,44 @@ mod tests {
         assert_eq!(opened_store.resume().page, 2);
         assert_eq!(opened_store.resume().offset, 15);
         assert_eq!(left_store.resume().page, 4);
-        assert_eq!(left_store.resume().href, left_href);
+        assert_eq!(left_store.resume().offset, 80);
+
+        leave(&mut reader);
+        claim_loaded_document(&mut reader, 1);
+        open_place(&mut reader, 4, 80, left_href, true);
+        let mut same_store = crate::settings::SettingsBook {
+            file: &file,
+            book: same,
+        };
+        let late_same = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 1,
+            "page": 9,
+            "pages": 12,
+            "sentence": 50,
+            "frames": []
+        });
+        let kept = handle_page(&mut reader, &late_same, left_href, &mut same_store);
+        assert!(!kept.accepted && !kept.wrote);
+        assert_eq!(same_store.resume().href, left_href);
+        assert_eq!(same_store.resume().page, 4);
+        assert_eq!(same_store.resume().offset, 80);
+        let resumed = serde_json::json!({
+            "kind": "turn",
+            "doc": reader.doc,
+            "load": reader.restore_load,
+            "page": 3,
+            "pages": 12,
+            "sentence": 12,
+            "frames": []
+        });
+        let moved = handle_page(&mut reader, &resumed, left_href, &mut same_store);
+        assert!(moved.accepted && moved.wrote);
+        assert_eq!(same_store.resume().href, left_href);
+        assert_eq!(same_store.resume().page, 3);
+        assert_eq!(same_store.resume().offset, 12);
+        assert_eq!(opened_store.resume().page, 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

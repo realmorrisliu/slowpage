@@ -1077,8 +1077,6 @@ impl WebChapter {
     }
 
     pub fn reveal(&self, offset: u32) {
-        // Stop an animation that has not posted. A commit that already posted
-        // keeps its token, and the walk keeps its goal.
         self.drop_swipe();
         let (web, _, href) = self.shown();
         eval(
@@ -1088,6 +1086,43 @@ impl WebChapter {
             href,
             false,
         );
+    }
+
+    /// A contents choice that stays in this chapter. The drop uses the epoch
+    /// the page still has. The choice then advances that epoch, and the page
+    /// is told the new one before it reveals, so a later report still lands.
+    pub fn choose_sentence(&self, offset: u32) {
+        let load = self.retire_epoch();
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!(
+                "window.spikeLoad&&window.spikeLoad({load});window.spikeReveal&&window.spikeReveal({offset})"
+            ),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    /// The contents row is the place already on screen. An older report does
+    /// not write it, and the page can still post under the new epoch.
+    pub fn retire_open_document(&self) {
+        let load = self.retire_epoch();
+        let (web, _, href) = self.shown();
+        eval(
+            &web,
+            &format!("window.spikeLoad&&window.spikeLoad({load})"),
+            self.inbox.clone(),
+            href,
+            false,
+        );
+    }
+
+    fn retire_epoch(&self) -> u64 {
+        self.drop_swipe();
+        SESSION
+            .with(|session| crate::visit::advance_open_document(&mut session.borrow_mut().reader))
     }
 
     pub fn turn(&self, delta: i32, source: crate::visit::TurnSource) {

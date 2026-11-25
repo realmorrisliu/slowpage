@@ -134,6 +134,7 @@ jobs:
             a_finger_moves_the_pdf_page_and_saves_when_the_glide_lands \
             a_new_book_drops_the_flying_token_and_saves_its_own_page \
             the_last_contents_choice_keeps_its_place_when_the_previous_document_posts \
+            a_same_chapter_choice_keeps_its_sentence_when_the_old_turn_arrives \
             a_dismissed_book_does_not_write_the_book_now_open \
             the_last_pdf_contents_page_retires_the_glide_and_is_the_saved_page \
             a_covered_page_turns_on_the_visible_edge \
@@ -208,6 +209,7 @@ jobs:
             a_finger_moves_the_pdf_page_and_saves_when_the_glide_lands \
             a_new_book_drops_the_flying_token_and_saves_its_own_page \
             the_last_contents_choice_keeps_its_place_when_the_previous_document_posts \
+            a_same_chapter_choice_keeps_its_sentence_when_the_old_turn_arrives \
             a_dismissed_book_does_not_write_the_book_now_open \
             the_last_pdf_contents_page_retires_the_glide_and_is_the_saved_page \
             a_covered_page_turns_on_the_visible_edge \

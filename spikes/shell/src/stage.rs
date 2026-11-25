@@ -1426,13 +1426,18 @@ impl State {
             self.pdf_drag = 0.0;
         }
         let moved = match &go {
-            crate::visit::ChapterMove::Stay => true,
+            crate::visit::ChapterMove::Stay => {
+                if self.mode == Mode::WebKit {
+                    web.retire_open_document();
+                }
+                true
+            }
             crate::visit::ChapterMove::Reveal { offset } => {
                 let mut inbox = web.inbox.borrow_mut();
                 inbox.pinned = None;
                 inbox.pin_missed = false;
                 drop(inbox);
-                web.reveal(*offset);
+                web.choose_sentence(*offset);
                 true
             }
             crate::visit::ChapterMove::Chapter { index, .. } => web.show_chapter(*index).is_some(),
