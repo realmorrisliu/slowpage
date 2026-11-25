@@ -25,19 +25,70 @@ The job creates a temporary keychain with a random password, imports the certifi
 
 ## Update key
 
-This is the plan for a production update key. Nothing in this repository has generated that key, and this release does not install it.
+This is the plan for a production update key. It is not approved. This repository has not generated that key, and no workflow reads an update secret. `nsh.json` stays without `updater`. The `updater` feature stays off.
 
-On a machine you control, with the NSH 0.6.1 CLI (tag `v0.6.1`, not a nightly), outside this repo:
+Checked against NSH tag `v0.6.1`, commit `2f51d8611677c8a6bbad937b39756e8d0cc45350`. The machine that wrote this note has no `nsh` binary. GitHub's latest NSH release is `v0.7.0`, and crates.io's newest stable `nsh-cli` is `0.7.0`. Both are the wrong CLI for this repo. Do not run `nsh keygen` here, and do not install "latest".
+
+### Generate
+
+On Morris's Mac, install the pinned CLI, then check the version before generating anything:
 
 ```sh
-nsh keygen keys/update
+curl -fsSL https://nsh.dev/install.sh | NSH_VERSION=v0.6.1 sh
+nsh --version
 ```
 
-`nsh keygen` writes `keys/update.secret` with mode `0600` and `keys/update.pub`. It uses `create_new` and does not overwrite either file. Keep `.secret` out of the repo, out of logs, and out of chat. The same key material can sign packages and manifests. The signatures use different contexts.
+Stop if that is not 0.6.1. The `v0.6.1` release asset for that Mac is `nsh-macos-arm64.tar.gz`. `--nightly` and `--source` build `main`, not this pin. `brew install longbridge/tap/nsh` was not checked for version. `cargo install nsh-cli` without `--version 0.6.1` installs 0.7.0.
 
-Store the contents of `keys/update.secret` as a GitHub Actions secret you choose. The release workflow does not read an update-key secret today. Do not put the secret in the workflow env until a later change is ready to call `nsh update-manifest --key`.
+Official command, from `crates/nsh-cli/src/sign.rs` at that tag:
 
-After you approve the trust root, a later change can set `nsh.json` `updater.publicKey` to the text of `keys/update.pub` and pass `--key` to `nsh update-manifest`. Until that change, the app stays closed. An unsigned `latest.json` is not a candidate. The NSH 0.6.1 CLI refuses a mismatch: `nsh.json has updater.publicKey: pass --key, or apps refuse this manifest`, and `--key without updater.publicKey in nsh.json: apps check nothing`.
+```sh
+nsh keygen "$HOME/Library/Application Support/Slowpage/update-keys/update"
+```
+
+The official example `nsh keygen keys/update` is a relative path. Run inside a clone and the files land in the worktree. Use the absolute path above, which is outside every clone. The command writes:
+
+- `update.secret`, opened with mode `0o600` and `create_new`. Unix still applies the process umask. After it returns, `ls -l` must show owner read/write only. If the mode is wider, `chmod 600` that file before copying it.
+- `update.pub`, written with `fs::write`. That is not mode `0o600`.
+
+If either path already exists, the command stops with `<path> exists; keys are never overwritten` and writes nothing. The secret file is the base64 seed plus a newline. There is no passphrase. The command prints a key id and both paths to the terminal. Do not paste that output into a pull request, a log, or chat.
+
+`gpg` and `openssl` on a Linux agent are not this command. They do not create the NSH trust root.
+
+### Backup, recovery, rotation
+
+Copy `update.secret` to a second place on a machine Morris controls before deleting any working copy. Keep the copy out of the repo, out of iCloud folders that sync into a clone, and out of mail. The `.pub` file is not a backup of the secret. NSH 0.6.1 has `keygen`, `certify`, `publish`, `verify`, `revoke`, and `update-manifest`. It has no recover command and no rotate command. `revoke` is for package certificates. It does not replace `updater.publicKey`.
+
+GitHub Actions does not return a secret's value. `gh secret list` fields are `name`, `numSelectedRepos`, `selectedReposURL`, `updatedAt`, and `visibility`. Recovery is the file copy. A lost `.secret`, with no copy, cannot be rebuilt.
+
+`latest.json` has `id`, `version`, `notes`, `localizedNotes`, `platforms`, and `package`. It has no next key. `Config::open` verifies with the `publicKey` already in the running app, or, when that field is absent, it does not verify. A signature from a different key fails with `the signature does not match the app's publicKey`. An OTA package cannot change this: the updater reads the shipped `nsh-updater.json`, not the package's. This app does not write that file and does not call the updater.
+
+A later rotation is a full app build whose own `publicKey` is the new key, delivered by a manifest signed with the old key. Clients that install that build then trust only the new key. Clients that skip it keep the old key, and later manifests signed only by the new key are refused. Delete the old `.secret` only after Morris accepts that those clients cannot be updated through this mechanism. Until the bridging build exists, losing the only `.secret` ends signed updates for every install that would have trusted it. A new install, outside the updater, is the remaining path.
+
+`updater.github` reads `releases/latest/download/latest.json`. That URL skips drafts and prereleases. A prerelease tag is not an update source. This candidate does not create a tag.
+
+The same key material can sign packages and manifests. Manifest signatures use the context `nsh-updater-manifest\0`, so a manifest signature is not a package signature.
+
+### Actions secret
+
+Name: `NSH_UPDATE_SECRET`. Scope: an Actions environment secret on environment `update-signing`, application `actions` only. Not Dependabot, not Agents, not Codespaces, and not a repository-level secret.
+
+This repo's Release and CI workflows run on `pull_request` from branches in the same repository. GitHub does not pass secrets to a workflow triggered from a forked repository, except `GITHUB_TOKEN`. A same-repo pull request is not that exception. GitHub's hardening guide says required reviewers can hold an environment secret until a reviewer approves that job. A repository-level secret has no such wait. Any workflow on `pull_request` that references it, including a pull request that edits the workflow, can receive it.
+
+The environment does not exist yet. `GET /repos/realmorrisliu/slowpage/environments` returned no environments, and `GET .../environments/update-signing` returned 404. The owner is a user account, not an organization. GitHub's secret guide says the repository owner creates an environment secret on a personal-account repository.
+
+This agent's `gh` token cannot do that step. `GET /repos/realmorrisliu/slowpage/actions/secrets`, the secrets public-key endpoint, the Agents and Dependabot secret lists, and Actions permissions all returned `403 Resource not accessible by integration`. `gh secret set` is installed and was not run. A 403 on the public-key endpoint means this token cannot encrypt a secret for storage. Do not work around that with a browser or another token. The list API was not available, so this note does not say which secret names already exist. The workflow file reading six Apple names does not answer that either.
+
+After Morris approves the environment and the backup, he sets the secret from his Mac. Stdin, not `--body`, so the seed is not a command argument:
+
+```sh
+gh secret set NSH_UPDATE_SECRET --app actions --env update-signing --repo realmorrisliu/slowpage \
+  < "$HOME/Library/Application Support/Slowpage/update-keys/update.secret"
+```
+
+No workflow may reference `NSH_UPDATE_SECRET` until a job that is not triggered by `pull_request` sets `environment: update-signing`. Do not approve that environment for a pull request. `nsh update-manifest --key` takes the secret file's path. Do not put the seed on the command line. GitHub redacts a registered secret in logs only when the exact value appears, and the hardening guide says a transformed value can miss that redaction. Do not print the file.
+
+`updater.publicKey` and the `updater` feature stay unchanged until the `.pub` text is in the app and a manifest is signed with the matching `.secret`. The CLI refuses a mismatch: `nsh.json has updater.publicKey: pass --key, or apps refuse this manifest`, and `--key without updater.publicKey in nsh.json: apps check nothing`. With neither, `nsh update-manifest` writes an unsigned manifest. That file is not a candidate.
 
 Notarization returns HTTP 403 when the Apple Developer Program agreement is missing or expired. The job still uploads the signed disk image, then fails. Sign the agreement at [developer.apple.com/account](https://developer.apple.com/account) and run the workflow again. That is an account step, not a missing secret.
 
