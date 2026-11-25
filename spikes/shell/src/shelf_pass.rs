@@ -619,13 +619,12 @@ mod tests {
                 h: 192.0,
             }),
         );
-        let moving = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        let shown = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
         let frame =
             crate::form::reading_frame(1440.0, 900.0, 0.0, 0.0, crate::form::margin_shown());
-        assert_eq!(moving.page, frame.card);
+        assert_eq!(shown.page, frame.card);
         assert!(
-            (moving.card.w - frame.card.w).abs() > 1.0
-                || (moving.card.x - frame.card.x).abs() > 1.0
+            (shown.card.w - frame.card.w).abs() > 1.0 || (shown.card.x - frame.card.x).abs() > 1.0
         );
         crate::ease::settle(false, false);
         let leaving = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());

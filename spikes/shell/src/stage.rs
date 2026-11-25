@@ -1649,7 +1649,7 @@ impl State {
                 schedule_chrome_pump(view, 0.016);
             }
         }
-        if trip.moving() || trip_was || shelf_was {
+        if ease_tick_due(trip.moving(), trip_was, shelf_was) {
             self.context.emit(
                 "ease",
                 json!({
@@ -3727,9 +3727,21 @@ pub(crate) fn shell_publish_key(
     }
 }
 
+fn ease_tick_due(trip_moving: bool, trip_was: bool, shelf_was: bool) -> bool {
+    trip_moving || trip_was || shelf_was
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{layout_target, shell_publish_key};
+    use super::{ease_tick_due, layout_target, shell_publish_key};
+
+    #[test]
+    fn the_immersive_landing_tick_is_emitted_after_the_trip_stops() {
+        assert!(ease_tick_due(false, true, false));
+        assert!(ease_tick_due(true, true, false));
+        assert!(ease_tick_due(false, false, true));
+        assert!(!ease_tick_due(false, false, false));
+    }
 
     #[test]
     fn a_smaller_placement_is_the_layout_target() {
