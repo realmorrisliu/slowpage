@@ -5792,14 +5792,23 @@ mod tests {
 
     #[test]
     fn a_pdf_goto_click_lands_on_the_page_and_keeps_one_return() {
-        let links = [spike_pdf::PageLink {
-            left: 20.0,
-            bottom: 260.0,
-            right: 90.0,
-            top: 290.0,
-            page: Some(2),
-        }];
-        let goto = &links[0];
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pdf/fixtures/goto-links.pdf"
+        );
+        let bytes = std::fs::read(path).unwrap();
+        let (doc, _, _) = spike_pdf::Document::open(
+            spike_report::PdfEngine::Pdfium,
+            bytes,
+            &spike_report::pdfium_lib(),
+        )
+        .unwrap();
+        let links = doc.page_links(0);
+        let goto = links
+            .iter()
+            .find(|link| link.page == Some(2))
+            .expect("cross-page GoTo");
+        assert!((goto.left - 20.0).abs() < 0.2 && (goto.top - 290.0).abs() < 0.2);
         let view = |width: f64, height: f64, px: f32, py: f32| {
             let x = 100.0 + f64::from(px) / 200.0 * width;
             let y = 40.0 + (300.0 - f64::from(py)) / 300.0 * height;
