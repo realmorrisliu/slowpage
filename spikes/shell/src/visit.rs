@@ -1272,6 +1272,10 @@ pub struct Reader {
     /// The loaded chapter document. A restore or a drop from an older document
     /// does not run. A user key does not carry this.
     pub restore_load: u64,
+    /// The document `claim_document` last counted for the chapter on screen.
+    /// Zero is a reader that has not loaded one, so a message with no document
+    /// still applies. A loaded chapter rejects every other document.
+    pub doc: u64,
     /// The fragment a cross-chapter link still has to measure in the target
     /// document. It is not a place and it is not written.
     pub fragment: Option<String>,
@@ -1303,6 +1307,7 @@ impl Default for Reader {
             hold_layout: false,
             restore_ack: false,
             restore_load: 0,
+            doc: 0,
             fragment: None,
         }
     }
@@ -1573,6 +1578,32 @@ fn clear_resume(reader: &mut Reader) {
     reader.fragment = None;
 }
 
+/// A place message belongs to the chapter now loaded.
+/// A reader that has not loaded a document still accepts one, which is how
+/// the existing tests post a page. A loaded document accepts only its own count.
+pub fn message_is_this_document(live: u64, posted: u64) -> bool {
+    live == 0 || posted == live
+}
+
+/// The handler reports only while its view is the one on screen.
+/// Dismissing it is what stops the previous book. Both books count documents
+/// from zero, so the document number alone is not a book.
+pub fn accept_place_message(reports: bool, live_doc: u64, posted_doc: u64) -> bool {
+    reports && message_is_this_document(live_doc, posted_doc)
+}
+
+/// An accepted contents choice is the place. The unfinished PDF slide does not
+/// land after it and write a page the choice already replaced.
+pub fn contents_choice_retires_pdf_motion(go: &ChapterMove) -> bool {
+    matches!(
+        go,
+        ChapterMove::Stay
+            | ChapterMove::Reveal { .. }
+            | ChapterMove::Chapter { .. }
+            | ChapterMove::Page { .. }
+    )
+}
+
 /// Accept a script message. The place changes only after `write_place`
 /// returns true. A refused token, including one past the floor, changes nothing.
 pub fn handle_page(
@@ -1581,6 +1612,10 @@ pub fn handle_page(
     href: &str,
     store: &mut dyn PlaceFile,
 ) -> Apply {
+    let posted_doc = value["doc"].as_u64().unwrap_or(0);
+    if !message_is_this_document(reader.doc, posted_doc) {
+        return apply_idle(false);
+    }
     let report = page_report(value);
     if report.dropped {
         if let Some(token) = report.token {
@@ -2280,6 +2315,12 @@ pub fn offer_while_reading(
     } else {
         swipe.offer(tick, page, pages)
     }
+}
+
+/// The chapter load just claimed `doc`. The restore epoch moves with it.
+pub fn claim_loaded_document(reader: &mut Reader, doc: u64) {
+    reset_restore_epoch(reader);
+    reader.doc = doc;
 }
 
 pub fn reset_restore_epoch(reader: &mut Reader) {
@@ -5203,6 +5244,259 @@ mod tests {
         };
         assert_eq!(again.resume().page, 5);
         assert_eq!(kept.resume().page, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_last_contents_choice_keeps_its_place_when_the_previous_document_posts() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-contents-doc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        let first = "/OEBPS/one.xhtml";
+        let second = "/OEBPS/two.xhtml";
+        let third = "/OEBPS/three.xhtml";
+        let spine = [first.to_string(), second.to_string(), third.to_string()];
+        let marks = crate::visit::contents_marks("Essay", &spine);
+        crate::settings::record_progress(&file, book, 1, None, 0, first).unwrap();
+        let mut reader = Reader::default();
+        reader.place = ReadingPlace {
+            href: first.to_string(),
+            page: 1,
+            offset: 0,
+        };
+        claim_loaded_document(&mut reader, 1);
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        let earlier = handle_chapter(&mut reader, 1, &marks, &spine, first, &mut store);
+        assert!(matches!(
+            earlier.go,
+            Some(ChapterMove::Chapter {
+                index: 1,
+                offset: 0
+            })
+        ));
+        claim_loaded_document(&mut reader, 2);
+        let last = handle_chapter(&mut reader, 2, &marks, &spine, second, &mut store);
+        assert!(matches!(
+            last.go,
+            Some(ChapterMove::Chapter {
+                index: 2,
+                offset: 0
+            })
+        ));
+        claim_loaded_document(&mut reader, 3);
+        assert_eq!(reader.place.href, third);
+        assert_eq!(reader.place.page, 1);
+        assert_eq!(store.resume().page, 1);
+        assert_eq!(store.resume().href, third);
+
+        let stale = serde_json::json!({
+            "kind": "turn",
+            "doc": 2,
+            "page": 8,
+            "pages": 12,
+            "sentence": 400,
+            "frames": []
+        });
+        let ignored = handle_page(&mut reader, &stale, third, &mut store);
+        assert!(!ignored.accepted && !ignored.wrote);
+        assert_eq!(reader.place.href, third);
+        assert_eq!(reader.place.page, 1);
+        assert_eq!(reader.place.offset, 0);
+        assert_eq!(store.resume().href, third);
+        assert_eq!(store.resume().page, 1);
+        assert_eq!(store.resume().offset, 0);
+
+        let current = serde_json::json!({
+            "kind": "turn",
+            "doc": 3,
+            "page": 2,
+            "pages": 12,
+            "sentence": 20,
+            "frames": []
+        });
+        let written = handle_page(&mut reader, &current, third, &mut store);
+        assert!(written.accepted && written.wrote);
+        assert_eq!(reader.place.href, third);
+        assert_eq!(reader.doc, 3);
+        assert_eq!(store.resume().href, third);
+        assert_eq!(store.resume().page, 2);
+        assert_eq!(store.resume().offset, 20);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dismissed_book_does_not_write_the_book_now_open() {
+        assert!(!accept_place_message(false, 1, 1));
+        assert!(!accept_place_message(true, 3, 2));
+        assert!(accept_place_message(true, 3, 3));
+        assert!(accept_place_message(true, 0, 0));
+        let web = include_str!("web.rs");
+        let dismiss = web
+            .split("fn dismiss")
+            .nth(1)
+            .and_then(|rest| rest.split("fn trim_changed").next())
+            .unwrap_or("");
+        assert!(
+            dismiss.contains("reports.set(false)"),
+            "dismissing the view stops a queued message from the book just left"
+        );
+        assert!(web.contains("accept_place_message"));
+        assert!(web.contains("claim_loaded_document"));
+
+        let dir =
+            std::env::temp_dir().join(format!("superreader-reopen-doc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let left = "/books/left.epub";
+        let opened = "/books/opened.epub";
+        let left_href = "/OEBPS/left.xhtml";
+        let opened_href = "/OEBPS/opened.xhtml";
+        crate::settings::record_progress(&file, left, 4, None, 80, left_href).unwrap();
+        crate::settings::record_progress(&file, opened, 1, None, 0, opened_href).unwrap();
+        let mut reader = Reader::default();
+        reader.place = ReadingPlace {
+            href: opened_href.to_string(),
+            page: 1,
+            offset: 0,
+        };
+        claim_loaded_document(&mut reader, 1);
+        let mut opened_store = crate::settings::SettingsBook {
+            file: &file,
+            book: opened,
+        };
+        let stale = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "page": 9,
+            "pages": 12,
+            "sentence": 50,
+            "frames": []
+        });
+        assert!(
+            !accept_place_message(false, reader.doc, 1),
+            "the dismissed view does not deliver this body"
+        );
+        let foreign = serde_json::json!({
+            "kind": "turn",
+            "doc": 4,
+            "page": 9,
+            "pages": 12,
+            "sentence": 50,
+            "frames": []
+        });
+        let ignored = handle_page(&mut reader, &foreign, opened_href, &mut opened_store);
+        assert!(!ignored.accepted && !ignored.wrote);
+        assert_eq!(opened_store.resume().page, 1);
+        assert_eq!(opened_store.resume().offset, 0);
+        assert_eq!(opened_store.resume().href, opened_href);
+        let left_store = crate::settings::SettingsBook {
+            file: &file,
+            book: left,
+        };
+        assert_eq!(left_store.resume().page, 4);
+        assert_eq!(left_store.resume().offset, 80);
+        assert_eq!(left_store.resume().href, left_href);
+
+        let own = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "page": 2,
+            "pages": 12,
+            "sentence": 15,
+            "frames": []
+        });
+        let written = handle_page(&mut reader, &own, opened_href, &mut opened_store);
+        assert!(written.accepted && written.wrote);
+        assert_eq!(opened_store.resume().href, opened_href);
+        assert_eq!(opened_store.resume().page, 2);
+        assert_eq!(opened_store.resume().offset, 15);
+        assert_eq!(left_store.resume().page, 4);
+        assert_eq!(left_store.resume().href, left_href);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_last_pdf_contents_page_retires_the_glide_and_is_the_saved_page() {
+        let stay = ChapterMove::Stay;
+        let page = ChapterMove::Page { page: 9 };
+        let chapter = ChapterMove::Chapter {
+            index: 2,
+            offset: 0,
+        };
+        let reveal = ChapterMove::Reveal { offset: 40 };
+        assert!(contents_choice_retires_pdf_motion(&stay));
+        assert!(contents_choice_retires_pdf_motion(&page));
+        assert!(contents_choice_retires_pdf_motion(&chapter));
+        assert!(contents_choice_retires_pdf_motion(&reveal));
+
+        let flying = FingerGlide {
+            book: 1,
+            page: 4,
+            from: 0.0,
+            to: 400.0,
+            incoming: Some(5),
+            write: Some(4),
+            queued: 0,
+            token: 7,
+        };
+        assert_eq!(
+            glide_at(&flying, 160, 1),
+            GlideAt::Landed {
+                page: 4,
+                write: Some(4),
+                queued: 0,
+                token: 7,
+            }
+        );
+        let mut glide = Some(flying);
+        if contents_choice_retires_pdf_motion(&page) {
+            glide = None;
+        }
+        assert!(glide.is_none());
+
+        let dir =
+            std::env::temp_dir().join(format!("superreader-pdf-contents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = "/books/fitted.pdf";
+        crate::settings::record_progress(&file, book, 1, Some(12), 0, "").unwrap();
+        let mut reader = Reader::default();
+        reader.place.page = 1;
+        let marks = [
+            ChapterMark {
+                title: "Three".to_string(),
+                href: String::new(),
+                offset: 0,
+                page: 3,
+            },
+            ChapterMark {
+                title: "Nine".to_string(),
+                href: String::new(),
+                offset: 0,
+                page: 9,
+            },
+        ];
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        let first = handle_chapter(&mut reader, 0, &marks, &[], "", &mut store);
+        let last = handle_chapter(&mut reader, 1, &marks, &[], "", &mut store);
+        assert_eq!(first.go, Some(ChapterMove::Page { page: 3 }));
+        assert_eq!(last.go, Some(ChapterMove::Page { page: 9 }));
+        assert!(contents_choice_retires_pdf_motion(&last.go.unwrap()));
+        let (first_page, first_offset) = landed_progress(1, 0, 3).unwrap();
+        crate::settings::record_progress(&file, book, first_page, Some(12), first_offset, "")
+            .unwrap();
+        assert_eq!(store.resume().page, 3);
+        let (written, offset) = landed_progress(first_page, first_offset, 9).unwrap();
+        crate::settings::record_progress(&file, book, written, Some(12), offset, "").unwrap();
+        assert_eq!((written, offset), (9, 0));
+        assert_eq!(store.resume().page, 9);
+        assert_eq!(flying.write, Some(4));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

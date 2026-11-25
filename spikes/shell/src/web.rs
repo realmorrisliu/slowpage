@@ -363,6 +363,15 @@ define_class!(
                     return;
                 }
                 {
+                    let live_doc = self.ivars().inbox.borrow().doc;
+                    let posted_doc = value["doc"].as_u64().unwrap_or(0);
+                    if !crate::visit::accept_place_message(
+                        self.ivars().reports.get(),
+                        live_doc,
+                        posted_doc,
+                    ) {
+                        return;
+                    }
                     let href = self.ivars().href.borrow().clone();
                     let report = crate::visit::page_report(&value);
                     let applied = handle_script(&value, &href);
@@ -936,7 +945,7 @@ impl WebChapter {
             let nsurl = objc2_foundation::NSURL::URLWithString(&url).ok_or("url")?;
             let request: Retained<AnyObject> =
                 msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
-            reset_restore_epoch();
+            reset_restore_epoch(inbox.borrow().doc);
             let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
         }
         let slot = Rc::new(RefCell::new(Slot {
@@ -977,6 +986,7 @@ impl WebChapter {
 
     pub fn dismiss(&self) {
         let slot = self.slot.borrow();
+        slot.shown_handler.ivars().reports.set(false);
         unsafe {
             let _: () = msg_send![&*slot.shown_web, removeFromSuperview];
             let _: () = msg_send![&*slot.shown_edge, removeFromSuperview];
@@ -1198,7 +1208,7 @@ impl WebChapter {
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
-                reset_restore_epoch();
+                reset_restore_epoch(self.inbox.borrow().doc);
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
         }
@@ -1267,7 +1277,7 @@ impl WebChapter {
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
-                reset_restore_epoch();
+                reset_restore_epoch(self.inbox.borrow().doc);
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
         }
@@ -1281,7 +1291,7 @@ impl WebChapter {
             inbox.clear_figure();
         }
         let (web, _, _) = self.shown();
-        reset_restore_epoch();
+        reset_restore_epoch(self.inbox.borrow().doc);
         unsafe {
             let _: Option<Retained<AnyObject>> = msg_send![&web, reload];
         }
@@ -1437,7 +1447,11 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
             if let Some(nsurl) = objc2_foundation::NSURL::URLWithString(&url) {
                 let request: Retained<AnyObject> =
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
-                reset_restore_epoch();
+                let doc = {
+                    let held = slot.borrow();
+                    held.inbox.borrow().doc
+                };
+                reset_restore_epoch(doc);
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
             }
         }
@@ -1658,9 +1672,9 @@ pub fn cancel_placed_page() {
     }
 }
 
-fn reset_restore_epoch() {
+fn reset_restore_epoch(doc: u64) {
     SESSION.with(|session| {
-        crate::visit::reset_restore_epoch(&mut session.borrow_mut().reader);
+        crate::visit::claim_loaded_document(&mut session.borrow_mut().reader, doc);
     });
 }
 

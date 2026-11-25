@@ -1420,6 +1420,11 @@ impl State {
             .go
             .clone()
             .unwrap_or(crate::visit::ChapterMove::Stay);
+        if crate::visit::contents_choice_retires_pdf_motion(&go) {
+            self.pdf_glide = None;
+            self.pdf_motion = None;
+            self.pdf_drag = 0.0;
+        }
         let moved = match &go {
             crate::visit::ChapterMove::Stay => true,
             crate::visit::ChapterMove::Reveal { offset } => {
@@ -3704,6 +3709,20 @@ mod tests {
             .unwrap_or("");
         assert!(finish.contains("pdf_turn"));
         assert!(finish.contains("note_page"));
+        let chapter = source
+            .split("fn apply_chapter")
+            .nth(1)
+            .and_then(|rest| rest.split("fn return_saved_place").next())
+            .unwrap_or("");
+        let choice = chapter
+            .find("contents_choice_retires_pdf_motion")
+            .unwrap_or(usize::MAX);
+        let page = chapter.find("ChapterMove::Page").unwrap_or(0);
+        assert!(
+            choice < page,
+            "a contents choice drops the unfinished PDF slide before that page is written"
+        );
+        assert!(chapter.contains("pdf_glide = None"));
         let edge = source
             .split("fn page_edge_at")
             .nth(1)

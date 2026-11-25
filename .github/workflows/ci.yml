@@ -133,6 +133,9 @@ jobs:
             a_pdf_turn_writes_the_landed_page_and_drops_a_changed_book \
             a_finger_moves_the_pdf_page_and_saves_when_the_glide_lands \
             a_new_book_drops_the_flying_token_and_saves_its_own_page \
+            the_last_contents_choice_keeps_its_place_when_the_previous_document_posts \
+            a_dismissed_book_does_not_write_the_book_now_open \
+            the_last_pdf_contents_page_retires_the_glide_and_is_the_saved_page \
             a_covered_page_turns_on_the_visible_edge \
             live_resize_publishes_from_layout_in_common_modes \
             immersive_reading_keeps_the_page_across_escape_resize_and_fullscreen \
@@ -204,6 +207,9 @@ jobs:
             a_pdf_turn_writes_the_landed_page_and_drops_a_changed_book \
             a_finger_moves_the_pdf_page_and_saves_when_the_glide_lands \
             a_new_book_drops_the_flying_token_and_saves_its_own_page \
+            the_last_contents_choice_keeps_its_place_when_the_previous_document_posts \
+            a_dismissed_book_does_not_write_the_book_now_open \
+            the_last_pdf_contents_page_retires_the_glide_and_is_the_saved_page \
             a_covered_page_turns_on_the_visible_edge \
             live_resize_publishes_from_layout_in_common_modes \
             immersive_reading_keeps_the_page_across_escape_resize_and_fullscreen \
