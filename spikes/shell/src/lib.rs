@@ -1181,10 +1181,13 @@ pub fn SpikeApp() -> impl IntoElement {
                                         next_opened_at(&settings_path),
                                     );
                                     notice_open.set(String::new());
+                                    let shelf_form = form_open.get();
+                                    shelf_pass::note_shelf(shelf_form);
                                     let slot = form::cover_slot(
                                         window_open.get(),
                                         chrome_open.get(),
                                         &library_open.get(),
+                                        shelf_form,
                                         &path,
                                         from,
                                     );
@@ -1340,6 +1343,7 @@ fn receive_file(
         return;
     };
     notice.set(String::new());
+    shelf_pass::note_shelf(form.get());
     form::show_reading(form);
     shelf_pass::intend_reading(path, None);
     let mut current = visit.get();

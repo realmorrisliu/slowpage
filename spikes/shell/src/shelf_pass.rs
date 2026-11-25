@@ -31,6 +31,10 @@ struct Pass {
     seat: Seat,
     path: String,
     cover: Option<Rect>,
+    /// The shelf that was on screen when this trip began. Both columns open
+    /// matches `form::launch`.
+    sidebar: bool,
+    chat: bool,
 }
 
 impl Default for Pass {
@@ -45,6 +49,8 @@ impl Default for Pass {
             seat: Seat::Shelf,
             path: String::new(),
             cover: None,
+            sidebar: true,
+            chat: true,
         }
     }
 }
@@ -91,6 +97,9 @@ pub(crate) fn intend_reading(path: &str, cover: Option<Rect>) {
 
 pub(crate) fn intend_shelf() {
     with_pass(|pass| {
+        // Leaving opens the launch shelf, with both columns shown.
+        pass.sidebar = true;
+        pass.chat = true;
         let from = progress_of(pass);
         if pass.span_ms == 0 && pass.seat == Seat::Shelf && from < 1e-3 {
             return;
@@ -254,17 +263,45 @@ pub(crate) fn flight(window_w: f64, window_h: f64, card: Rect) -> Option<Flight>
     Some(Flight { rect, alpha, path })
 }
 
+/// The shelf columns the open trip is drawn from.
+pub(crate) fn note_shelf(form: form::Form) {
+    let form::Form::Full { sidebar, chat } = form else {
+        return;
+    };
+    with_pass(|pass| {
+        pass.sidebar = sidebar == form::Presence::Shown;
+        pass.chat = chat == form::Presence::Shown;
+    });
+}
+
+pub(crate) fn shelf_form() -> form::Form {
+    with_pass(|pass| form::Form::Full {
+        sidebar: if pass.sidebar {
+            form::Presence::Shown
+        } else {
+            form::Presence::Hidden
+        },
+        chat: if pass.chat {
+            form::Presence::Shown
+        } else {
+            form::Presence::Hidden
+        },
+    })
+}
+
 pub(crate) fn shelf_card(width: f64, height: f64, top: f64) -> Rect {
     let top = top.max(0.0);
-    let chat = if tokens::chat_fits(width as f32, SIDEBAR_W as f32) {
+    let (sidebar, chat_on) = with_pass(|pass| (pass.sidebar, pass.chat));
+    let sidebar_w = if sidebar { SIDEBAR_W } else { 0.0 };
+    let chat = if chat_on && tokens::chat_fits(width as f32, sidebar_w as f32) {
         CHAT_W
     } else {
         0.0
     };
     Rect {
-        x: SIDEBAR_W + INSET,
+        x: sidebar_w + INSET,
         y: top + INSET,
-        w: (width - SIDEBAR_W - chat - INSET * 2.0).max(1.0),
+        w: (width - sidebar_w - chat - INSET * 2.0).max(1.0),
         h: (height - top - INSET * 2.0).max(1.0),
     }
 }
@@ -560,9 +597,14 @@ mod tests {
                 assert!(card.x >= -0.1 && card.y >= -0.1);
                 assert!(card.x + card.w <= width + 0.5);
                 assert!(card.y + card.h <= height + 0.5);
-                let Some((flown, _)) = fly_cover(origin(), card, step, width, height) else {
-                    continue;
-                };
+                let (flown, _) = fly_cover(origin(), card, step, width, height)
+                    .expect("a visible cover has a frame");
+                if step == 0.0 {
+                    assert!((flown.x - origin().x).abs() < 0.01, "{}", flown.x);
+                    assert!((flown.y - origin().y).abs() < 0.01, "{}", flown.y);
+                    assert!((flown.w - origin().w).abs() < 0.01, "{}", flown.w);
+                    assert!((flown.h - origin().h).abs() < 0.01, "{}", flown.h);
+                }
                 assert!(flown.w > 1.0 && flown.h > 1.0);
                 assert!(
                     (flown.w / flown.h - aspect).abs() < 0.001,
@@ -636,5 +678,106 @@ mod tests {
         crate::ease::retarget(true, true);
         let clean = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
         assert_eq!(parked, clean);
+    }
+
+    #[test]
+    fn the_flight_starts_on_the_painted_cover() {
+        let _clean = Clean;
+        reset();
+        crate::form::restore_shelf_scroll(0.0);
+        let form = crate::form::step(crate::form::launch(), crate::form::Command::ToggleSidebar);
+        let window = crate::form::Window {
+            width: 1440.0,
+            height: 900.0,
+        };
+        let chrome = crate::tokens::ChromeIn {
+            lights: false,
+            bar: 0.0,
+            top: 0.0,
+        };
+        let book = crate::form::CoverCard {
+            title: "Field Guide".into(),
+            author: String::new(),
+            cover: None,
+            open_path: Some("guide.epub".into()),
+            pdf: false,
+            percent: Some(40),
+            page: Some(3),
+            position: String::new(),
+            opened: String::new(),
+            plate: true,
+            plate_rgb: None,
+            unavailable: None,
+        };
+        let mut library = crate::form::LibraryIn {
+            empty: false,
+            book_count: 1,
+            counts: crate::form::LibraryCounts::default(),
+            sources: Vec::new(),
+            selected: crate::form::SelectId::AllBooks,
+            continue_reading: vec![book.clone()],
+            covers: vec![book],
+            lists: Vec::new(),
+            chat: Vec::new(),
+            notice: None,
+        };
+        library.book_count = 1;
+        let origin = crate::form::cover_slot(
+            window,
+            chrome,
+            &library,
+            form,
+            "guide.epub",
+            crate::form::CoverFrom::Shelf,
+        )
+        .expect("painted cover");
+        assert!(
+            (origin.x - (6.0 + f64::from(crate::tokens::CARD_PAD_X))).abs() < 0.01,
+            "{}",
+            origin.x
+        );
+        assert!(origin.w > 1.0 && origin.h > 1.0);
+        let placed = crate::form::place(
+            &crate::form::PlaceIn {
+                form,
+                window,
+                chrome,
+            },
+            &library,
+        );
+        let crate::form::CardBox::Placed { rect: card, .. } = placed.card else {
+            panic!("card");
+        };
+        note_shelf(form);
+        intend_reading("guide.epub", Some(origin));
+        let drawn = card_blend(window.width, window.height, 0.0).expect("shelf card");
+        assert!((drawn.x - card.x).abs() < 0.01, "{} {}", drawn.x, card.x);
+        assert!((drawn.y - card.y).abs() < 0.01);
+        assert!((drawn.w - card.w).abs() < 0.01);
+        assert!((drawn.h - card.h).abs() < 0.01);
+        let (flown, alpha) =
+            fly_cover(origin, drawn, 0.0, window.width, window.height).expect("frame");
+        assert!((flown.x - origin.x).abs() < 0.01, "{}", flown.x);
+        assert!((flown.y - origin.y).abs() < 0.01, "{}", flown.y);
+        assert!((flown.w - origin.w).abs() < 0.01, "{}", flown.w);
+        assert!((flown.h - origin.h).abs() < 0.01, "{}", flown.h);
+        assert!((alpha - 1.0).abs() < 0.001);
+        let continued = crate::form::cover_slot(
+            window,
+            chrome,
+            &library,
+            form,
+            "guide.epub",
+            crate::form::CoverFrom::Continue,
+        )
+        .expect("continue cover");
+        let (row, row_alpha) =
+            fly_cover(continued, drawn, 0.0, window.width, window.height).expect("continue frame");
+        assert!((row.x - continued.x).abs() < 0.01, "{}", row.x);
+        assert!((row.y - continued.y).abs() < 0.01, "{}", row.y);
+        assert!((row.w - continued.w).abs() < 0.01);
+        assert!((row.h - continued.h).abs() < 0.01);
+        assert!((row_alpha - 1.0).abs() < 0.001);
+        assert!((continued.y - origin.y).abs() > 1.0 || (continued.w - origin.w).abs() > 1.0);
     }
 }

@@ -159,6 +159,8 @@ jobs:
             an_idle_pass_does_not_change_the_immersive_frame \
             a_continue_click_uses_that_card_and_a_shelf_click_uses_the_grid \
             the_immersive_landing_tick_is_emitted_after_the_trip_stops \
+            the_clicked_cover_uses_the_shelf_that_is_showing \
+            the_flight_starts_on_the_painted_cover \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -241,7 +243,9 @@ jobs:
             a_narrow_window_does_not_squeeze_the_page \
             an_idle_pass_does_not_change_the_immersive_frame \
             a_continue_click_uses_that_card_and_a_shelf_click_uses_the_grid \
-            the_immersive_landing_tick_is_emitted_after_the_trip_stops
+            the_immersive_landing_tick_is_emitted_after_the_trip_stops \
+            the_clicked_cover_uses_the_shelf_that_is_showing \
+            the_flight_starts_on_the_painted_cover
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done
