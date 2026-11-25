@@ -25,9 +25,21 @@ The checklist document records the rule. It does not build an item, the margin m
 - S4. The immersive form. Control-Command-I, the View menu item, and the 28 point window button enter it while a book is open, and leave it when it is on. Escape returns to Page and panel once the card has landed, with the margin shown and the 6 point inset. During the return, Escape keeps the book. The card meets the window edges at the end of a 160 ms cosine. A return that finds the margin preference changed keeps the card it has reached. The page refits once, at that end. A resize during the trip keeps the departing page frame and the layout key. An EPUB wheel during the trip does not turn. The toolbar stays off. `apply_immersive` enters and leaves that form. `an_immersive_ease_refits_once_and_drops_the_flying_page` passed on the Mac job above. That behavior is in the shell. A Mac window, `nsh test`, WebKit, and a real library were not run. That is not a pass, and it is not a block on the code already on main.
 - S5. Motion, and the fit of the three forms. Night mode and a theme switch stay out. Light and dark join this slice only if a later decision revises the 2026-11-03 rule. The shelf enter and leave is scheme 乙, approved by Morris on 2026-11-25 at 11:29 Asia/Shanghai through widget t418s1611. The clicked portrait cover keeps its aspect, moves onto the page card, and fades. The body fades in on its own. The card moves between Full and Page and panel on the same 160 ms cosine as immersive reading. A reverse continues from the current progress. The last book wins, and a book that does not land takes no new margin draft. `shelf_pass::intend_reading` stores the pressed tile. `shelf_pass::flight` reads that tile from the shelf picture on screen. `shelf_enter_and_leave_follow_the_cosine` and `the_shelf_picture_owns_the_flight` passed on the Mac job above. A window, WebKit, `nsh test`, and `just verify` were not run. That is not a pass.
 
+## Reader first
+
+Morris chose this himself on 2026-11-25 at 16:37 Asia/Shanghai through widget t425u. Mochi forwarded the note. The words were: 先不管alan，先把作为阅读器本身的能力打磨好.
+
+The near term leaves the Alan prototype, the embed, and an AI hookup unbuilt. The 2026-11-17 embed record under `@alan` stays as a record.
+
+The open product change is the fitted PDF GoTo click, pull request 89. After that change, the next work collects real gaps in reading, annotation, navigation, and import reliability. The collection is one limited batch of fixes and one regression. The batch stays closed. A window, WebKit, `nsh test`, or `just verify` that was not run stays unverified. A landed slice stays as delivered. A new visual still waits for one prototype and an approval. This work leaves Morris's Mac free, and the local-machine gate stays off.
+
+Install and security updates are a later close. This note does not authorize a version or a public release.
+
+The roadmap changes in the product pull request. Roadmap edits ride that pull request.
+
 ## After the shell
 
-These wait until S1 through S5 have landed. Do not start them ahead of the shell.
+The reader-first section names the next work. This list waits. The items below waited until S1 through S5 landed.
 
 - [Pull request 39](https://github.com/realmorrisliu/slowpage/pull/39), the 6 point reading card on the old bar. The spec replaces that card. Leave the pull request until the shell slices land.
 - [Pull request 45](https://github.com/realmorrisliu/slowpage/pull/45), PDF pages in the EPUB view. One PDF page fit inside the white card, with arrow keys turning pages. Still missing after that: animation, trackpad, edge click, and the footer page number.
@@ -43,7 +55,7 @@ These wait until S1 through S5 have landed. Do not start them ahead of the shell
 
 ## Core
 
-The library, SQLite annotations, tantivy, and the `superreader` command with JSON output. Writes from that command are applied by the running app, because alan's Seatbelt sandbox denies writes outside mounted directories.
+The library, SQLite annotations, tantivy, and the `superreader` command with JSON output. Writes from that command are applied by the running app, because alan's Seatbelt sandbox denies writes outside mounted directories. Agent-native features, the Alan embed, and an AI hookup wait. The reader-first section is the order.
 
 The calibre and [dalibre](https://github.com/djyde/dalibre) targets are in Library below. They wait until the shell slices land. S2 draws the `Catalog` the shelf slice already reads. S2 does not start those targets.
 
@@ -128,7 +140,7 @@ The reading form shows a highlight, a note, and an agent response in the annotat
 
 Picked on 2026-11-17. This decision supersedes the 2026-11-03 one-shot process. The full decision is in `docs/design/north-star.md`. SuperReader embeds alan in-process through `alan_os_host::embed` in [alan pull request 1109](https://github.com/realmorrisliu/alan/pull/1109). A reply is `EmbedEvent::TextDelta` from `EmbedEventStream::next_event`. SuperReader's SQLite owns the thread. Each ask sends that thread as context.
 
-Integration starts after S3 and S4. This repository does not start it now.
+Morris paused that start on 2026-11-25 at 16:37 Asia/Shanghai through widget t425u. The reader-first section is the order. This repository does not start the prototype, the embed, or an AI hookup in the near term.
 
 ## Distribution
 
