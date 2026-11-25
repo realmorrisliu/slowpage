@@ -1272,6 +1272,10 @@ pub struct Reader {
     /// The loaded chapter document. A restore or a drop from an older document
     /// does not run. A user key does not carry this.
     pub restore_load: u64,
+    /// The document `claim_document` last counted for the chapter on screen.
+    /// Zero is a reader that has not loaded one, so a message with no document
+    /// still applies. A loaded chapter rejects every other document.
+    pub doc: u64,
     /// The fragment a cross-chapter link still has to measure in the target
     /// document. It is not a place and it is not written.
     pub fragment: Option<String>,
@@ -1303,6 +1307,7 @@ impl Default for Reader {
             hold_layout: false,
             restore_ack: false,
             restore_load: 0,
+            doc: 0,
             fragment: None,
         }
     }
@@ -1573,6 +1578,116 @@ fn clear_resume(reader: &mut Reader) {
     reader.fragment = None;
 }
 
+/// A place message belongs to the chapter now loaded.
+/// A reader that has not loaded a document still accepts one, which is how
+/// the existing tests post a page. A loaded document accepts only its own count.
+pub fn message_is_this_document(live: u64, posted: u64) -> bool {
+    live == 0 || posted == live
+}
+
+/// A place report names the restore epoch it was posted under.
+/// A message with no `load` is accepted. `restore_load` 0 accepts any `load`.
+/// The page script always sends `load`, and opening a book claims a document
+/// before that page posts, so a loaded reader is not 0. A loaded reader
+/// rejects an older epoch. The epoch just given to the page still applies.
+pub fn report_is_this_epoch(live: u64, value: &serde_json::Value) -> bool {
+    let Some(posted) = value.get("load").and_then(|load| load.as_u64()) else {
+        return true;
+    };
+    live == 0 || posted == live
+}
+
+/// A choice that stays on the open document. Reports already posted keep the
+/// epoch they were issued under. The host tells the page this epoch next.
+pub fn advance_open_document(reader: &mut Reader) -> u64 {
+    reset_restore_epoch(reader);
+    reader.restore_load
+}
+
+/// Why a sentence on the open document is being shown.
+/// Contents, a link, a bookmark, and a find hit are one choice.
+/// A resize or a restore keeps the epoch, so that reflow does not cancel the place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SentenceCause {
+    Chosen,
+    Held,
+}
+
+/// The sentence to show, and the epoch a choice retired the previous reports under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenSentence {
+    pub offset: u32,
+    pub load: Option<u64>,
+}
+
+/// The one decision for a sentence inside the document already open.
+/// A choice advances the restore epoch. A held reveal does not.
+pub fn sentence_in_open_document(
+    reader: &mut Reader,
+    offset: u32,
+    cause: SentenceCause,
+) -> OpenSentence {
+    let load = match cause {
+        SentenceCause::Chosen => Some(advance_open_document(reader)),
+        SentenceCause::Held => None,
+    };
+    OpenSentence { offset, load }
+}
+
+/// A contents or place choice on a PDF. The glide and the key slide are
+/// dropped, and a page choice is written through the same place file as a turn.
+pub fn apply_contents_choice<G, M>(
+    glide: &mut Option<G>,
+    motion: &mut Option<M>,
+    drag: &mut f64,
+    saved_page: &mut u32,
+    saved_offset: &mut u32,
+    go: &ChapterMove,
+    store: &mut dyn PlaceFile,
+) -> bool {
+    if !contents_choice_retires_pdf_motion(go) {
+        return false;
+    }
+    *glide = None;
+    *motion = None;
+    *drag = 0.0;
+    let ChapterMove::Page { page } = *go else {
+        return false;
+    };
+    let Some((page, offset)) = landed_progress(*saved_page, *saved_offset, page) else {
+        return false;
+    };
+    let wrote = store.write_place(&ReadingPlace {
+        href: String::new(),
+        page,
+        offset,
+    });
+    if wrote {
+        *saved_page = page;
+        *saved_offset = offset;
+    }
+    wrote
+}
+
+/// The handler reports only while its view is the one on screen.
+/// Dismissing it is what stops the previous book. Both books count documents
+/// from zero, so the document number alone is not a book.
+pub fn accept_place_message(reports: bool, live_doc: u64, posted_doc: u64) -> bool {
+    reports && message_is_this_document(live_doc, posted_doc)
+}
+
+/// An accepted contents choice is the place. The unfinished PDF slide does not
+/// land after it and write a page the choice already replaced.
+pub fn contents_choice_retires_pdf_motion(go: &ChapterMove) -> bool {
+    matches!(
+        go,
+        ChapterMove::Stay
+            | ChapterMove::Reveal { .. }
+            | ChapterMove::Chapter { .. }
+            | ChapterMove::Page { .. }
+    )
+}
+
 /// Accept a script message. The place changes only after `write_place`
 /// returns true. A refused token, including one past the floor, changes nothing.
 pub fn handle_page(
@@ -1581,6 +1696,13 @@ pub fn handle_page(
     href: &str,
     store: &mut dyn PlaceFile,
 ) -> Apply {
+    let posted_doc = value["doc"].as_u64().unwrap_or(0);
+    if !message_is_this_document(reader.doc, posted_doc) {
+        return apply_idle(false);
+    }
+    if !report_is_this_epoch(reader.restore_load, value) {
+        return apply_idle(false);
+    }
     let report = page_report(value);
     if report.dropped {
         if let Some(token) = report.token {
@@ -2280,6 +2402,12 @@ pub fn offer_while_reading(
     } else {
         swipe.offer(tick, page, pages)
     }
+}
+
+/// The chapter load just claimed `doc`. The restore epoch moves with it.
+pub fn claim_loaded_document(reader: &mut Reader, doc: u64) {
+    reset_restore_epoch(reader);
+    reader.doc = doc;
 }
 
 pub fn reset_restore_epoch(reader: &mut Reader) {
@@ -5203,6 +5331,430 @@ mod tests {
         };
         assert_eq!(again.resume().page, 5);
         assert_eq!(kept.resume().page, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_last_contents_choice_keeps_its_place_when_the_previous_document_posts() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-contents-doc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        let first = "/OEBPS/one.xhtml";
+        let second = "/OEBPS/two.xhtml";
+        let third = "/OEBPS/three.xhtml";
+        let spine = [first.to_string(), second.to_string(), third.to_string()];
+        let marks = crate::visit::contents_marks("Essay", &spine);
+        crate::settings::record_progress(&file, book, 1, None, 0, first).unwrap();
+        let mut reader = Reader::default();
+        reader.place = ReadingPlace {
+            href: first.to_string(),
+            page: 1,
+            offset: 0,
+        };
+        claim_loaded_document(&mut reader, 1);
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        let earlier = handle_chapter(&mut reader, 1, &marks, &spine, first, &mut store);
+        assert!(matches!(
+            earlier.go,
+            Some(ChapterMove::Chapter {
+                index: 1,
+                offset: 0
+            })
+        ));
+        claim_loaded_document(&mut reader, 2);
+        let last = handle_chapter(&mut reader, 2, &marks, &spine, second, &mut store);
+        assert!(matches!(
+            last.go,
+            Some(ChapterMove::Chapter {
+                index: 2,
+                offset: 0
+            })
+        ));
+        claim_loaded_document(&mut reader, 3);
+        assert_eq!(reader.place.href, third);
+        assert_eq!(reader.place.page, 1);
+        assert_eq!(store.resume().page, 1);
+        assert_eq!(store.resume().href, third);
+
+        let stale = serde_json::json!({
+            "kind": "turn",
+            "doc": 2,
+            "load": 2,
+            "page": 8,
+            "pages": 12,
+            "sentence": 400,
+            "frames": []
+        });
+        let ignored = handle_page(&mut reader, &stale, third, &mut store);
+        assert!(!ignored.accepted && !ignored.wrote);
+        let same_doc_old_epoch = serde_json::json!({
+            "kind": "turn",
+            "doc": reader.doc,
+            "load": reader.restore_load - 1,
+            "page": 8,
+            "pages": 12,
+            "sentence": 400,
+            "frames": []
+        });
+        let aged = handle_page(&mut reader, &same_doc_old_epoch, third, &mut store);
+        assert!(!aged.accepted && !aged.wrote);
+        assert_eq!(reader.place.href, third);
+        assert_eq!(reader.place.page, 1);
+        assert_eq!(reader.place.offset, 0);
+        assert_eq!(store.resume().href, third);
+        assert_eq!(store.resume().page, 1);
+        assert_eq!(store.resume().offset, 0);
+
+        let current = serde_json::json!({
+            "kind": "turn",
+            "doc": reader.doc,
+            "load": reader.restore_load,
+            "page": 2,
+            "pages": 12,
+            "sentence": 20,
+            "frames": []
+        });
+        let written = handle_page(&mut reader, &current, third, &mut store);
+        assert!(written.accepted && written.wrote);
+        assert_eq!(reader.place.href, third);
+        assert_eq!(reader.doc, 3);
+        assert_eq!(store.resume().href, third);
+        assert_eq!(store.resume().page, 2);
+        assert_eq!(store.resume().offset, 20);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_same_chapter_choice_keeps_its_sentence_when_the_old_turn_arrives() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-same-chapter-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = dir.join("book.epub");
+        let book = book.to_str().unwrap();
+        let chapter = "/OEBPS/chapter.xhtml";
+        let spine = [chapter.to_string()];
+        let marks = [
+            ChapterMark {
+                title: "Middle".to_string(),
+                href: chapter.to_string(),
+                offset: 400,
+                page: 0,
+            },
+            ChapterMark {
+                title: "Start".to_string(),
+                href: chapter.to_string(),
+                offset: 0,
+                page: 0,
+            },
+        ];
+        crate::settings::record_progress(&file, book, 4, None, 800, chapter).unwrap();
+        let mut reader = Reader::default();
+        reader.doc = 1;
+        reader.restore_load = 1;
+        reader.place = ReadingPlace {
+            href: chapter.to_string(),
+            page: 4,
+            offset: 800,
+        };
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        let first = handle_chapter(&mut reader, 0, &marks, &spine, chapter, &mut store);
+        assert_eq!(first.go, Some(ChapterMove::Reveal { offset: 400 }));
+        let chosen = sentence_in_open_document(&mut reader, 400, SentenceCause::Chosen);
+        assert_eq!(chosen.load, Some(2));
+        let laid = sentence_in_open_document(&mut reader, 400, SentenceCause::Held);
+        assert_eq!(laid.load, None);
+        assert_eq!(reader.restore_load, 2);
+        let kept = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 2,
+            "page": 5,
+            "pages": 12,
+            "sentence": 12,
+            "frames": []
+        });
+        let laid_out = handle_page(&mut reader, &kept, chapter, &mut store);
+        assert!(laid_out.accepted && laid_out.wrote);
+        assert_eq!(store.resume().page, 5);
+        assert_eq!(store.resume().offset, 12);
+
+        let link = serde_json::json!({
+            "kind": "link",
+            "raw": "#note",
+            "load": reader.restore_load,
+            "measured": true,
+            "offset": 80
+        });
+        let linked = handle_link_message(&mut reader, &link, chapter, &spine, &mut store);
+        assert_eq!(linked.go, Some(ChapterMove::Reveal { offset: 80 }));
+        let after_link = sentence_in_open_document(&mut reader, 80, SentenceCause::Chosen);
+        assert_eq!(after_link.load, Some(3));
+        let jumped = place_jump(
+            &reader.place,
+            &ReadingPlace {
+                href: chapter.to_string(),
+                page: reader.place.page,
+                offset: 0,
+            },
+            &spine,
+            None,
+        );
+        assert_eq!(jumped.go, ChapterMove::Reveal { offset: 0 });
+        let after_jump = sentence_in_open_document(&mut reader, 0, SentenceCause::Chosen);
+        assert_eq!(after_jump.load, Some(4));
+        assert_eq!(store.resume().href, chapter);
+        assert_eq!(store.resume().offset, 80);
+
+        let issued = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 1,
+            "page": 8,
+            "pages": 12,
+            "sentence": 400,
+            "frames": []
+        });
+        let ignored = handle_page(&mut reader, &issued, chapter, &mut store);
+        assert!(!ignored.accepted && !ignored.wrote);
+        let between = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 3,
+            "page": 6,
+            "pages": 12,
+            "sentence": 10,
+            "frames": []
+        });
+        let aged = handle_page(&mut reader, &between, chapter, &mut store);
+        assert!(!aged.accepted && !aged.wrote);
+        assert_eq!(store.resume().page, 5);
+        assert_eq!(store.resume().offset, 80);
+
+        let fresh = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": reader.restore_load,
+            "page": 2,
+            "pages": 12,
+            "sentence": 20,
+            "frames": []
+        });
+        let written = handle_page(&mut reader, &fresh, chapter, &mut store);
+        assert!(written.accepted && written.wrote);
+        assert_eq!(store.resume().href, chapter);
+        assert_eq!(store.resume().page, 2);
+        assert_eq!(store.resume().offset, 20);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dismissed_book_does_not_write_the_book_now_open() {
+        let dir =
+            std::env::temp_dir().join(format!("superreader-reopen-doc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let left = "/books/left.epub";
+        let opened = "/books/opened.epub";
+        let same = "/books/left.epub";
+        let left_href = "/OEBPS/left.xhtml";
+        let opened_href = "/OEBPS/opened.xhtml";
+        crate::settings::record_progress(&file, left, 4, None, 80, left_href).unwrap();
+        crate::settings::record_progress(&file, opened, 1, None, 0, opened_href).unwrap();
+        let mut reader = Reader::default();
+        claim_loaded_document(&mut reader, 1);
+        open_place(&mut reader, 4, 80, left_href, true);
+        assert_eq!(reader.restore_load, 1);
+        leave(&mut reader);
+        claim_loaded_document(&mut reader, 1);
+        open_place(&mut reader, 1, 0, opened_href, false);
+        assert_eq!(reader.doc, 1);
+        assert_eq!(reader.restore_load, 2);
+        let mut opened_store = crate::settings::SettingsBook {
+            file: &file,
+            book: opened,
+        };
+        let stale = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 1,
+            "page": 9,
+            "pages": 12,
+            "sentence": 50,
+            "frames": []
+        });
+        let ignored = handle_page(&mut reader, &stale, opened_href, &mut opened_store);
+        assert!(!ignored.accepted && !ignored.wrote);
+        assert_eq!(opened_store.resume().page, 1);
+        assert_eq!(opened_store.resume().offset, 0);
+        assert_eq!(opened_store.resume().href, opened_href);
+        let left_store = crate::settings::SettingsBook {
+            file: &file,
+            book: left,
+        };
+        assert_eq!(left_store.resume().page, 4);
+        assert_eq!(left_store.resume().offset, 80);
+        assert_eq!(left_store.resume().href, left_href);
+
+        let own = serde_json::json!({
+            "kind": "turn",
+            "doc": reader.doc,
+            "load": reader.restore_load,
+            "page": 2,
+            "pages": 12,
+            "sentence": 15,
+            "frames": []
+        });
+        let written = handle_page(&mut reader, &own, opened_href, &mut opened_store);
+        assert!(written.accepted && written.wrote);
+        assert_eq!(opened_store.resume().href, opened_href);
+        assert_eq!(opened_store.resume().page, 2);
+        assert_eq!(opened_store.resume().offset, 15);
+        assert_eq!(left_store.resume().page, 4);
+        assert_eq!(left_store.resume().offset, 80);
+
+        leave(&mut reader);
+        claim_loaded_document(&mut reader, 1);
+        open_place(&mut reader, 4, 80, left_href, true);
+        let mut same_store = crate::settings::SettingsBook {
+            file: &file,
+            book: same,
+        };
+        let late_same = serde_json::json!({
+            "kind": "turn",
+            "doc": 1,
+            "load": 1,
+            "page": 9,
+            "pages": 12,
+            "sentence": 50,
+            "frames": []
+        });
+        let kept = handle_page(&mut reader, &late_same, left_href, &mut same_store);
+        assert!(!kept.accepted && !kept.wrote);
+        assert_eq!(same_store.resume().href, left_href);
+        assert_eq!(same_store.resume().page, 4);
+        assert_eq!(same_store.resume().offset, 80);
+        let resumed = serde_json::json!({
+            "kind": "turn",
+            "doc": reader.doc,
+            "load": reader.restore_load,
+            "page": 3,
+            "pages": 12,
+            "sentence": 12,
+            "frames": []
+        });
+        let moved = handle_page(&mut reader, &resumed, left_href, &mut same_store);
+        assert!(moved.accepted && moved.wrote);
+        assert_eq!(same_store.resume().href, left_href);
+        assert_eq!(same_store.resume().page, 3);
+        assert_eq!(same_store.resume().offset, 12);
+        assert_eq!(opened_store.resume().page, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_last_pdf_contents_page_retires_the_glide_and_is_the_saved_page() {
+        let stay = ChapterMove::Stay;
+        let page = ChapterMove::Page { page: 9 };
+        let chapter = ChapterMove::Chapter {
+            index: 2,
+            offset: 0,
+        };
+        let reveal = ChapterMove::Reveal { offset: 40 };
+        assert!(contents_choice_retires_pdf_motion(&stay));
+        assert!(contents_choice_retires_pdf_motion(&page));
+        assert!(contents_choice_retires_pdf_motion(&chapter));
+        assert!(contents_choice_retires_pdf_motion(&reveal));
+
+        let flying = FingerGlide {
+            book: 1,
+            page: 4,
+            from: 0.0,
+            to: 400.0,
+            incoming: Some(5),
+            write: Some(4),
+            queued: 0,
+            token: 7,
+        };
+        assert_eq!(
+            glide_at(&flying, 160, 1),
+            GlideAt::Landed {
+                page: 4,
+                write: Some(4),
+                queued: 0,
+                token: 7,
+            }
+        );
+        let dir =
+            std::env::temp_dir().join(format!("superreader-pdf-contents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let book = "/books/fitted.pdf";
+        crate::settings::record_progress(&file, book, 1, Some(12), 0, "").unwrap();
+        let mut reader = Reader::default();
+        reader.place.page = 1;
+        let marks = [
+            ChapterMark {
+                title: "Three".to_string(),
+                href: String::new(),
+                offset: 0,
+                page: 3,
+            },
+            ChapterMark {
+                title: "Nine".to_string(),
+                href: String::new(),
+                offset: 0,
+                page: 9,
+            },
+        ];
+        let mut store = crate::settings::SettingsBook { file: &file, book };
+        let first = handle_chapter(&mut reader, 0, &marks, &[], "", &mut store);
+        let last = handle_chapter(&mut reader, 1, &marks, &[], "", &mut store);
+        assert_eq!(first.go, Some(ChapterMove::Page { page: 3 }));
+        assert_eq!(last.go, Some(ChapterMove::Page { page: 9 }));
+        let mut glide = Some(flying);
+        let mut motion = Some(7u32);
+        let mut drag = 12.0;
+        let mut saved_page = 1u32;
+        let mut saved_offset = 0u32;
+        assert!(apply_contents_choice(
+            &mut glide,
+            &mut motion,
+            &mut drag,
+            &mut saved_page,
+            &mut saved_offset,
+            &first.go.unwrap(),
+            &mut store,
+        ));
+        assert!(glide.is_none());
+        assert!(motion.is_none());
+        assert_eq!(drag, 0.0);
+        assert_eq!(store.resume().page, 3);
+        assert_eq!((saved_page, saved_offset), (3, 0));
+        glide = Some(flying);
+        motion = Some(7);
+        drag = 4.0;
+        assert!(apply_contents_choice(
+            &mut glide,
+            &mut motion,
+            &mut drag,
+            &mut saved_page,
+            &mut saved_offset,
+            &last.go.unwrap(),
+            &mut store,
+        ));
+        assert!(glide.is_none());
+        assert_eq!(store.resume().page, 9);
+        assert_eq!(store.resume().offset, 0);
+        assert_eq!((saved_page, saved_offset), (9, 0));
+        assert_eq!(flying.write, Some(4));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

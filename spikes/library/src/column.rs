@@ -2076,7 +2076,7 @@ mod tests {
         let chapter = between(stage, "fn apply_chapter", "fn return_saved_place");
         assert!(chapter.contains("NavIntent::Toc"));
         earlier(chapter, "arm_nav", "web.show_chapter");
-        earlier(chapter, "arm_nav", "web.reveal");
+        earlier(chapter, "arm_nav", "web.choose_sentence");
 
         let back = between(stage, "fn return_saved_place", "fn select_phrase");
         earlier(back, "arm_nav", "show_pdf_page");
@@ -2084,7 +2084,10 @@ mod tests {
         let link = between(web, "fn on_link", "fn note_shown");
         assert!(link.contains("NavIntent::Link"));
         earlier(link, "arm_nav", "show_chapter");
-        earlier(link, "arm_nav", "chapter.reveal");
+        earlier(link, "arm_nav", "chapter.choose_sentence");
+        let place = between(stage, "fn jump_place", "fn reading_excerpt");
+        assert!(place.contains("choose_sentence"));
+        assert!(!place.contains("web.reveal"));
 
         let jump = between(stage, "\"jump\" =>", "fn begin_find");
         assert!(jump.contains("landing"));
