@@ -5377,8 +5377,9 @@ mod tests {
             "sentence": 50,
             "frames": []
         });
+        assert_eq!(stale["doc"].as_u64(), Some(reader.doc));
         assert!(
-            !accept_place_message(false, reader.doc, 1),
+            !accept_place_message(false, reader.doc, stale["doc"].as_u64().unwrap_or(0)),
             "the dismissed view does not deliver this body"
         );
         let foreign = serde_json::json!({

@@ -1449,7 +1449,8 @@ fn note_shown(slot: &Rc<RefCell<Slot>>, value: &serde_json::Value) {
                     msg_send![class(c"NSURLRequest").unwrap(), requestWithURL: &*nsurl];
                 let doc = {
                     let held = slot.borrow();
-                    held.inbox.borrow().doc
+                    let doc = held.inbox.borrow().doc;
+                    doc
                 };
                 reset_restore_epoch(doc);
                 let _: Option<Retained<AnyObject>> = msg_send![&web, loadRequest: &*request];
