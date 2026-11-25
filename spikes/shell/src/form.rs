@@ -104,11 +104,17 @@ fn reading_immersive(form: Form, reading: bool, leave_only: bool) -> Form {
 /// needs, so a test supplies this and the window supplies the real ref.
 pub trait StageCommand {
     fn stage_command(&self, name: &str, args: nsh_core::JsonValue);
+
+    fn redraw(&self) {}
 }
 
 impl StageCommand for ElementRef {
     fn stage_command(&self, name: &str, args: nsh_core::JsonValue) {
         self.command(name, args);
+    }
+
+    fn redraw(&self) {
+        self.command("shelf", serde_json::json!(false));
     }
 }
 
@@ -513,6 +519,28 @@ pub struct SideRow {
 }
 
 pub fn place(input: &PlaceIn, library: &LibraryIn) -> Placement {
+    if !crate::shelf_pass::moving() {
+        return place_now(input, library);
+    }
+    let mut placed = place_now(
+        &PlaceIn {
+            form: launch(),
+            window: input.window,
+            chrome: input.chrome,
+        },
+        library,
+    );
+    let top = f64::from(input.chrome.top.max(0.0));
+    if let Some(card) = crate::shelf_pass::card_blend(input.window.width, input.window.height, top)
+    {
+        if let CardBox::Placed { rect, .. } = &mut placed.card {
+            *rect = card;
+        }
+    }
+    placed
+}
+
+fn place_now(input: &PlaceIn, library: &LibraryIn) -> Placement {
     let window = input.window;
     let row = crate::tokens::chrome_row(input.chrome);
     let (sidebar_w, chat_w, inset, radius, shadow, gray) = match input.form {
@@ -834,6 +862,7 @@ pub fn mount(
     chrome: Signal<crate::tokens::ChromeIn>,
     library: Signal<LibraryIn>,
     menu: Signal<bool>,
+    ease: Signal<u64>,
     on_peer: impl Fn(Peer) + Clone + 'static,
     on_open: impl Fn(String) + Clone + 'static,
 ) -> impl IntoElement {
@@ -843,17 +872,20 @@ pub fn mount(
     let chrome_b = chrome;
     let library_b = library;
     let menu_b = menu;
+    let ease_b = ease;
     let on_peer_b = on_peer;
     let on_open_b = on_open;
     let query = signal(String::new());
     dynamic(move || {
+        let _tick = ease_b.get();
         let current = form_b.get();
         let query = query.clone();
         let library = crate::shelf::searched(library_b.get(), &query.get());
+        let window = window_b.get();
         let placed = place(
             &PlaceIn {
                 form: current,
-                window: window_b.get(),
+                window,
                 chrome: chrome_b.get(),
             },
             &library,
@@ -861,6 +893,7 @@ pub fn mount(
         write_layout(&placed, &library);
         paint(
             placed,
+            window,
             form_b,
             selected_b,
             menu_b,
@@ -927,6 +960,79 @@ fn remember_shelf(shelf: &ElementRef) {
 
 pub fn shelf_scroll() -> f32 {
     SHELF_OFFSET.with(|stored| stored.get())
+}
+
+/// The cover the reader clicked, in window points, after the shelf has scrolled.
+pub(crate) fn cover_slot(
+    window: Window,
+    chrome: crate::tokens::ChromeIn,
+    library: &LibraryIn,
+    path: &str,
+) -> Option<Rect> {
+    let placed = place_now(
+        &PlaceIn {
+            form: launch(),
+            window,
+            chrome,
+        },
+        library,
+    );
+    let CardBox::Placed { rect, .. } = placed.card else {
+        return None;
+    };
+    let content_w = (rect.w as f32 - crate::tokens::CARD_PAD_X * 2.0).max(0.0);
+    let origin_x = rect.x as f32 + crate::tokens::CARD_PAD_X;
+    let row = crate::tokens::chrome_row(placed.chrome);
+    let mut y =
+        rect.y as f32 + row.toolbar_h + crate::tokens::CARD_PAD_TOP + crate::tokens::TITLE_ROW_H;
+    let continued =
+        crate::tokens::continue_layout(content_w, library.continue_reading.len() as u32);
+    let continue_y = y + crate::tokens::section_block();
+    if continued.cards > 0 {
+        y += crate::tokens::section_block();
+        y += crate::tokens::continue_card_h();
+    }
+    y += crate::tokens::section_block();
+    let scroll = shelf_scroll();
+    if let Some(index) = library
+        .covers
+        .iter()
+        .position(|card| card.open_path.as_deref() == Some(path))
+    {
+        let grid = spike_library::shelf_grid(content_w);
+        let columns = grid.columns.max(1);
+        let col = index as u32 % columns;
+        let row_i = index as u32 / columns;
+        let row_h = grid.cover_h + grid.caption_h;
+        let x = origin_x + col as f32 * (grid.cover_w + grid.column_gap);
+        let cover_y = y + row_i as f32 * (row_h + grid.row_gap) - scroll;
+        return Some(Rect {
+            x: f64::from(x),
+            y: f64::from(cover_y),
+            w: f64::from(grid.cover_w),
+            h: f64::from(grid.cover_h),
+        });
+    }
+    if let Some(index) = library
+        .continue_reading
+        .iter()
+        .position(|card| card.open_path.as_deref() == Some(path))
+    {
+        if continued.cards == 0 {
+            return None;
+        }
+        let x = origin_x
+            + index as f32 * (continued.card_w + continued.gap)
+            + crate::tokens::CONTINUE_PAD;
+        let cover_y = continue_y + crate::tokens::CONTINUE_PAD - scroll;
+        return Some(Rect {
+            x: f64::from(x),
+            y: f64::from(cover_y),
+            w: f64::from(continued.cover_w),
+            h: f64::from(continued.cover_h),
+        });
+    }
+    None
 }
 
 pub fn restore_shelf_scroll(offset: f32) {
@@ -1953,6 +2059,7 @@ fn write_frames(placed: &Placement, library: &LibraryIn) {
 
 fn paint(
     placed: Placement,
+    window: Window,
     form: Signal<Form>,
     selected: Signal<SelectId>,
     menu: Signal<bool>,
@@ -1961,14 +2068,19 @@ fn paint(
     on_peer: impl Fn(Peer) + Clone + 'static,
     on_open: impl Fn(String) + Clone + 'static,
 ) -> AnyElement {
+    let grid = crate::shelf_pass::grid_alpha() as f32;
+    let veil = crate::shelf_pass::shelf_veil() as f32;
     let mut root = view().absolute().inset(px(0.0));
+    if veil < 0.999 {
+        root = root.opacity(veil).pointer_events(PointerEvents::BoxNone);
+    }
     if placed.gray {
         root = root
             .bg_linear_to_b()
             .gradient_from(rgb(crate::tokens::FIELD_TOP).to_hsla())
             .gradient_to(rgb(crate::tokens::FIELD_BOTTOM).to_hsla());
     }
-    if matches!(form.get(), Form::Full { .. }) {
+    if matches!(form.get(), Form::Full { .. }) || crate::shelf_pass::moving() {
         fonts_clear();
     }
     if let CardBox::Placed {
@@ -1992,30 +2104,44 @@ fn paint(
         }
     }
     if let Some(rect) = placed.sidebar {
-        root = root.child(sidebar_pane(
-            Some(rect),
-            &placed,
-            form,
-            selected,
-            menu,
-            query.clone(),
-            on_peer.clone(),
+        root = root.child(fade_layer(
+            grid,
+            sidebar_pane(
+                Some(rect),
+                &placed,
+                form,
+                selected,
+                menu,
+                query.clone(),
+                on_peer.clone(),
+            ),
         ));
     }
     if let Some(rect) = placed.chat {
-        root = root.child(chat_pane(Some(rect), form, &library));
+        root = root.child(fade_layer(grid, chat_pane(Some(rect), form, &library)));
     }
     if let CardBox::Placed { rect, radius, .. } = placed.card {
-        root = root.child(card_face(
-            Some(rect),
-            radius,
-            placed.face,
-            &library,
-            on_peer,
-            on_open,
+        root = root.child(fade_layer(
+            grid,
+            card_face(Some(rect), radius, placed.face, &library, on_peer, on_open),
         ));
+        if let Some(flight) = crate::shelf_pass::flight(window.width, window.height, rect) {
+            if let Some(card) = cover_named(&library, &flight.path) {
+                root = root.child(
+                    view()
+                        .absolute()
+                        .left(px(flight.rect.x as f32))
+                        .top(px(flight.rect.y as f32))
+                        .w(px(flight.rect.w as f32))
+                        .h(px(flight.rect.h as f32))
+                        .opacity(flight.alpha as f32)
+                        .pointer_events(PointerEvents::BoxNone)
+                        .child(cover_art(card, flight.rect.w as f32, flight.rect.h as f32)),
+                );
+            }
+        }
     }
-    if matches!(form.get(), Form::Full { .. }) {
+    if matches!(form.get(), Form::Full { .. }) || crate::shelf_pass::moving() {
         fonts_write();
     }
     if placed.sidebar.is_none() && !matches!(form.get(), Form::Immersive) {
@@ -2032,6 +2158,26 @@ fn paint(
         ));
     }
     root.into_element()
+}
+
+fn fade_layer(alpha: f32, child: AnyElement) -> AnyElement {
+    if alpha >= 0.999 {
+        return child;
+    }
+    view()
+        .absolute()
+        .inset(px(0.0))
+        .opacity(alpha)
+        .child(child)
+        .into_element()
+}
+
+fn cover_named<'a>(library: &'a LibraryIn, path: &str) -> Option<&'a CoverCard> {
+    library
+        .covers
+        .iter()
+        .chain(library.continue_reading.iter())
+        .find(|card| card.open_path.as_deref() == Some(path))
 }
 
 fn sidebar_pane(
@@ -2482,10 +2628,14 @@ pub fn reading_margin(
         hold.set(settled.hold);
     }
     let scene = settled.scene;
+    let fade = crate::shelf_pass::body_alpha() as f32;
     let mut root = view()
         .absolute()
         .size_full()
         .pointer_events(PointerEvents::BoxNone);
+    if fade < 0.999 {
+        root = root.opacity(fade);
+    }
     if let Some(rect) = column_rect {
         root = root.child(
             view()
@@ -3183,6 +3333,9 @@ pub(crate) fn absorb_margin(
     value: &serde_json::Value,
     live: &spike_library::margin::LivePage,
 ) -> spike_library::margin::MarginInk {
+    if !crate::shelf_pass::accepts_margin(&live.book) {
+        return ink.clone();
+    }
     let moved = spike_library::margin::retarget(ink, &live.book, &live.spine, live.page);
     let field = note_from_status(&moved.new_note, value, &live.book);
     spike_library::margin::MarginInk {

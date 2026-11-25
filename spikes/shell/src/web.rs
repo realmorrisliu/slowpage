@@ -1265,6 +1265,16 @@ impl WebChapter {
         Some(href)
     }
 
+    pub fn set_opacity(&self, alpha: f64) {
+        let (web, _, _) = self.shown();
+        let alpha = alpha.clamp(0.0, 1.0);
+        let hidden = alpha <= 0.001;
+        unsafe {
+            let _: () = msg_send![&web, setAlphaValue: alpha];
+            let _: () = msg_send![&web, setHidden: hidden];
+        }
+    }
+
     pub fn set_ease(&self, moving: bool) {
         let (web, _, href) = self.shown();
         let flag = if moving { 1 } else { 0 };

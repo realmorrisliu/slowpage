@@ -11,6 +11,7 @@ mod onboarding;
 mod reading;
 mod settings;
 mod shelf;
+mod shelf_pass;
 mod stage;
 mod tokens;
 mod verify_session;
@@ -451,6 +452,8 @@ pub fn SpikeApp() -> impl IntoElement {
         height: 800.0,
     });
     let ease_tick = signal(0_u64);
+    let body_on = signal(false);
+    let shelf_on = signal(false);
     let margin_live = signal(spike_library::margin::LivePage::default());
     let margin_hold = signal(spike_library::margin::Hold::default());
     let margin_fault = signal(String::new());
@@ -695,6 +698,8 @@ pub fn SpikeApp() -> impl IntoElement {
         let title = title.clone();
         let variant = variant.clone();
         let history = history.clone();
+        let body_on = body_on.clone();
+        let shelf_on = shelf_on.clone();
         let seen = std::cell::Cell::new(0_u64);
         move || {
             let (seq, path) = arrival.get();
@@ -710,6 +715,8 @@ pub fn SpikeApp() -> impl IntoElement {
                 &title,
                 &variant,
                 &history,
+                &body_on,
+                &shelf_on,
                 &path,
             );
         }
@@ -777,6 +784,8 @@ pub fn SpikeApp() -> impl IntoElement {
     let drop_title = title.clone();
     let drop_variant = variant.clone();
     let drop_history = history.clone();
+    let drop_body = body_on.clone();
+    let drop_shelf = shelf_on.clone();
     let drop_form = shell_form.clone();
     let root_visit = visit.clone();
     let root_notice = notice.clone();
@@ -803,6 +812,8 @@ pub fn SpikeApp() -> impl IntoElement {
                     &drop_title,
                     &drop_variant,
                     &drop_history,
+                    &drop_body,
+                    &drop_shelf,
                     &path,
                 );
                 if drop_visit.get().path == path {
@@ -935,6 +946,8 @@ pub fn SpikeApp() -> impl IntoElement {
                             let history = history.clone();
                             let visit = visit.clone();
                             let ease_tick = ease_tick.clone();
+                            let body_on = body_on.clone();
+                            let shelf_on = shelf_on.clone();
                             let margin_live = margin_live.clone();
                             let margin_note = margin_note.clone();
                             let margin_gen = margin_gen.clone();
@@ -946,10 +959,18 @@ pub fn SpikeApp() -> impl IntoElement {
                                     let step = (event.data["u"].as_f64().unwrap_or(0.0) * 1000.0)
                                         .round()
                                         as u64;
-                                    let stamp = (leg << 20) | (step & ((1 << 20) - 1));
+                                    let shelf_leg = event.data["shelf_leg"].as_u64().unwrap_or(0);
+                                    let shelf_step =
+                                        (event.data["shelf"].as_f64().unwrap_or(0.0) * 1000.0)
+                                            .round() as u64;
+                                    let stamp = leg.wrapping_mul(0x9E37_79B1)
+                                        ^ shelf_leg.wrapping_mul(0xBF58_476D)
+                                        ^ step
+                                        ^ shelf_step.wrapping_shl(20);
                                     if ease_tick.get() != stamp {
                                         ease_tick.set(stamp);
                                     }
+                                    note_shelf_flags(&visit, &body_on, &shelf_on);
                                     return;
                                 }
                                 if event.name.as_ref() != "status" {
@@ -1094,7 +1115,8 @@ pub fn SpikeApp() -> impl IntoElement {
                 .child(when(
                     {
                         let visit = visit.clone();
-                        move || visit::show_library(shell_on, visit.get().surface)
+                        let shelf_on = shelf_on.clone();
+                        move || visit::show_library(shell_on, visit.get().surface) || shelf_on.get()
                     },
                     {
                         let shell_form = shell_form.clone();
@@ -1113,6 +1135,11 @@ pub fn SpikeApp() -> impl IntoElement {
                         let title = title.clone();
                         let variant = variant.clone();
                         let notice = notice.clone();
+                        let ease_open = ease_tick.clone();
+                        let window_open = shell_window.clone();
+                        let chrome_open = shell_chrome.clone();
+                        let body_open = body_on.clone();
+                        let shelf_flag = shelf_on.clone();
                         move || {
                             let stage_open = stage.clone();
                             let history_open = history.clone();
@@ -1121,6 +1148,11 @@ pub fn SpikeApp() -> impl IntoElement {
                             let variant_open = variant.clone();
                             let notice_open = notice.clone();
                             let library_open = shell_library.clone();
+                            let ease_open = ease_open.clone();
+                            let window_open = window_open.clone();
+                            let chrome_open = chrome_open.clone();
+                            let body_open = body_open.clone();
+                            let shelf_flag = shelf_flag.clone();
                             form::mount(
                                 shell_form,
                                 shell_selected,
@@ -1128,6 +1160,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                 shell_chrome,
                                 shell_library,
                                 source_menu,
+                                ease_open,
                                 move |peer| match peer {
                                     form::Peer::AppleBooks => import_apple(),
                                     form::Peer::Calibre => import_calibre(),
@@ -1148,6 +1181,12 @@ pub fn SpikeApp() -> impl IntoElement {
                                         next_opened_at(&settings_path),
                                     );
                                     notice_open.set(String::new());
+                                    let slot = form::cover_slot(
+                                        window_open.get(),
+                                        chrome_open.get(),
+                                        &library_open.get(),
+                                        &path,
+                                    );
                                     form::show_reading(&form_open);
                                     let mut current = visit_open.get();
                                     current.scroll = form::shelf_scroll();
@@ -1155,6 +1194,8 @@ pub fn SpikeApp() -> impl IntoElement {
                                         &visit_open,
                                         visit::open_cover(&current, &path, page),
                                     );
+                                    shelf_pass::intend_reading(&path, slot);
+                                    note_shelf_flags(&visit_open, &body_open, &shelf_flag);
                                     if let Some(name) = cover_title(&library_open.get(), &path) {
                                         title_open.set(name);
                                     }
@@ -1169,8 +1210,8 @@ pub fn SpikeApp() -> impl IntoElement {
         )
         .child(when(
             {
-                let visit = visit.clone();
-                move || shell_on && visit.get().surface == visit::Surface::Reading
+                let body_on = body_on.clone();
+                move || shell_on && body_on.get()
             },
             {
                 let form = shell_form.clone();
@@ -1287,6 +1328,8 @@ fn receive_file(
     title: &Signal<String>,
     variant: &Signal<String>,
     history: &Signal<Vec<settings::ReadingRecord>>,
+    body_on: &Signal<bool>,
+    shelf_on: &Signal<bool>,
     path: &str,
 ) {
     let page = settings::resume_page(&settings::path(), path);
@@ -1297,6 +1340,7 @@ fn receive_file(
     };
     notice.set(String::new());
     form::show_reading(form);
+    shelf_pass::intend_reading(path, None);
     let mut current = visit.get();
     if current.surface == visit::Surface::Library {
         current.scroll = form::shelf_scroll();
@@ -1320,6 +1364,19 @@ fn receive_file(
         visit::StageOpen::None => {}
     }
     history.set(settings::load_history(&settings::path()));
+    note_shelf_flags(visit, body_on, shelf_on);
+}
+
+fn note_shelf_flags(visit: &Signal<visit::Visit>, body_on: &Signal<bool>, shelf_on: &Signal<bool>) {
+    let reading = visit.get().surface == visit::Surface::Reading;
+    let body = shelf_pass::reading_mounted(reading);
+    if body_on.get() != body {
+        body_on.set(body);
+    }
+    let layer = shelf_pass::show_shelf_layer();
+    if shelf_on.get() != layer {
+        shelf_on.set(layer);
+    }
 }
 
 fn turn_page(
@@ -1361,7 +1418,9 @@ fn apply_leave(
             }
             let next = visit::leave_to_library(&visit.get());
             form::restore_shelf_scroll(next.scroll);
+            shelf_pass::intend_shelf();
             form::show_shelf(form);
+            stage.redraw();
             commit_visit(visit, next);
             None
         }

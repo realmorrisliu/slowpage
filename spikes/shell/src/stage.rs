@@ -445,6 +445,9 @@ struct State {
     ease_started: Option<Instant>,
     ease_flag: bool,
     ease_sent: bool,
+    shelf_leg: u64,
+    shelf_started: Option<Instant>,
+    shelf_alpha: f64,
     find: Option<FindJob>,
     find_paint: Vec<FindPaint>,
     find_current: Option<(u32, u32, u32)>,
@@ -1622,8 +1625,6 @@ impl State {
                 .map(|started| started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32)
                 .unwrap_or(0);
             let next = crate::ease::advance(elapsed);
-            self.context
-                .emit("ease", json!({"u": next.u(), "leg": next.leg()}));
             if next.moving() {
                 schedule_chrome_pump(view, 0.016);
             }
@@ -1631,7 +1632,46 @@ impl State {
         } else {
             trip
         };
+        let shelf_leg = crate::shelf_pass::leg();
+        if shelf_leg != self.shelf_leg {
+            self.shelf_leg = shelf_leg;
+            self.shelf_started = Some(Instant::now());
+        }
+        let shelf_was = crate::shelf_pass::moving();
+        if shelf_was {
+            let elapsed = self
+                .shelf_started
+                .map(|started| started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32)
+                .unwrap_or(0);
+            crate::shelf_pass::advance(elapsed);
+            if crate::shelf_pass::moving() {
+                schedule_chrome_pump(view, 0.016);
+            }
+        }
+        if trip.moving() || shelf_was {
+            self.context.emit(
+                "ease",
+                json!({
+                    "u": trip.u(),
+                    "leg": trip.leg(),
+                    "shelf": crate::shelf_pass::progress(),
+                    "shelf_leg": crate::shelf_pass::leg(),
+                }),
+            );
+        }
+        self.sync_web_opacity();
         self.mark_ease(trip.moving());
+    }
+
+    fn sync_web_opacity(&mut self) {
+        let alpha = crate::shelf_pass::body_alpha();
+        if (self.shelf_alpha - alpha).abs() < 0.002 {
+            return;
+        }
+        self.shelf_alpha = alpha;
+        if let Some(web) = &self.web {
+            web.set_opacity(alpha);
+        }
     }
 
     fn release_for_ease(&mut self) {
@@ -1723,6 +1763,7 @@ impl State {
                     objc2_core_foundation::CGSize::new(card.w, card.h),
                 ),
             );
+            CGContext::set_alpha(Some(ctx), crate::shelf_pass::body_alpha());
         }
         self.paint_pdf_page(ctx, from, x - shift, y, dw, dh);
         if let Some((next, (nx, ny, ndw, ndh))) = next_page {
@@ -3212,6 +3253,9 @@ impl Stage {
             ease_started: None,
             ease_flag: false,
             ease_sent: false,
+            shelf_leg: 0,
+            shelf_started: None,
+            shelf_alpha: -1.0,
             find: None,
             find_paint: Vec::new(),
             find_current: None,
