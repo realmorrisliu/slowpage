@@ -864,7 +864,7 @@ pub fn mount(
     menu: Signal<bool>,
     ease: Signal<u64>,
     on_peer: impl Fn(Peer) + Clone + 'static,
-    on_open: impl Fn(String, Option<Rect>) + Clone + 'static,
+    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
 ) -> impl IntoElement {
     let form_b = form;
     let selected_b = selected;
@@ -1064,6 +1064,34 @@ pub(crate) fn cover_slot(
     };
     hit.y -= scroll;
     Some(hit)
+}
+
+/// Window position of a cover in the shelf layout, after scroll.
+/// This is the layout node, not the flight.
+pub(crate) fn drawn_cover(
+    form: Form,
+    window: Window,
+    chrome: crate::tokens::ChromeIn,
+    library: &LibraryIn,
+    id: &str,
+) -> Option<Rect> {
+    let placed = place_now(
+        &PlaceIn {
+            form,
+            window,
+            chrome,
+        },
+        library,
+    );
+    let nodes = layout_nodes(&placed, library);
+    let node = nodes.iter().find(|node| node["id"] == id)?;
+    let frame = node["frame"].as_array()?;
+    Some(Rect {
+        x: frame.first()?.as_f64()?,
+        y: frame.get(1)?.as_f64()? - f64::from(shelf_scroll()),
+        w: frame.get(2)?.as_f64()?,
+        h: frame.get(3)?.as_f64()?,
+    })
 }
 
 pub fn restore_shelf_scroll(offset: f32) {
@@ -2103,7 +2131,7 @@ fn paint(
     query: Signal<String>,
     library: LibraryIn,
     on_peer: impl Fn(Peer) + Clone + 'static,
-    on_open: impl Fn(String, Option<Rect>) + Clone + 'static,
+    on_open: impl Fn(String, CoverFrom) + Clone + 'static,
 ) -> AnyElement {
     let grid = crate::shelf_pass::grid_alpha() as f32;
     let veil = crate::shelf_pass::shelf_veil() as f32;
@@ -2158,22 +2186,11 @@ fn paint(
         root = root.child(fade_layer(grid, chat_pane(Some(rect), form, &library)));
     }
     if let CardBox::Placed { rect, radius, .. } = placed.card {
-        let opened = {
-            let form_now = form.get();
-            let chrome = placed.chrome;
-            let painted = library.clone();
-            let window = window;
-            let on_open = on_open.clone();
-            move |path: String, from: CoverFrom| {
-                let slot = cover_slot(window, chrome, &painted, form_now, &path, from);
-                on_open(path, slot);
-            }
-        };
         root = root.child(fade_layer(
             grid,
-            card_face(Some(rect), radius, placed.face, &library, on_peer, opened),
+            card_face(Some(rect), radius, placed.face, &library, on_peer, on_open),
         ));
-        if let Some(flight) = crate::shelf_pass::flight(window.width, window.height, rect) {
+        if let Some(flight) = crate::shelf_pass::flight(window, placed.chrome, &library, rect) {
             if let Some(card) = cover_named(&library, &flight.path) {
                 root = root.child(
                     view()
@@ -6048,8 +6065,8 @@ mod tests {
             (CoverFrom::Shelf, "cover.0"),
             (CoverFrom::Continue, "continue.0.cover"),
         ] {
-            let slot = cover_slot(window(), chrome, &painted, launch(), "guide.epub", from)
-                .expect(node);
+            let slot =
+                cover_slot(window(), chrome, &painted, launch(), "guide.epub", from).expect(node);
             let frame = frame_of(&nodes, node);
             near(slot.x, f64::from(frame[0]));
             near(slot.y, f64::from(frame[1]));
@@ -6058,6 +6075,176 @@ mod tests {
             let unfiltered =
                 cover_slot(window(), chrome, &library, launch(), "guide.epub", from).expect(node);
             assert!((unfiltered.x - slot.x).abs() > 100.0, "{node}");
+        }
+    }
+
+    #[test]
+    fn the_shelf_picture_owns_the_flight() {
+        struct Quiet;
+        impl Drop for Quiet {
+            fn drop(&mut self) {
+                crate::shelf_pass::reset();
+                restore_shelf_scroll(0.0);
+            }
+        }
+        let _quiet = Quiet;
+        crate::shelf_pass::reset();
+        restore_shelf_scroll(0.0);
+        let chrome = crate::tokens::ChromeIn {
+            lights: false,
+            bar: 0.0,
+            top: 0.0,
+        };
+        let wide = window();
+        let mut cards = Vec::new();
+        for (title, author, path) in [
+            ("Essay", "", "essay.epub"),
+            ("Notes", "", "notes.epub"),
+            ("Field Guide", "Ada", "guide.epub"),
+            ("Atlas", "Ada", "atlas.epub"),
+        ] {
+            cards.push(CoverCard {
+                title: title.into(),
+                author: author.into(),
+                cover: None,
+                open_path: Some(path.into()),
+                pdf: false,
+                percent: Some(12),
+                page: Some(1),
+                position: String::new(),
+                opened: String::new(),
+                plate: true,
+                plate_rgb: None,
+                unavailable: None,
+            });
+        }
+        let library = {
+            let mut library = empty_library();
+            library.empty = false;
+            library.book_count = cards.len() as u32;
+            library.continue_reading = cards.clone();
+            library.covers = cards;
+            library
+        };
+        let painted = crate::shelf::searched(library.clone(), "ada");
+        assert_eq!(painted.covers.len(), 2);
+        let hidden = step(launch(), Command::ToggleSidebar);
+        let page = Form::PageAndPanel {
+            sidebar: Presence::Hidden,
+            margin: Presence::Shown,
+        };
+        let guide = drawn_cover(hidden, wide, chrome, &painted, "cover.0").expect("filtered grid");
+        let elsewhere =
+            drawn_cover(hidden, wide, chrome, &library, "cover.2").expect("unfiltered grid");
+        assert!((guide.x - elsewhere.x).abs() > 100.0);
+        assert!(cover_slot(wide, chrome, &painted, page, "guide.epub", CoverFrom::Shelf).is_none());
+        crate::shelf_pass::note_shelf(hidden);
+        crate::shelf_pass::intend_reading("guide.epub", Some(CoverFrom::Shelf));
+        assert_eq!(crate::shelf_pass::shelf_form(), hidden);
+        assert_flight(guide, wide, chrome, &painted);
+        crate::shelf_pass::note_shelf(page);
+        assert_eq!(crate::shelf_pass::shelf_form(), hidden);
+        crate::shelf_pass::intend_reading("atlas.epub", Some(CoverFrom::Shelf));
+        let atlas = drawn_cover(hidden, wide, chrome, &painted, "cover.1").expect("second cover");
+        assert!((atlas.x - guide.x).abs() > 50.0);
+        assert_flight(atlas, wide, chrome, &painted);
+        let continued =
+            drawn_cover(hidden, wide, chrome, &painted, "continue.0.cover").expect("continue");
+        crate::shelf_pass::intend_reading("guide.epub", Some(CoverFrom::Continue));
+        assert_flight(continued, wide, chrome, &painted);
+        let full_continue =
+            drawn_cover(hidden, wide, chrome, &library, "continue.2.cover").expect("full row");
+        assert!((continued.x - full_continue.x).abs() > 50.0);
+        crate::shelf_pass::intend_reading("guide.epub", Some(CoverFrom::Shelf));
+        assert_flight(guide, wide, chrome, &painted);
+        crate::shelf_pass::advance(40);
+        let mid = crate::shelf_pass::progress();
+        assert!(mid > 0.05 && mid < 0.4, "{mid}");
+        assert_flight(guide, wide, chrome, &painted);
+        crate::shelf_pass::intend_shelf();
+        assert!((crate::shelf_pass::progress() - mid).abs() < 0.02);
+        assert_eq!(crate::shelf_pass::shelf_form(), launch());
+        let launched = drawn_cover(launch(), wide, chrome, &painted, "cover.0").expect("launch");
+        assert!((launched.x - guide.x).abs() > 200.0);
+        assert_flight(launched, wide, chrome, &painted);
+        restore_shelf_scroll(48.0);
+        let scrolled = drawn_cover(launch(), wide, chrome, &painted, "cover.0").expect("scrolled");
+        near(scrolled.x, launched.x);
+        near(scrolled.w, launched.w);
+        near(scrolled.h, launched.h);
+        near(scrolled.y, launched.y - 48.0);
+        assert_flight(scrolled, wide, chrome, &painted);
+        restore_shelf_scroll(0.0);
+        let unfiltered = drawn_cover(launch(), wide, chrome, &library, "cover.2").expect("cleared");
+        assert!((unfiltered.x - launched.x).abs() > 100.0);
+        assert_flight(unfiltered, wide, chrome, &library);
+        for size in [
+            Window {
+                width: 578.0,
+                height: 528.0,
+            },
+            Window {
+                width: 2560.0,
+                height: 1440.0,
+            },
+        ] {
+            let resized =
+                drawn_cover(launch(), size, chrome, &painted, "cover.0").expect("resized");
+            assert!((resized.x - launched.x).abs() > 1.0 || (resized.w - launched.w).abs() > 1.0);
+            assert_flight(resized, size, chrome, &painted);
+        }
+        crate::shelf_pass::reset();
+        restore_shelf_scroll(0.0);
+        let quiet = step(launch(), Command::TogglePanel);
+        let book = library.covers[2].clone();
+        let mut one = empty_library();
+        one.empty = false;
+        one.book_count = 1;
+        one.covers.push(book.clone());
+        one.continue_reading.push(book);
+        let wide_grid = drawn_cover(quiet, wide, chrome, &one, "cover.0").expect("chat closed");
+        let open_grid = drawn_cover(launch(), wide, chrome, &one, "cover.0").expect("chat open");
+        assert!((wide_grid.w - open_grid.w).abs() > 1.0);
+        crate::shelf_pass::note_shelf(quiet);
+        crate::shelf_pass::intend_reading("guide.epub", Some(CoverFrom::Shelf));
+        assert_flight(wide_grid, wide, chrome, &one);
+        crate::shelf_pass::advance(40);
+        crate::shelf_pass::intend_shelf();
+        assert_flight(open_grid, wide, chrome, &one);
+    }
+
+    fn assert_flight(
+        drawn: Rect,
+        window: Window,
+        chrome: crate::tokens::ChromeIn,
+        library: &LibraryIn,
+    ) {
+        let placed = place(
+            &PlaceIn {
+                form: launch(),
+                window,
+                chrome,
+            },
+            library,
+        );
+        let CardBox::Placed { rect: card, .. } = placed.card else {
+            panic!("card");
+        };
+        let flown = crate::shelf_pass::flight(window, chrome, library, card).expect("flight");
+        let progress = crate::shelf_pass::progress();
+        let (expect, alpha) =
+            crate::shelf_pass::fly_cover(drawn, card, progress, window.width, window.height)
+                .expect("frame");
+        assert!(alpha > 0.5, "{alpha}");
+        near(flown.rect.x, expect.x);
+        near(flown.rect.y, expect.y);
+        near(flown.rect.w, expect.w);
+        near(flown.rect.h, expect.h);
+        if progress < 0.02 {
+            near(flown.rect.x, drawn.x);
+            near(flown.rect.y, drawn.y);
+            near(flown.rect.w, drawn.w);
+            near(flown.rect.h, drawn.h);
         }
     }
 

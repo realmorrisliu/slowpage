@@ -1,6 +1,8 @@
 //! One progress between the shelf and the open book.
-//! Zero is Full. One is the page and its margin.
-//! The cover is its own rect and keeps the shape it started with.
+//! Zero is the shelf picture. One is the page and its margin.
+//! The flight remembers which tile was pressed. The rectangle is measured
+//! from the shelf picture that is drawn now: its columns, the painted
+//! library, the scroll, and the window. The navigation form is not that picture.
 
 use std::cell::RefCell;
 
@@ -30,9 +32,9 @@ struct Pass {
     generation: u64,
     seat: Seat,
     path: String,
-    cover: Option<Rect>,
-    /// The shelf that was on screen when this trip began. Both columns open
-    /// matches `form::launch`.
+    /// Which painted tile this flight belongs to. `None` is a file open.
+    tile: Option<form::CoverFrom>,
+    /// Columns of the shelf picture. Leaving sets both open, matching `launch`.
     sidebar: bool,
     chat: bool,
 }
@@ -48,7 +50,7 @@ impl Default for Pass {
             generation: 0,
             seat: Seat::Shelf,
             path: String::new(),
-            cover: None,
+            tile: None,
             sidebar: true,
             chat: true,
         }
@@ -67,7 +69,7 @@ pub(crate) fn reset() {
     with_pass(|pass| *pass = Pass::default());
 }
 
-pub(crate) fn intend_reading(path: &str, cover: Option<Rect>) {
+pub(crate) fn intend_reading(path: &str, tile: Option<form::CoverFrom>) {
     with_pass(|pass| {
         let settled_here = pass.span_ms == 0
             && pass.seat == Seat::Reading
@@ -81,7 +83,7 @@ pub(crate) fn intend_reading(path: &str, cover: Option<Rect>) {
         pass.generation = pass.generation.wrapping_add(1);
         pass.path = path.to_string();
         // None is a real answer: a file open has no clicked tile, so the previous cover must not fly.
-        pass.cover = cover;
+        pass.tile = tile;
         if already_open {
             pass.from = 1.0;
             pass.to = 1.0;
@@ -247,15 +249,21 @@ pub(crate) struct Flight {
     pub path: String,
 }
 
-pub(crate) fn flight(window_w: f64, window_h: f64, card: Rect) -> Option<Flight> {
-    let (origin, p, path) = with_pass(|pass| {
+pub(crate) fn flight(
+    window: form::Window,
+    chrome: crate::tokens::ChromeIn,
+    library: &form::LibraryIn,
+    card: Rect,
+) -> Option<Flight> {
+    let (path, tile, p) = with_pass(|pass| {
         if pass.span_ms == 0 {
             return None;
         }
-        let origin = pass.cover?;
-        Some((origin, progress_of(pass), pass.path.clone()))
+        let tile = pass.tile?;
+        Some((pass.path.clone(), tile, progress_of(pass)))
     })?;
-    let (rect, alpha) = fly_cover(origin, card, p, window_w, window_h)?;
+    let origin = form::cover_slot(window, chrome, library, shelf_form(), &path, tile)?;
+    let (rect, alpha) = fly_cover(origin, card, p, window.width, window.height)?;
     if alpha <= 0.001 {
         return None;
     }
@@ -484,7 +492,7 @@ mod tests {
     fn shelf_enter_and_leave_follow_the_cosine() {
         let _clean = Clean;
         reset();
-        intend_reading("a.pdf", Some(origin()));
+        intend_reading("a.pdf", Some(crate::form::CoverFrom::Shelf));
         advance(80);
         let mid = progress();
         assert!((mid - 0.5).abs() < 0.02, "{mid}");
@@ -503,7 +511,7 @@ mod tests {
         assert!(!accepts_margin("a.pdf"));
 
         reset();
-        intend_reading("a.pdf", Some(origin()));
+        intend_reading("a.pdf", Some(crate::form::CoverFrom::Shelf));
         let mut first = None;
         let mut last = None;
         for ms in 0..=160 {
@@ -522,7 +530,7 @@ mod tests {
     fn a_reverse_continues_from_the_current_progress() {
         let _clean = Clean;
         reset();
-        intend_reading("a.pdf", Some(origin()));
+        intend_reading("a.pdf", Some(crate::form::CoverFrom::Shelf));
         advance(80);
         let mid = progress();
         intend_shelf();
@@ -651,15 +659,7 @@ mod tests {
         let settled = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
         let again = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
         assert_eq!(settled, again);
-        intend_reading(
-            "a.pdf",
-            Some(Rect {
-                x: 300.0,
-                y: 180.0,
-                w: 128.0,
-                h: 192.0,
-            }),
-        );
+        intend_reading("a.pdf", Some(crate::form::CoverFrom::Shelf));
         let shown = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
         let frame =
             crate::form::reading_frame(1440.0, 900.0, 0.0, 0.0, crate::form::margin_shown());
@@ -683,11 +683,50 @@ mod tests {
     fn a_file_open_does_not_keep_the_previous_cover() {
         let _clean = Clean;
         reset();
-        let card = shelf_card(1440.0, 900.0, 0.0);
-        intend_reading("a.pdf", Some(origin()));
-        assert!(flight(1440.0, 900.0, card).is_some());
+        crate::form::restore_shelf_scroll(0.0);
+        let window = crate::form::Window {
+            width: 1440.0,
+            height: 900.0,
+        };
+        let chrome = crate::tokens::ChromeIn {
+            lights: false,
+            bar: 0.0,
+            top: 0.0,
+        };
+        let mut library = crate::form::LibraryIn {
+            empty: false,
+            book_count: 2,
+            counts: crate::form::LibraryCounts::default(),
+            sources: Vec::new(),
+            selected: crate::form::SelectId::AllBooks,
+            continue_reading: Vec::new(),
+            covers: Vec::new(),
+            lists: Vec::new(),
+            chat: Vec::new(),
+            notice: None,
+        };
+        for (title, path) in [("Guide", "a.pdf"), ("Atlas", "b.epub")] {
+            library.covers.push(crate::form::CoverCard {
+                title: title.into(),
+                author: String::new(),
+                cover: None,
+                open_path: Some(path.into()),
+                pdf: false,
+                percent: None,
+                page: None,
+                position: String::new(),
+                opened: String::new(),
+                plate: true,
+                plate_rgb: None,
+                unavailable: None,
+            });
+        }
+        let card = shelf_card(window.width, window.height, 0.0);
+        note_shelf(crate::form::launch());
+        intend_reading("a.pdf", Some(crate::form::CoverFrom::Shelf));
+        assert!(flight(window, chrome, &library, card).is_some());
         intend_reading("b.epub", None);
-        assert!(flight(1440.0, 900.0, card).is_none());
+        assert!(flight(window, chrome, &library, card).is_none());
     }
 
     #[test]
@@ -732,21 +771,16 @@ mod tests {
             notice: None,
         };
         library.book_count = 1;
-        let origin = crate::form::cover_slot(
-            window,
-            chrome,
-            &library,
-            form,
-            "guide.epub",
-            crate::form::CoverFrom::Shelf,
-        )
-        .expect("painted cover");
+        let origin = crate::form::drawn_cover(form, window, chrome, &library, "cover.0")
+            .expect("painted cover");
         assert!(
             (origin.x - (6.0 + f64::from(crate::tokens::CARD_PAD_X))).abs() < 0.01,
             "{}",
             origin.x
         );
         assert!(origin.w > 1.0 && origin.h > 1.0);
+        note_shelf(form);
+        intend_reading("guide.epub", Some(crate::form::CoverFrom::Shelf));
         let placed = crate::form::place(
             &crate::form::PlaceIn {
                 form,
@@ -758,36 +792,27 @@ mod tests {
         let crate::form::CardBox::Placed { rect: card, .. } = placed.card else {
             panic!("card");
         };
-        note_shelf(form);
-        intend_reading("guide.epub", Some(origin));
         let drawn = card_blend(window.width, window.height, 0.0).expect("shelf card");
         assert!((drawn.x - card.x).abs() < 0.01, "{} {}", drawn.x, card.x);
         assert!((drawn.y - card.y).abs() < 0.01);
         assert!((drawn.w - card.w).abs() < 0.01);
         assert!((drawn.h - card.h).abs() < 0.01);
-        let (flown, alpha) =
-            fly_cover(origin, drawn, 0.0, window.width, window.height).expect("frame");
-        assert!((flown.x - origin.x).abs() < 0.01, "{}", flown.x);
-        assert!((flown.y - origin.y).abs() < 0.01, "{}", flown.y);
-        assert!((flown.w - origin.w).abs() < 0.01, "{}", flown.w);
-        assert!((flown.h - origin.h).abs() < 0.01, "{}", flown.h);
-        assert!((alpha - 1.0).abs() < 0.001);
-        let continued = crate::form::cover_slot(
-            window,
-            chrome,
-            &library,
-            form,
-            "guide.epub",
-            crate::form::CoverFrom::Continue,
-        )
-        .expect("continue cover");
-        let (row, row_alpha) =
-            fly_cover(continued, drawn, 0.0, window.width, window.height).expect("continue frame");
-        assert!((row.x - continued.x).abs() < 0.01, "{}", row.x);
-        assert!((row.y - continued.y).abs() < 0.01, "{}", row.y);
-        assert!((row.w - continued.w).abs() < 0.01);
-        assert!((row.h - continued.h).abs() < 0.01);
-        assert!((row_alpha - 1.0).abs() < 0.001);
+        let flown = flight(window, chrome, &library, card).expect("frame");
+        assert!((flown.rect.x - origin.x).abs() < 0.01, "{}", flown.rect.x);
+        assert!((flown.rect.y - origin.y).abs() < 0.01, "{}", flown.rect.y);
+        assert!((flown.rect.w - origin.w).abs() < 0.01, "{}", flown.rect.w);
+        assert!((flown.rect.h - origin.h).abs() < 0.01, "{}", flown.rect.h);
+        assert!((flown.alpha - 1.0).abs() < 0.001);
+        let continued =
+            crate::form::drawn_cover(form, window, chrome, &library, "continue.0.cover")
+                .expect("continue cover");
+        intend_reading("guide.epub", Some(crate::form::CoverFrom::Continue));
+        let row = flight(window, chrome, &library, card).expect("continue frame");
+        assert!((row.rect.x - continued.x).abs() < 0.01, "{}", row.rect.x);
+        assert!((row.rect.y - continued.y).abs() < 0.01, "{}", row.rect.y);
+        assert!((row.rect.w - continued.w).abs() < 0.01);
+        assert!((row.rect.h - continued.h).abs() < 0.01);
+        assert!((row.alpha - 1.0).abs() < 0.001);
         assert!((continued.y - origin.y).abs() > 1.0 || (continued.w - origin.w).abs() > 1.0);
     }
 }

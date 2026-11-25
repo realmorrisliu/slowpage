@@ -163,6 +163,7 @@ jobs:
             the_flight_starts_on_the_painted_cover \
             a_filtered_click_uses_the_painted_cover \
             a_file_open_does_not_keep_the_previous_cover \
+            the_shelf_picture_owns_the_flight \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -249,7 +250,8 @@ jobs:
             the_clicked_cover_uses_the_shelf_that_is_showing \
             the_flight_starts_on_the_painted_cover \
             a_filtered_click_uses_the_painted_cover \
-            a_file_open_does_not_keep_the_previous_cover
+            a_file_open_does_not_keep_the_previous_cover \
+            the_shelf_picture_owns_the_flight
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

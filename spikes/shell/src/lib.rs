@@ -1166,7 +1166,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                     form::Peer::Calibre => import_calibre(),
                                     form::Peer::AddFolder => import_folder(),
                                 },
-                                move |path, slot| {
+                                move |path, from| {
                                     // The headless runner never builds the native stage, so
                                     // the open command does not write history there. Record
                                     // the click here, then let the stage replace the row
@@ -1181,8 +1181,9 @@ pub fn SpikeApp() -> impl IntoElement {
                                         next_opened_at(&settings_path),
                                     );
                                     notice_open.set(String::new());
-                                    let shelf_form = form_open.get();
-                                    shelf_pass::note_shelf(shelf_form);
+                                    // Which tile was pressed. Its place comes from the shelf
+                                    // picture, including a press after the form is already the page.
+                                    shelf_pass::note_shelf(form_open.get());
                                     form::show_reading(&form_open);
                                     let mut current = visit_open.get();
                                     current.scroll = form::shelf_scroll();
@@ -1190,7 +1191,7 @@ pub fn SpikeApp() -> impl IntoElement {
                                         &visit_open,
                                         visit::open_cover(&current, &path, page),
                                     );
-                                    shelf_pass::intend_reading(&path, slot);
+                                    shelf_pass::intend_reading(&path, Some(from));
                                     note_shelf_flags(&visit_open, &body_open, &shelf_flag);
                                     if let Some(name) = cover_title(&library_open.get(), &path) {
                                         title_open.set(name);
