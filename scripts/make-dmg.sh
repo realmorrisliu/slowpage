@@ -16,6 +16,92 @@ version="0.1.0-alpha.1"
 dmg="$root/dist/${name}-${version}.dmg"
 identity="${SR_SIGN_IDENTITY:--}"
 
+# SetFile -a C and codesign --deep leave diskimages-helper holding the volume.
+# One detach then exits 16 (Resource busy). A later detach can say the mount
+# is already gone. That is success. A volume hdiutil info still lists, or any
+# other detach error, is a failure.
+detach_pause() {
+  if [ "${SR_DETACH_FAST:-}" = "1" ]; then
+    return 0
+  fi
+  sleep "$1"
+}
+
+mount_listed() {
+  info="$(mktemp)"
+  if ! hdiutil info >"$info" 2>/dev/null; then
+    rm -f "$info"
+    return 2
+  fi
+  if grep -F -q -- "$1" "$info"; then
+    rm -f "$info"
+    return 0
+  fi
+  rm -f "$info"
+  return 1
+}
+
+mount_already_gone() {
+  err_file="$1"
+  point="$2"
+  listed=0
+  mount_listed "$point" || listed=$?
+  if [ "$listed" -ne 1 ]; then
+    return 1
+  fi
+  grep -E -q 'No such file or directory|not currently attached|not currently mounted|No such disk|is not attached' "$err_file"
+}
+
+detach_mount() {
+  point="$1"
+  if [ -z "$point" ]; then
+    echo "detach needs a mount point" >&2
+    return 1
+  fi
+  attempt=1
+  err="$(mktemp)"
+  while [ "$attempt" -le 5 ]; do
+    if hdiutil detach "$point" >/dev/null 2>"$err"; then
+      rm -f "$err"
+      return 0
+    fi
+    if mount_already_gone "$err" "$point"; then
+      rm -f "$err"
+      return 0
+    fi
+    echo "hdiutil detach busy at ${point}, retry ${attempt}" >&2
+    cat "$err" >&2
+    detach_pause "$attempt"
+    attempt=$((attempt + 1))
+  done
+  echo "hdiutil detach still busy at ${point}; forcing" >&2
+  if hdiutil detach -force "$point" >/dev/null 2>"$err"; then
+    rm -f "$err"
+  elif mount_already_gone "$err" "$point"; then
+    rm -f "$err"
+    return 0
+  else
+    cat "$err" >&2
+    rm -f "$err"
+    return 1
+  fi
+  listed=0
+  mount_listed "$point" || listed=$?
+  if [ "$listed" -eq 0 ]; then
+    echo "volume still mounted at ${point}" >&2
+    return 1
+  fi
+  if [ "$listed" -eq 2 ]; then
+    echo "hdiutil info failed after detach of ${point}" >&2
+    return 1
+  fi
+}
+
+if [ "${1:-}" = "--detach" ]; then
+  detach_mount "${2:-}"
+  exit $?
+fi
+
 if [ ! -d "$app" ]; then
   echo "missing $app (run scripts/package-macos.sh)" >&2
   exit 1
@@ -28,38 +114,13 @@ fi
 
 stage="$(mktemp -d)"
 mount="$(mktemp -d)"
-
-# SetFile -a C and codesign --deep leave diskimages-helper holding the volume.
-# One detach then exits 16 (Resource busy) and the image never converts.
-# Retry, then force, and stop if the mount is still there.
-detach_mount() {
-  point="$1"
-  attempt=1
-  err="$(mktemp)"
-  while [ "$attempt" -le 5 ]; do
-    if hdiutil detach "$point" >/dev/null 2>"$err"; then
-      rm -f "$err"
-      return 0
-    fi
-    echo "hdiutil detach busy at ${point}, retry ${attempt}" >&2
-    cat "$err" >&2 || true
-    sleep "$attempt"
-    attempt=$((attempt + 1))
-  done
-  echo "hdiutil detach still busy at ${point}; forcing" >&2
-  if ! hdiutil detach -force "$point" >/dev/null 2>"$err"; then
-    cat "$err" >&2 || true
-    rm -f "$err"
-    return 1
-  fi
-  rm -f "$err"
-  if hdiutil info | grep -F "$point" >/dev/null; then
-    echo "volume still mounted at ${point}" >&2
-    return 1
-  fi
+cleanup() {
+  status=$?
+  detach_mount "$mount" || status=1
+  rm -rf "$stage" "$mount"
+  exit "$status"
 }
-
-trap 'hdiutil detach "$mount" >/dev/null 2>&1 || hdiutil detach -force "$mount" >/dev/null 2>&1 || true; rm -rf "$stage" "$mount"' EXIT
+trap cleanup EXIT
 ditto "$app" "$stage/${name}.app"
 ln -s /Applications "$stage/Applications"
 rm -f "$dmg"
