@@ -6,9 +6,9 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-version="0.1.0-alpha.1"
-build_number="1"
 manifest="$root/spikes/shell/nsh.json"
+version="$("$root/scripts/app-version.sh" version "$manifest")"
+build_number="$("$root/scripts/app-version.sh" build "$manifest")"
 
 json_string() {
   key="$1"
@@ -40,6 +40,7 @@ if [ ! -f "$icon" ]; then
   echo "missing app icon at $icon" >&2
   exit 1
 fi
+"$root/scripts/updater-gate.sh" "$manifest" >/dev/null
 
 pdfium_root="${SPIKE_PDFIUM:-/tmp/pdfium}"
 if [ -d "$pdfium_root/lib" ]; then

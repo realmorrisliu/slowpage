@@ -46,7 +46,7 @@ The order is four phases. The open phase is pull request 89. Each later phase is
 
 3. One regression on the fixed head from phase 2. The production tests named by that batch run once. This phase is complete when that run's `headSha` is that head. An unchanged head is not run again. A window that was not in the run stays unverified.
 
-4. Prepare a named α2 install candidate and an NSH official security-update candidate. This phase is complete when those artifacts exist and are not published. A public Release and a tag are a later approval. No version is authorized by this note.
+4. Prepare a named α2 install candidate and an NSH official security-update candidate. The candidate version is `0.1.0-alpha.2`, the semver in `spikes/shell/nsh.json`. The install image is the unpublished disk image of that version from the Release job. Updates stay off until `updater.publicKey` is a production key. This phase is complete when that disk image exists and is not published, and the update candidate still needs that key. A public Release and a tag are a later approval.
 
 Roadmap edits ride the product pull request for the phase they describe.
 

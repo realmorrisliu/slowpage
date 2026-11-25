@@ -12,7 +12,8 @@ if [ -z "$name" ]; then
   exit 1
 fi
 app="$root/dist/${name}.app"
-version="0.1.0-alpha.1"
+version="$("$root/scripts/app-version.sh" version "$manifest")"
+"$root/scripts/updater-gate.sh" "$manifest" >/dev/null
 dmg="$root/dist/${name}-${version}.dmg"
 identity="${SR_SIGN_IDENTITY:--}"
 
