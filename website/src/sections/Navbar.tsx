@@ -1,6 +1,6 @@
 import { GlassButton } from 'solid-liquid-glass'
 
-import { RELEASES_URL, REPO_URL, t } from '../i18n'
+import { locale, RELEASES_URL, REPO_URL, setLocale, t } from '../i18n'
 import { useScrolled } from '../utils/motion'
 
 export function Navbar() {
@@ -45,13 +45,13 @@ export function Navbar() {
         </div>
 
         <div class="flex items-center gap-5 text-[12.5px] text-[#424245]">
-          <a
-            href={t.navOtherLocaleHref}
-            hreflang={t.navOtherLocaleHref === '/' ? 'zh-CN' : 'en'}
-            class="transition-colors duration-150 hover:text-[#1D1D1F]"
+          <button
+            type="button"
+            onClick={() => setLocale(locale() === 'en' ? 'zh' : 'en')}
+            class="cursor-pointer transition-colors duration-150 hover:text-[#1D1D1F]"
           >
             {t.navOtherLocale}
-          </a>
+          </button>
           <a
             href={REPO_URL}
             target="_blank"

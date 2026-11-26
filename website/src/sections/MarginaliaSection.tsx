@@ -43,77 +43,82 @@ type ConnectorCoords = {
   length: number
 }
 
-const isEn = locale === 'en'
+const isEn = () => locale() === 'en'
 
-const INITIAL_NOTES: NoteItem[] = isEn
-  ? [
-      {
-        id: 'n1',
-        anchorId: 'n1',
-        author: 'Morris',
-        time: 'Line 1',
-        body: 'The contrast between a solemn universal axiom and plain matchmaking math sets the ironic tone in a single sentence.',
-        reply:
-          '@alan: “Universally acknowledged” mirrors “rightful property,” dressing gentry marriage economics up as natural law.',
-      },
-      {
-        id: 'n2',
-        anchorId: 'n2',
-        author: '@alan',
-        time: 'Inline note',
-        body: 'The dialogue jumps straight to letting Netherfield Park — pair this introduction with the Chapter 3 assembly.',
-      },
-    ]
-  : [
-      {
-        id: 'n1',
-        anchorId: 'n1',
-        author: 'Morris',
-        time: '第 1 句',
-        body: '全称真理的庄重句式与后半句婚姻算盘的反差，一开篇就定下了整本书的反讽基调。',
-        reply: '@alan：句首 “universally acknowledged” 与结尾 “rightful property” 呼应，把乡绅阶层的世俗规则写成仿佛自然法则。',
-      },
-      {
-        id: 'n2',
-        anchorId: 'n2',
-        author: '@alan',
-        time: '行内伴读',
-        body: '对话直接切入 Netherfield Park 出租，建议把人物出场后的财产线和第 3 章舞会并读。',
-      },
-    ]
+function getInitialNotes(en: boolean): NoteItem[] {
+  return en
+    ? [
+        {
+          id: 'n1',
+          anchorId: 'n1',
+          author: 'Morris',
+          time: 'Line 1',
+          body: 'The contrast between a solemn universal axiom and plain matchmaking math sets the ironic tone in a single sentence.',
+          reply:
+            '@alan: “Universally acknowledged” mirrors “rightful property,” dressing gentry marriage economics up as natural law.',
+        },
+        {
+          id: 'n2',
+          anchorId: 'n2',
+          author: '@alan',
+          time: 'Inline note',
+          body: 'The dialogue jumps straight to letting Netherfield Park — pair this introduction with the Chapter 3 assembly.',
+        },
+      ]
+    : [
+        {
+          id: 'n1',
+          anchorId: 'n1',
+          author: 'Morris',
+          time: '第 1 句',
+          body: '全称真理的庄重句式与后半句婚姻算盘的反差，一开篇就定下了整本书的反讽基调。',
+          reply: '@alan：句首 “universally acknowledged” 与结尾 “rightful property” 呼应，把乡绅阶层的世俗规则写成仿佛自然法则。',
+        },
+        {
+          id: 'n2',
+          anchorId: 'n2',
+          author: '@alan',
+          time: '行内伴读',
+          body: '对话直接切入 Netherfield Park 出租，建议把人物出场后的财产线和第 3 章舞会并读。',
+        },
+      ]
+}
 
-const QUICK_PROMPTS = isEn
-  ? [
-      {
-        question: 'Where does the irony in this line come from?',
-        anchorId: 'n1' as AnchorId,
-        answer:
-          '@alan: It opens in the voice of a philosophical maxim (“universally acknowledged”) only to pivot into families treating a bachelor as “rightful property” — the drop in register creates the wit.',
-      },
-      {
-        question: 'Who appears in this chapter?',
-        anchorId: 'n2' as AnchorId,
-        answer:
-          '@alan: Only Mr. and Mrs. Bennet appear in person; their five daughters and the newly arrived Mr. Bingley are all introduced through their banter.',
-      },
-    ]
-  : [
-      {
-        question: '这句话的反讽妙在哪里？',
-        anchorId: 'n1' as AnchorId,
-        answer:
-          '@alan：句首模仿哲学公理的口吻（universally acknowledged），结尾却突然转向乡绅家庭把单身贵族当作女儿“应得财产”的精打细算，这种落差构成了轻巧的讽刺。',
-      },
-      {
-        question: '这一章主要出场了谁？',
-        anchorId: 'n2' as AnchorId,
-        answer:
-          '@alan：这一章只有 Bennet 夫妇二人在客厅对话，五个女儿和邻镇新搬来的 Bingley 先生都在对话里先声夺人地被提起。',
-      },
-    ]
+function getQuickPrompts(en: boolean) {
+  return en
+    ? [
+        {
+          question: 'Where does the irony in this line come from?',
+          anchorId: 'n1' as AnchorId,
+          answer:
+            '@alan: It opens in the voice of a philosophical maxim (“universally acknowledged”) only to pivot into families treating a bachelor as “rightful property” — the drop in register creates the wit.',
+        },
+        {
+          question: 'Who appears in this chapter?',
+          anchorId: 'n2' as AnchorId,
+          answer:
+            '@alan: Only Mr. and Mrs. Bennet appear in person; their five daughters and the newly arrived Mr. Bingley are all introduced through their banter.',
+        },
+      ]
+    : [
+        {
+          question: '这句话的反讽妙在哪里？',
+          anchorId: 'n1' as AnchorId,
+          answer:
+            '@alan：句首模仿哲学公理的口吻（universally acknowledged），结尾却突然转向乡绅家庭把单身贵族当作女儿“应得财产”的精打细算，这种落差构成了轻巧的讽刺。',
+        },
+        {
+          question: '这一章主要出场了谁？',
+          anchorId: 'n2' as AnchorId,
+          answer:
+            '@alan：这一章只有 Bennet 夫妇二人在客厅对话，五个女儿和邻镇新搬来的 Bingley 先生都在对话里先声夺人地被提起。',
+        },
+      ]
+}
 
 export function MarginaliaSection() {
-  const [notes, setNotes] = createSignal<NoteItem[]>(INITIAL_NOTES)
+  const quickPrompts = createMemo(() => getQuickPrompts(isEn()))
+  const [notes, setNotes] = createSignal<NoteItem[]>(getInitialNotes(isEn()))
   const [filter, setFilter] = createSignal<FilterMode>('all')
   const [selectedId, setSelectedId] = createSignal<string>('n1')
   const [hoveredId, setHoveredId] = createSignal<string | null>(null)
@@ -131,6 +136,21 @@ export function MarginaliaSection() {
   const streamCancelFns: Array<() => void> = []
 
   const headerShown = useReveal(() => headerRef)
+
+  let prevLocale = locale()
+  createEffect(
+    () => locale(),
+    (nextLocale) => {
+      if (nextLocale === prevLocale) return
+      prevLocale = nextLocale
+      for (const stop of streamCancelFns) stop()
+      streamCancelFns.length = 0
+      setNotes(getInitialNotes(nextLocale === 'en'))
+      setEditingId(null)
+      setSavedNotice('')
+      setSelectedId('n1')
+    },
+  )
 
   const visibleNotes = createMemo(() => {
     const mode = filter()
@@ -172,7 +192,7 @@ export function MarginaliaSection() {
       if (count < fullReply.length) {
         raf = requestAnimationFrame(tick)
       } else {
-        setSavedNotice(isEn ? '@alan replied in the margin' : '@alan 已回复到页边')
+        setSavedNotice(isEn() ? '@alan replied in the margin' : '@alan 已回复到页边')
       }
     }
     raf = requestAnimationFrame(tick)
@@ -251,20 +271,21 @@ export function MarginaliaSection() {
     }
   }
 
-  const askQuickAlan = (item: (typeof QUICK_PROMPTS)[number]) => {
+  const askQuickAlan = (item: ReturnType<typeof getQuickPrompts>[number]) => {
     const id = `alan-${Date.now()}`
+    const en = isEn()
     const newNote: NoteItem = {
       id,
       anchorId: item.anchorId,
-      author: isEn ? 'Me' : '我',
-      time: isEn ? 'Just now' : '刚才',
+      author: en ? 'Me' : '我',
+      time: en ? 'Just now' : '刚才',
       body: `@alan ${item.question}`,
-      reply: isEn ? '@alan: …' : '@alan：…',
+      reply: en ? '@alan: …' : '@alan：…',
     }
     setFilter('all')
     setNotes((prev) => [...prev, newNote])
     setSelectedId(id)
-    setSavedNotice(isEn ? '@alan is writing in the margin…' : '@alan 正在页边书写…')
+    setSavedNotice(en ? '@alan is writing in the margin…' : '@alan 正在页边书写…')
     streamReplyIntoNote(id, item.answer)
   }
 
@@ -281,18 +302,20 @@ export function MarginaliaSection() {
   const saveEdit = (noteId: string) => {
     const trimmed = editDraft().trim()
     if (!trimmed) return
+    const en = isEn()
     setNotes((prev) =>
-      prev.map((n) => (n.id === noteId ? { ...n, body: trimmed, time: isEn ? 'Edited' : '已编辑' } : n)),
+      prev.map((n) => (n.id === noteId ? { ...n, body: trimmed, time: en ? 'Edited' : '已编辑' } : n)),
     )
     setEditingId(null)
-    setSavedNotice(isEn ? 'Margin note updated' : '已更新页边笔记')
+    setSavedNotice(en ? 'Margin note updated' : '已更新页边笔记')
   }
 
   const submitNewNote = (e: SubmitEvent) => {
     e.preventDefault()
     const trimmed = draftNote().trim()
+    const en = isEn()
     if (!trimmed) {
-      setSavedNotice(isEn ? 'Select a line or write a thought first' : '先选中一句原文，或写下你的想法')
+      setSavedNotice(en ? 'Select a line or write a thought first' : '先选中一句原文，或写下你的想法')
       return
     }
     const anchor = selectedAnchor()
@@ -301,18 +324,18 @@ export function MarginaliaSection() {
     const newItem: NoteItem = {
       id,
       anchorId: anchor,
-      author: isEn ? 'Me' : '我',
-      time: isEn ? 'Just now' : '刚才',
+      author: en ? 'Me' : '我',
+      time: en ? 'Just now' : '刚才',
       body: trimmed,
-      reply: mentionsAlan ? (isEn ? '@alan: …' : '@alan：…') : undefined,
+      reply: mentionsAlan ? (en ? '@alan: …' : '@alan：…') : undefined,
     }
     setFilter('all')
     setNotes((prev) => [...prev, newItem])
     setSelectedId(id)
     setDraftNote('')
     if (mentionsAlan) {
-      setSavedNotice(isEn ? '@alan is writing in the margin…' : '@alan 正在页边书写…')
-      const reply = isEn
+      setSavedNotice(en ? '@alan is writing in the margin…' : '@alan 正在页边书写…')
+      const reply = en
         ? anchor === 'n1'
           ? '@alan: The deadpan rational tone applied to worldly marriage calculations gives the opening its quiet humor.'
           : '@alan: Mrs. Bennet rushes ahead while Mr. Bennet hangs back — the contrast in tempo sketches both characters at once.'
@@ -321,7 +344,7 @@ export function MarginaliaSection() {
           : '@alan：Mrs. Bennet 急切推进话题，Mr. Bennet 却故意慢半拍回应，一急一缓立刻勾勒出两人的性格。'
       streamReplyIntoNote(id, reply)
     } else {
-      setSavedNotice(isEn ? 'Saved in margin' : '已添加到页边')
+      setSavedNotice(en ? 'Saved in margin' : '已添加到页边')
     }
   }
 
@@ -388,17 +411,17 @@ export function MarginaliaSection() {
             <div class="flex items-center gap-2.5">
               <GlassPopover subtleTrigger>
                 <GlassPopoverTrigger class="!h-8 !px-3.5 !text-[12.5px]">
-                  {isEn ? 'Try asking @alan' : '试试问 @alan'}
+                  {isEn() ? 'Try asking @alan' : '试试问 @alan'}
                 </GlassPopoverTrigger>
                 <GlassPopoverContent>
-                  <GlassPopoverTitle>{isEn ? 'Read this passage with @alan' : '让 @alan 陪你读这一段'}</GlassPopoverTitle>
+                  <GlassPopoverTitle>{isEn() ? 'Read this passage with @alan' : '让 @alan 陪你读这一段'}</GlassPopoverTitle>
                   <GlassPopoverDescription class="opacity-85">
-                    {isEn
+                    {isEn()
                       ? 'Pick a question to watch the reply stream right into the margin:'
                       : '挑一个问题，看看回复如何直接流式写到页边：'}
                   </GlassPopoverDescription>
                   <div class="flex flex-col gap-2">
-                    <For each={QUICK_PROMPTS}>
+                    <For each={quickPrompts()}>
                       {(prompt) => (
                         <GlassPopoverClose
                           variant="quiet"
@@ -415,31 +438,31 @@ export function MarginaliaSection() {
 
               <GlassMenu subtleTrigger>
                 <GlassMenuTrigger class="!h-8 !px-3.5 !text-[12.5px]">
-                  {isEn ? 'Filter notes' : '筛选批注'}
+                  {isEn() ? 'Filter notes' : '筛选批注'}
                 </GlassMenuTrigger>
                 <GlassMenuContent align="end">
                   <GlassMenuGroup>
-                    <GlassMenuLabel class="opacity-80">{isEn ? 'Show' : '显示范围'}</GlassMenuLabel>
+                    <GlassMenuLabel class="opacity-80">{isEn() ? 'Show' : '显示范围'}</GlassMenuLabel>
                     <GlassMenuRadioGroup
                       value={filter()}
                       onValueChange={(value) => setFilter(value as FilterMode)}
                     >
-                      <GlassMenuRadioItem value="all">{isEn ? 'All notes' : '全部批注'}</GlassMenuRadioItem>
-                      <GlassMenuRadioItem value="mine">{isEn ? 'My notes only' : '仅看我的笔记'}</GlassMenuRadioItem>
-                      <GlassMenuRadioItem value="alan">{isEn ? '@alan replies' : '仅看 @alan 回复'}</GlassMenuRadioItem>
+                      <GlassMenuRadioItem value="all">{isEn() ? 'All notes' : '全部批注'}</GlassMenuRadioItem>
+                      <GlassMenuRadioItem value="mine">{isEn() ? 'My notes only' : '仅看我的笔记'}</GlassMenuRadioItem>
+                      <GlassMenuRadioItem value="alan">{isEn() ? '@alan replies' : '仅看 @alan 回复'}</GlassMenuRadioItem>
                     </GlassMenuRadioGroup>
                   </GlassMenuGroup>
                   <GlassMenuSeparator />
                   <GlassMenuItem
                     onSelect={() => {
-                      setNotes(INITIAL_NOTES)
+                      setNotes(getInitialNotes(isEn()))
                       setFilter('all')
                       setEditingId(null)
                       setSelectedId('n1')
                       setSavedNotice('')
                     }}
                   >
-                    {isEn ? 'Reset demo notes' : '恢复默认示例'}
+                    {isEn() ? 'Reset demo notes' : '恢复默认示例'}
                   </GlassMenuItem>
                 </GlassMenuContent>
               </GlassMenu>
@@ -503,7 +526,7 @@ export function MarginaliaSection() {
                   <span>Chapter I</span>
                   <span class="sp-tabular inline-flex items-center gap-1">
                     <IconBookmark class="size-3" />{' '}
-                    {isEn
+                    {isEn()
                       ? `${visibleNotes().length} ${visibleNotes().length === 1 ? 'note' : 'notes'} anchored`
                       : `已锚定 ${visibleNotes().length} 条批注`}
                   </span>
@@ -592,7 +615,7 @@ export function MarginaliaSection() {
                             <span>{note.time}</span>
                             <button
                               type="button"
-                              aria-label={isEn ? 'Edit note' : '编辑笔记'}
+                              aria-label={isEn() ? 'Edit note' : '编辑笔记'}
                               onClick={(e) => {
                                 e.stopPropagation()
                                 startEditing(note)
@@ -620,14 +643,14 @@ export function MarginaliaSection() {
                                   onClick={() => setEditingId(null)}
                                   class="sp-pressable cursor-pointer rounded px-2 py-1 text-[#59595E] hover:bg-black/[0.05]"
                                 >
-                                  {isEn ? 'Cancel' : '取消'}
+                                  {isEn() ? 'Cancel' : '取消'}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => saveEdit(note.id)}
                                   class="sp-pressable cursor-pointer rounded bg-[#1D1D1F] px-2.5 py-1 font-medium text-white"
                                 >
-                                  {isEn ? 'Save' : '保存'}
+                                  {isEn() ? 'Save' : '保存'}
                                 </button>
                               </div>
                             </div>
@@ -655,14 +678,14 @@ export function MarginaliaSection() {
                 fallback={
                   <div class="flex h-[84px] items-center justify-between rounded-[14px] bg-white/85 px-3.5 text-[12px] text-[#59595E] shadow-[0_0_0_0.5px_rgba(0,0,0,0.07)]">
                     <span class="flex items-center gap-1.5">
-                      <IconNote class="size-3.5" /> {isEn ? 'Editing note in card' : '正在编辑卡片内笔记'}
+                      <IconNote class="size-3.5" /> {isEn() ? 'Editing note in card' : '正在编辑卡片内笔记'}
                     </span>
                     <button
                       type="button"
                       onClick={() => setEditingId(null)}
                       class="sp-pressable cursor-pointer font-medium text-[#1D1D1F]"
                     >
-                      {isEn ? 'Cancel' : '取消编辑'}
+                      {isEn() ? 'Cancel' : '取消编辑'}
                     </button>
                   </div>
                 }
@@ -678,16 +701,16 @@ export function MarginaliaSection() {
                       setDraftNote(e.currentTarget.value)
                       if (savedNotice()) setSavedNotice('')
                     }}
-                    placeholder={isEn ? 'Write a margin note, or ask @alan…' : '记一笔页边注，或 @alan 提问…'}
+                    placeholder={isEn() ? 'Write a margin note, or ask @alan…' : '记一笔页边注，或 @alan 提问…'}
                     class="w-full bg-transparent text-[13px] text-[#1D1D1F] placeholder-[#636366] outline-none"
                   />
                   <div class="flex items-center justify-between text-[11px] text-[#59595E]">
                     <span class="truncate pr-2">
-                      {savedNotice() || (isEn ? 'Press Return to save in margin' : '按回车记在页边')}
+                      {savedNotice() || (isEn() ? 'Press Return to save in margin' : '按回车记在页边')}
                     </span>
                     <button
                       type="submit"
-                      aria-label={isEn ? 'Save note' : '保存批注'}
+                      aria-label={isEn() ? 'Save note' : '保存批注'}
                       class="sp-pressable flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#1D1D1F] text-white"
                     >
                       <IconArrowUp class="size-3.5" />
