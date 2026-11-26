@@ -2676,8 +2676,9 @@ mod tests {
             .map(|at| start + 1 + at)
             .unwrap_or(pump.len());
         let body = &pump[start..end];
-        assert!(body.contains("reading_clock_open("));
+        assert!(body.contains("reading_surface_open("));
         assert!(body.contains("state.pdf.is_some()"));
+        assert!(body.contains("Mode::Typeset"));
     }
 
     #[test]
