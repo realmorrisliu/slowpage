@@ -1546,6 +1546,16 @@ pub fn reader_place() -> crate::visit::ReadingPlace {
     SESSION.with(|session| session.borrow().reader.place.clone())
 }
 
+/// The typeset view has no page script. Contents and jumps still read this place.
+pub fn remember_place(href: &str, page: u32, offset: u32) {
+    SESSION.with(|session| {
+        let place = &mut session.borrow_mut().reader.place;
+        place.href = href.to_string();
+        place.page = page.max(1);
+        place.offset = offset;
+    });
+}
+
 thread_local! {
     static READING_EXCERPT: RefCell<String> = const { RefCell::new(String::new()) };
 }

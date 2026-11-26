@@ -1,5 +1,6 @@
 use crate::face::{self, Faces, ShapeOpts, BOLD_FACE, BOLD_ITALIC_FACE};
 use crate::hyphen::Hyphenator;
+use crate::interact::{self, ChapterText};
 use crate::kp::{self, BreakOpts, Item, Kind, MaxAdjustmentExceeded};
 use crate::parse::{self, Align, Block, Chunk, Paint};
 use crate::types::*;
@@ -64,6 +65,15 @@ impl Typesetter {
     }
 
     pub fn compose(&self, input: ChapterInput<'_>) -> Result<ChapterLayout, TypesetError> {
+        self.compose_box(input, None)
+    }
+
+    /// `page` is the view's point size. `None` keeps the paperback page.
+    pub fn compose_box(
+        &self,
+        input: ChapterInput<'_>,
+        page: Option<(f32, f32)>,
+    ) -> Result<ChapterLayout, TypesetError> {
         if input.bold_word_starts && !self.faces.has_bold() {
             return Err(TypesetError::Font(
                 "Bold Word Starts needs the Bold face".into(),
@@ -75,7 +85,33 @@ impl Typesetter {
             ));
         }
         let prepared = prepare(input.xhtml, input.stylesheet, input.font_size);
-        Ok(self.layout_prepared(&prepared, input.measure, input.tune, input.bold_word_starts))
+        Ok(self.layout_prepared(
+            &prepared,
+            input.measure,
+            input.tune,
+            input.bold_word_starts,
+            page,
+        ))
+    }
+
+    pub fn load_bold_at(
+        &mut self,
+        bold: &str,
+        bold_index: u32,
+        bold_italic: &str,
+        bold_italic_index: u32,
+    ) -> Result<(), TypesetError> {
+        self.faces
+            .load_bold(bold, bold_index)
+            .map_err(TypesetError::Font)?;
+        self.faces
+            .load_bold_italic(bold_italic, bold_italic_index)
+            .map_err(TypesetError::Font)?;
+        Ok(())
+    }
+
+    pub fn bold_ready(&self) -> bool {
+        self.faces.has_bold() && self.faces.has_bold_italic()
     }
 
     pub fn png(&self, layout: &ChapterLayout, page: u32) -> Option<Vec<u8>> {
@@ -94,7 +130,7 @@ impl Typesetter {
 
     fn paint_page(&self, layout: &ChapterLayout, page: u32) -> Option<Pixmap> {
         let page = layout.pages.get(page as usize)?;
-        let mut pixmap = Pixmap::new(PAPERBACK_WIDTH as u32, PAPERBACK_HEIGHT as u32)?;
+        let mut pixmap = Pixmap::new(layout.page_width(), layout.page_height())?;
         pixmap.fill(face::paper());
         for line in &page.lines {
             for glyph in &line.glyphs {
@@ -166,8 +202,9 @@ impl Typesetter {
         measure: Option<f32>,
         tune: BreakTune,
         bold_word_starts: bool,
+        page: Option<(f32, f32)>,
     ) -> ChapterLayout {
-        let frame = frame_for(prepared.cjk, measure);
+        let frame = frame_for(prepared.cjk, measure, page);
         let mut line_breaks = LineBreakOptions::default();
         line_breaks.strictness = Some(LineBreakStrictness::Strict);
         line_breaks.word_option = Some(LineBreakWordOption::Normal);
@@ -281,6 +318,13 @@ impl Typesetter {
                 top: frame.top,
                 bottom: frame.bottom,
             },
+            width: frame.width,
+            height: frame.height,
+            text: interact::index_blocks(
+                &prepared.blocks,
+                &prepared.trailing_anchors,
+                prepared.web_units,
+            ),
             report: LayoutReport {
                 page_count: pages.len() as u32,
                 word_gap_p95,
@@ -302,6 +346,9 @@ pub struct ChapterLayout {
     pages: Vec<Page>,
     report: LayoutReport,
     content: ContentBox,
+    width: f32,
+    height: f32,
+    text: ChapterText,
 }
 
 struct Page {
@@ -319,6 +366,110 @@ struct Line {
 impl ChapterLayout {
     pub fn report(&self) -> &LayoutReport {
         &self.report
+    }
+
+    pub fn page_width(&self) -> u32 {
+        self.width.round().max(1.0) as u32
+    }
+
+    pub fn page_height(&self) -> u32 {
+        self.height.round().max(1.0) as u32
+    }
+
+    pub fn plain(&self) -> &str {
+        self.text.plain()
+    }
+
+    pub fn anchor_sentence(&self, id: &str) -> Option<u32> {
+        self.text.anchor(id)
+    }
+
+    pub fn to_web(&self, sentence: u32) -> u32 {
+        self.text.to_web(sentence)
+    }
+
+    pub fn from_web(&self, shared: u32) -> u32 {
+        self.text.from_web(shared)
+    }
+
+    pub fn sentence_of(&self, caret: Caret) -> u32 {
+        self.text.locate(caret.node, caret.offset)
+    }
+
+    pub fn link_href(&self, page: u32, point: Point) -> Option<String> {
+        let caret = self.hit_test(page, point)?;
+        self.text
+            .link_at(self.sentence_of(caret))
+            .map(str::to_string)
+    }
+
+    pub fn sentence_on_page(&self, page: u32) -> u32 {
+        let Some(page) = self.pages.get(page as usize) else {
+            return 0;
+        };
+        for line in &page.lines {
+            for glyph in &line.glyphs {
+                if counts_for_sentence(glyph) {
+                    return self.text.locate(glyph.node, glyph.offset);
+                }
+            }
+        }
+        0
+    }
+
+    pub fn page_of_sentence(&self, sentence: u32) -> u32 {
+        let mut found = 0u32;
+        let mut seen = false;
+        for (index, page) in self.pages.iter().enumerate() {
+            for line in &page.lines {
+                for glyph in &line.glyphs {
+                    if !counts_for_sentence(glyph) {
+                        continue;
+                    }
+                    let at = self.text.locate(glyph.node, glyph.offset);
+                    if at <= sentence {
+                        found = index as u32;
+                        seen = true;
+                    } else if seen {
+                        return found;
+                    } else {
+                        return index as u32;
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    pub fn rects_for_sentence(&self, page: u32, start: u32, end: u32) -> Vec<SelectionRect> {
+        if end <= start {
+            return Vec::new();
+        }
+        let Some((start_node, start_offset)) = self.text.caret_at(start) else {
+            return Vec::new();
+        };
+        let Some((end_node, end_offset)) = self.text.caret_at(end) else {
+            return Vec::new();
+        };
+        self.selection_rects(
+            page,
+            CaretRange {
+                start: Caret {
+                    node: start_node,
+                    offset: start_offset,
+                    at_line_end: false,
+                },
+                end: Caret {
+                    node: end_node,
+                    offset: end_offset,
+                    at_line_end: false,
+                },
+            },
+        )
+    }
+
+    pub fn sentence_slice(&self, start: u32, end: u32) -> String {
+        self.text.slice(start, end)
     }
 
     pub fn content_box(&self, _page: u32) -> ContentBox {
@@ -484,6 +635,10 @@ impl ChapterLayout {
     }
 }
 
+fn counts_for_sentence(glyph: &PlacedGlyph) -> bool {
+    !glyph.hyphen && !(glyph.ch == ' ' && glyph.offset == 0)
+}
+
 fn caret_bar_at(line: &Line, x: f32) -> SelectionRect {
     SelectionRect {
         x,
@@ -496,13 +651,18 @@ fn caret_bar_at(line: &Line, x: f32) -> SelectionRect {
 struct Prepared {
     blocks: Vec<Block>,
     cjk: bool,
+    trailing_anchors: Vec<String>,
+    web_units: u32,
 }
 
 fn prepare(xhtml: &str, stylesheet: &str, font_size: Option<f32>) -> Prepared {
     let cjk = parse::cjk_book(xhtml);
+    let parsed = parse::parse_chapter(xhtml, stylesheet, cjk, font_size);
     Prepared {
-        blocks: parse::parse_chapter(xhtml, stylesheet, cjk, font_size),
+        blocks: parsed.blocks,
         cjk,
+        trailing_anchors: parsed.trailing_anchors,
+        web_units: parsed.web_units,
     }
 }
 
@@ -511,25 +671,35 @@ struct Frame {
     top: f32,
     bottom: f32,
     measure: f32,
+    width: f32,
+    height: f32,
 }
 
-fn frame_for(cjk: bool, measure: Option<f32>) -> Frame {
-    let side = PAPERBACK_WIDTH * if cjk { 0.11 } else { 0.14 };
-    let measure = measure.unwrap_or(PAPERBACK_WIDTH - side * 2.0).max(1.0);
-    if cjk {
-        Frame {
-            left: side,
-            top: 72.0,
-            bottom: PAPERBACK_HEIGHT - 64.0,
-            measure,
-        }
+fn frame_for(cjk: bool, measure: Option<f32>, page: Option<(f32, f32)>) -> Frame {
+    let (width, height) = page.unwrap_or((PAPERBACK_WIDTH, PAPERBACK_HEIGHT));
+    let width = width.max(1.0);
+    let height = height.max(1.0);
+    let side = width * if cjk { 0.11 } else { 0.14 };
+    let measure = measure.unwrap_or(width - side * 2.0).max(1.0);
+    let (top_nom, bottom_nom): (f32, f32) = if cjk { (72.0, 64.0) } else { (88.0, 72.0) };
+    let paperback = page.is_none();
+    let top = if paperback {
+        top_nom
     } else {
-        Frame {
-            left: side,
-            top: 88.0,
-            bottom: PAPERBACK_HEIGHT - 72.0,
-            measure,
-        }
+        top_nom.min(height * 0.2)
+    };
+    let bottom_inset = if paperback {
+        bottom_nom
+    } else {
+        bottom_nom.min(height * 0.16)
+    };
+    Frame {
+        left: side,
+        top,
+        bottom: (height - bottom_inset).max(top + 1.0),
+        measure,
+        width,
+        height,
     }
 }
 
@@ -2006,6 +2176,23 @@ mod tests {
         let hello: Vec<usize> = segmenter.segment_str("Hello World").collect();
         assert_eq!(hello, vec![0, 6, 11]);
     }
+
+    #[test]
+    fn an_explicit_paperback_uses_the_same_insets() {
+        for cjk in [false, true] {
+            let plain = frame_for(cjk, None, None);
+            let sized = frame_for(cjk, None, Some((PAPERBACK_WIDTH, PAPERBACK_HEIGHT)));
+            assert_eq!(plain.width, sized.width);
+            assert_eq!(plain.height, sized.height);
+            assert!((plain.left - sized.left).abs() < 0.01);
+            assert!((plain.top - sized.top).abs() < 0.01);
+            assert!((plain.bottom - sized.bottom).abs() < 0.01);
+            assert!((plain.measure - sized.measure).abs() < 0.01);
+        }
+        let short = frame_for(false, None, Some((320.0, 200.0)));
+        assert!((short.top - 40.0).abs() < 0.01);
+        assert!((short.bottom - 168.0).abs() < 0.01);
+    }
 }
 
 #[cfg(test)]
@@ -2052,7 +2239,7 @@ mod layout_tests {
                     continue;
                 }
                 let indent = if seg_i == 0 { block.paint.indent } else { 0.0 };
-                let measure = frame_for(false, None).measure;
+                let measure = frame_for(false, None, None).measure;
                 let mut lengths = vec![measure as f64; 512];
                 lengths[0] = (measure as f64 - indent as f64).max(1.0);
                 let allow = icu_breaks(segmenter, seg);

@@ -50,7 +50,18 @@ define_class!(
         fn show_contents(&self, _sender: Option<&AnyObject>) {
             let titles = {
                 let state = self.ivars().state.borrow();
-                let titles = if let Some(web) = state.web.as_ref() {
+                let titles = if state.mode == Mode::Typeset {
+                    state
+                        .typeset
+                        .as_ref()
+                        .map(|session| {
+                            crate::visit::contents_marks(session.title(), session.spine())
+                                .into_iter()
+                                .map(|mark| mark.title)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                } else if let Some(web) = state.web.as_ref() {
                     crate::visit::contents_marks(&web.book_title, &web.spine())
                         .into_iter()
                         .map(|mark| mark.title)
@@ -107,9 +118,10 @@ define_class!(
                             state.chrome.bar_gen.get(),
                             state.chrome.bar_dirty.get(),
                         ),
-                        crate::reading::reading_clock_open(
+                        crate::reading::reading_surface_open(
                             state.web.is_some(),
                             state.pdf.is_some(),
+                            state.mode == Mode::Typeset,
                         ),
                     )
                 };
@@ -390,6 +402,23 @@ fn point_in(view: &StageView, event: &NSEvent) -> (f64, f64) {
     (point.x, point.y)
 }
 
+struct TypesetMotion {
+    slide: crate::visit::Slide,
+    started: Instant,
+    ease: bool,
+}
+
+enum TypesetPaint {
+    Rest,
+    Ease(f64),
+    Slide {
+        from: usize,
+        to: usize,
+        shift: f64,
+        forward: bool,
+    },
+}
+
 struct PdfMotion {
     slide: crate::visit::Slide,
     started: Instant,
@@ -456,6 +485,8 @@ struct State {
     anchor_payload: String,
     web: Option<crate::web::WebChapter>,
     typeset: Option<crate::typeset_page::Session>,
+    typeset_motion: Option<TypesetMotion>,
+    typeset_fragment: String,
     web_pages: usize,
     trim_id: String,
     declared: Option<(f64, f64)>,
@@ -950,6 +981,12 @@ impl State {
                 if let Some(web) = &self.web {
                     web.word_starts_changed();
                 }
+                if self.mode == Mode::Typeset {
+                    if let Some(session) = self.typeset.as_mut() {
+                        let _ = session.set_bold(on);
+                    }
+                    self.sync_typeset_counts();
+                }
             }
             "epub" => {
                 self.mode = match args.as_str() {
@@ -971,11 +1008,7 @@ impl State {
                 }
                 let delta = dispatched.delta;
                 if self.mode == Mode::Typeset {
-                    if let Some(session) = self.typeset.as_mut() {
-                        session.turn(delta as i32);
-                        self.epub_page = session.page() as usize;
-                        self.web_pages = session.page_count() as usize;
-                    }
+                    self.typeset_turn(delta as i32);
                 } else if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
                         web.turn(delta as i32, crate::visit::TurnSource::User);
@@ -1054,6 +1087,9 @@ impl State {
         if let Some(web) = &self.web {
             web.clear_find();
         }
+        if let Some(session) = self.typeset.as_mut() {
+            session.set_find(Vec::new());
+        }
         crate::web::set_find_boot("[]");
     }
 
@@ -1077,7 +1113,9 @@ impl State {
         if done {
             return false;
         }
-        if self.web.is_some() {
+        if self.mode == Mode::Typeset {
+            self.pump_typeset_find()
+        } else if self.web.is_some() {
             self.pump_epub_find()
         } else if self.pdf.is_some() {
             self.pump_pdf_find()
@@ -1289,6 +1327,12 @@ impl State {
 
     fn jump_place(&mut self, href: &str, page: u32, offset: u32, end: u32) {
         self.find_current = Some((page, offset, end));
+        if self.mode == Mode::Typeset {
+            self.typeset_jump(href, offset);
+            self.paint_typeset_hits();
+            self.publish();
+            return;
+        }
         let here = self.visit_place();
         let dest = crate::visit::ReadingPlace {
             href: href.to_string(),
@@ -1327,6 +1371,14 @@ impl State {
     }
 
     fn reading_excerpt(&mut self) -> String {
+        if self.mode == Mode::Typeset {
+            let (plain, offset) = self
+                .typeset
+                .as_ref()
+                .map(|session| (session.plain().to_string(), session.held()))
+                .unwrap_or_default();
+            return excerpt_window(&plain, offset);
+        }
         let place = self.visit_place();
         if place.href.is_empty() {
             let index = place.page.saturating_sub(1) as usize;
@@ -1376,6 +1428,16 @@ impl State {
     }
 
     fn visit_place(&self) -> crate::visit::ReadingPlace {
+        if self.mode == Mode::Typeset {
+            if let Some(session) = &self.typeset {
+                let local = session.held();
+                return crate::visit::ReadingPlace {
+                    href: session.href().to_string(),
+                    page: session.page().saturating_add(1),
+                    offset: session.shared_offset(local),
+                };
+            }
+        }
         if let Some(web) = &self.web {
             let place = crate::web::reader_place();
             if !place.href.is_empty() {
@@ -1494,6 +1556,10 @@ impl State {
     }
 
     fn apply_chapter(&mut self, tag: isize) {
+        if self.mode == Mode::Typeset {
+            self.apply_typeset_chapter(tag);
+            return;
+        }
         let Some(web) = self.web.as_ref() else {
             self.apply_pdf_outline(tag);
             return;
@@ -2158,6 +2224,8 @@ impl State {
         self.book_gen = self.book_gen.wrapping_add(1);
         crate::web::set_reader_back(None);
         self.pdf_motion = None;
+        self.typeset_motion = None;
+        self.typeset_fragment.clear();
         self.pdf_drag = 0.0;
         self.pdf_glide = None;
         self.pdf_card = (0.0, 0.0);
@@ -2196,12 +2264,25 @@ impl State {
             );
             let opened_typeset = if debug {
                 match crate::typeset_page::Session::open(&book.path, &href) {
-                    Ok(session) => {
+                    Ok(mut session) => {
+                        if offset > 0 {
+                            let local = session.local_offset(offset);
+                            session.show_sentence(local);
+                        } else if page > 1 {
+                            session.show_page(page.saturating_sub(1));
+                            session.hold(0);
+                        }
+                        let shown = session.page().saturating_add(1);
                         self.web_pages = session.page_count() as usize;
                         self.epub_page = session.page() as usize;
+                        self.page_total = Some(session.page_count());
+                        self.pdf_saved_page = shown;
+                        self.pdf_saved_offset = offset;
                         self.declared = session.declared();
                         self.shown_at = Some(Instant::now());
+                        crate::web::remember_place(session.href(), shown, offset);
                         self.typeset = Some(session);
+                        self.typeset_motion = None;
                         true
                     }
                     Err(err) => {
@@ -2293,6 +2374,8 @@ impl State {
             web.dismiss();
         }
         self.typeset = None;
+        self.typeset_motion = None;
+        self.typeset_fragment.clear();
     }
 
     fn bind_swipe(&self) {
@@ -2311,6 +2394,7 @@ impl State {
         {
             schedule_chrome_pump(view, 0.016);
         }
+        self.reflow_typeset();
         let Some(frame) = self.typeset_raster_frame() else {
             return;
         };
@@ -2322,27 +2406,115 @@ impl State {
         };
         let (kx, ky, kw, kh) = fitted.key();
         self.placed = Some((kx, ky, kw, kh, self.trim_id.clone()));
+        let paint = self.pump_typeset_motion(frame.w);
         let Some(ctx) = current_context() else {
             return;
         };
         let ctx = &*ctx;
-        let preview = self.typeset_preview(frame);
-        let Some(session) = self.typeset.as_mut() else {
-            return;
-        };
-        let Some(image) = session.marked(preview) else {
-            return;
-        };
+        match paint {
+            TypesetPaint::Rest => {
+                let preview = self.typeset_preview(frame);
+                let image = {
+                    let Some(session) = self.typeset.as_mut() else {
+                        return;
+                    };
+                    session.marked(preview)
+                };
+                let Some(image) = image else {
+                    return;
+                };
+                self.blit_typeset(ctx, &image, frame.x, frame.y, frame.w, frame.h, None);
+            }
+            TypesetPaint::Ease(shift) => {
+                let page = self
+                    .typeset
+                    .as_ref()
+                    .map(|session| session.page())
+                    .unwrap_or(0);
+                let image = self
+                    .typeset
+                    .as_mut()
+                    .and_then(|session| session.image(page));
+                if let Some(image) = image {
+                    self.blit_typeset(
+                        ctx,
+                        &image,
+                        frame.x + shift,
+                        frame.y,
+                        frame.w,
+                        frame.h,
+                        Some(frame),
+                    );
+                }
+            }
+            TypesetPaint::Slide {
+                from,
+                to,
+                shift,
+                forward,
+            } => {
+                let (departing, incoming) = {
+                    let Some(session) = self.typeset.as_mut() else {
+                        return;
+                    };
+                    (session.image(from as u32), session.image(to as u32))
+                };
+                let step = if forward { frame.w } else { -frame.w };
+                if let Some(image) = departing {
+                    self.blit_typeset(
+                        ctx,
+                        &image,
+                        frame.x - shift,
+                        frame.y,
+                        frame.w,
+                        frame.h,
+                        Some(frame),
+                    );
+                }
+                if let Some(image) = incoming {
+                    self.blit_typeset(
+                        ctx,
+                        &image,
+                        frame.x - shift + step,
+                        frame.y,
+                        frame.w,
+                        frame.h,
+                        Some(frame),
+                    );
+                }
+            }
+        }
+        if self.typeset_motion.is_some() {
+            schedule_chrome_pump(view, 0.016);
+        }
+    }
+
+    fn blit_typeset(
+        &self,
+        ctx: &CGContext,
+        image: &superreader_typeset::PageRaster,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        clip: Option<crate::typeset_page::PageFrame>,
+    ) {
         let bytes = bitmap::flip_rows(image.width, &image.rgba);
         let Some(cg) = bitmap::rgba_image(image.width, image.height, bytes, true) else {
             return;
         };
-        let rect = NSRect::new(
-            NSPoint::new(frame.x, frame.y),
-            NSSize::new(frame.w, frame.h),
-        );
+        let rect = NSRect::new(NSPoint::new(x, y), NSSize::new(w, h));
         unsafe {
             CGContext::save_g_state(Some(ctx));
+            if let Some(frame) = clip {
+                CGContext::clip_to_rect(
+                    Some(ctx),
+                    objc2_core_foundation::CGRect::new(
+                        objc2_core_foundation::CGPoint::new(frame.x, frame.y),
+                        objc2_core_foundation::CGSize::new(frame.w, frame.h),
+                    ),
+                );
+            }
             CGContext::set_alpha(Some(ctx), crate::shelf_pass::body_alpha());
             CGContext::draw_image(Some(ctx), rect, Some(&cg));
             CGContext::restore_g_state(Some(ctx));
@@ -2368,14 +2540,18 @@ impl State {
         })
     }
 
-    /// The paperback raster, letterboxed in the trim's page slot.
+    /// The painted page, letterboxed in the trim's page slot.
     fn typeset_raster_frame(&self) -> Option<crate::typeset_page::PageFrame> {
         let outer = self.typeset_frame()?;
-        Some(crate::typeset_page::contained_frame(
-            outer,
-            superreader_typeset::PAPERBACK_WIDTH,
-            superreader_typeset::PAPERBACK_HEIGHT,
-        ))
+        let (width, height) = self
+            .typeset
+            .as_ref()
+            .map(|session| session.page_size())
+            .unwrap_or((
+                superreader_typeset::PAPERBACK_WIDTH,
+                superreader_typeset::PAPERBACK_HEIGHT,
+            ));
+        Some(crate::typeset_page::contained_frame(outer, width, height))
     }
 
     fn typeset_preview(
@@ -2386,8 +2562,16 @@ impl State {
         if !crate::visit::click_is_drag(end.0 - start.0, end.1 - start.1) {
             return None;
         }
-        let from = crate::typeset_page::layout_point(frame, start.0, start.1)?;
-        let to = crate::typeset_page::layout_point(frame, end.0, end.1)?;
+        let (page_w, page_h) = self
+            .typeset
+            .as_ref()
+            .map(|session| session.page_size())
+            .unwrap_or((
+                superreader_typeset::PAPERBACK_WIDTH,
+                superreader_typeset::PAPERBACK_HEIGHT,
+            ));
+        let from = crate::typeset_page::layout_point_on(frame, start.0, start.1, page_w, page_h)?;
+        let to = crate::typeset_page::layout_point_on(frame, end.0, end.1, page_w, page_h)?;
         Some((from, to))
     }
 
@@ -2409,20 +2593,100 @@ impl State {
                 crate::visit::PageEdge::None => {}
             }
         }
-        let Some(session) = self.typeset.as_mut() else {
+        let (page_w, page_h) = self
+            .typeset
+            .as_ref()
+            .map(|session| session.page_size())
+            .unwrap_or((
+                superreader_typeset::PAPERBACK_WIDTH,
+                superreader_typeset::PAPERBACK_HEIGHT,
+            ));
+        let link = if click {
+            self.typeset.as_ref().and_then(|session| {
+                let point =
+                    crate::typeset_page::layout_point_on(frame, end.0, end.1, page_w, page_h)?;
+                session.link_at(point)
+            })
+        } else {
+            None
+        };
+        if let Some(raw) = link {
+            self.follow_typeset_link(&raw);
             return;
+        }
+        let mark = {
+            let Some(session) = self.typeset.as_mut() else {
+                return;
+            };
+            if click {
+                if let Some(point) =
+                    crate::typeset_page::layout_point_on(frame, end.0, end.1, page_w, page_h)
+                {
+                    session.place_caret(point);
+                }
+                None
+            } else if let (Some(from), Some(to)) = (
+                crate::typeset_page::layout_point_on(frame, start.0, start.1, page_w, page_h),
+                crate::typeset_page::layout_point_on(frame, end.0, end.1, page_w, page_h),
+            ) {
+                session.select_span(from, to);
+                session.selection_mark()
+            } else {
+                None
+            }
         };
         if click {
-            if let Some(point) = crate::typeset_page::layout_point(frame, end.0, end.1) {
-                session.place_caret(point);
-            }
-        } else if let (Some(from), Some(to)) = (
-            crate::typeset_page::layout_point(frame, start.0, start.1),
-            crate::typeset_page::layout_point(frame, end.0, end.1),
-        ) {
-            session.select_span(from, to);
+            self.clear_selection();
+        } else if let Some(mark) = mark {
+            let rects = mark
+                .rects
+                .iter()
+                .map(|rect| spike_library::margin::MeasuredRect {
+                    x: f64::from(rect.x),
+                    y: f64::from(rect.y),
+                    w: f64::from(rect.width),
+                    h: f64::from(rect.height),
+                })
+                .collect::<Vec<_>>();
+            let href = self
+                .typeset
+                .as_ref()
+                .map(|session| session.href().to_string())
+                .unwrap_or_default();
+            let page = self
+                .typeset
+                .as_ref()
+                .map(|session| session.page().saturating_add(1))
+                .unwrap_or(1);
+            let generation = self
+                .typeset
+                .as_ref()
+                .map(|session| session.generation())
+                .unwrap_or(0);
+            self.anchor = Some(Anchor::Epub {
+                spine_href: href.clone(),
+                start: mark.start,
+                end: mark.end,
+                text: mark.text.clone(),
+            });
+            self.note = spike_library::margin::passage_from(spike_library::margin::Selection {
+                book: self.book_path.clone(),
+                gen: self.book_gen,
+                page,
+                spine: href,
+                start: mark.start,
+                end: mark.end,
+                text: mark.text,
+                quads: spike_library::margin::measured_quads(&rects),
+                text_right: f64::from(mark.text_right),
+            });
+            self.selection_gen = generation;
+            self.selection_view = f64::from(page_w);
+            self.selection_view_h = f64::from(page_h);
+        } else {
+            self.clear_selection();
         }
-        self.epub_page = session.page() as usize;
+        self.sync_typeset_counts();
         self.publish();
     }
 
@@ -3025,6 +3289,9 @@ impl State {
     }
 
     fn margin_measures(&self) -> Value {
+        if self.mode == Mode::Typeset {
+            return self.typeset_measures();
+        }
         let Some(web) = &self.web else {
             return Value::Array(Vec::new());
         };
@@ -3071,8 +3338,8 @@ impl State {
                 )
             })
             .unwrap_or((0.0, 0.0, 0, 0));
-        let reflow = self.mode == Mode::WebKit
-            && spike_library::margin::selection_reflowed(
+        let reflow = match self.mode {
+            Mode::WebKit => spike_library::margin::selection_reflowed(
                 self.selection_view,
                 self.selection_view_h,
                 self.selection_gen,
@@ -3080,7 +3347,12 @@ impl State {
                 view_h,
                 gen,
                 hold,
-            );
+            ),
+            Mode::Typeset => self.typeset.as_ref().is_some_and(|session| {
+                self.selection_gen > 0 && session.generation() != self.selection_gen
+            }),
+            _ => false,
+        };
         let stale = self.note.as_ref().is_some_and(|note| {
             moving
                 || page == 0
@@ -3291,6 +3563,26 @@ impl State {
                     f64::from(ph),
                 )
             }
+            Mode::Typeset => {
+                let session = self.typeset.as_ref();
+                let spine = session
+                    .map(|session| session.href().to_string())
+                    .unwrap_or_default();
+                let page = session
+                    .map(|session| session.page().saturating_add(1))
+                    .unwrap_or(0);
+                let (width, height) = session
+                    .map(|session| session.page_size())
+                    .unwrap_or((0.0, 0.0));
+                (
+                    book,
+                    spine,
+                    page,
+                    self.typeset_motion.is_some(),
+                    f64::from(width),
+                    f64::from(height),
+                )
+            }
             Mode::WebKit => {
                 let spine = self.web.as_ref().map(|web| web.href()).unwrap_or_default();
                 let (moving, page_w, page_h) = self
@@ -3313,6 +3605,485 @@ impl State {
             }
             _ => (book, String::new(), 0, false, 0.0, 0.0),
         }
+    }
+
+    fn sync_typeset_counts(&mut self) {
+        let Some(session) = self.typeset.as_ref() else {
+            return;
+        };
+        self.epub_page = session.page() as usize;
+        self.web_pages = session.page_count() as usize;
+        self.page_total = Some(session.page_count());
+    }
+
+    fn typeset_turn(&mut self, delta: i32) {
+        let Some(session) = self.typeset.as_ref() else {
+            return;
+        };
+        let page = session.page();
+        let count = session.page_count();
+        if let Some(motion) = self.typeset_motion.as_mut() {
+            if !motion.ease {
+                crate::visit::queue_slide(&mut motion.slide, delta);
+            }
+            return;
+        }
+        if let Some(slide) =
+            crate::visit::begin_slide(self.book_gen, count as usize, page as usize, delta)
+        {
+            self.typeset_motion = Some(TypesetMotion {
+                slide,
+                started: Instant::now(),
+                ease: false,
+            });
+        } else if delta != 0 && count > 0 {
+            self.typeset_motion = Some(TypesetMotion {
+                slide: crate::visit::Slide {
+                    book: self.book_gen,
+                    from: page as usize,
+                    to: page as usize,
+                    queued: 0,
+                    forward: delta > 0,
+                },
+                started: Instant::now(),
+                ease: true,
+            });
+        }
+    }
+
+    fn pump_typeset_motion(&mut self, width: f64) -> TypesetPaint {
+        let Some(motion) = &self.typeset_motion else {
+            return TypesetPaint::Rest;
+        };
+        let elapsed = motion
+            .started
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u32::MAX)) as u32;
+        if motion.ease {
+            if elapsed >= superreader_typeset::SLIDE_MS {
+                self.typeset_motion = None;
+                return TypesetPaint::Rest;
+            }
+            let forward = motion.slide.forward;
+            return TypesetPaint::Ease(superreader_typeset::blocked_ease(elapsed, width, forward));
+        }
+        let slide = motion.slide;
+        match crate::visit::slide_at(&slide, elapsed, self.book_gen, width) {
+            crate::visit::SlideAt::Moving { page, shift } => TypesetPaint::Slide {
+                from: page,
+                to: slide.to,
+                shift,
+                forward: slide.forward,
+            },
+            crate::visit::SlideAt::Landed { page, queued } => {
+                self.typeset_motion = None;
+                self.commit_typeset_page(page as u32);
+                if queued != 0 {
+                    self.typeset_turn(queued);
+                }
+                TypesetPaint::Rest
+            }
+            crate::visit::SlideAt::Dropped => {
+                self.typeset_motion = None;
+                TypesetPaint::Rest
+            }
+        }
+    }
+
+    fn commit_typeset_page(&mut self, page: u32) {
+        let (sentence, href, shown) = {
+            let Some(session) = self.typeset.as_mut() else {
+                return;
+            };
+            session.show_page(page);
+            let sentence = superreader_typeset::turn_sentence(false, session.sentence_near());
+            session.hold(sentence);
+            (
+                sentence,
+                session.href().to_string(),
+                session.page().saturating_add(1),
+            )
+        };
+        self.sync_typeset_counts();
+        self.write_typeset_turn(shown, sentence, &href);
+        self.publish();
+    }
+
+    fn reflow_typeset(&mut self) {
+        if self.typeset_motion.is_some() {
+            return;
+        }
+        let Some(frame) = self.typeset_frame() else {
+            return;
+        };
+        let before = self
+            .typeset
+            .as_ref()
+            .map(|session| (session.page(), session.held()));
+        let changed = self
+            .typeset
+            .as_mut()
+            .is_some_and(|session| session.reflow(frame.w as f32, frame.h as f32));
+        if !changed {
+            return;
+        }
+        let (page, held, href) = {
+            let Some(session) = self.typeset.as_ref() else {
+                return;
+            };
+            (session.page(), session.held(), session.href().to_string())
+        };
+        self.sync_typeset_counts();
+        if before.is_some_and(|(old_page, old_held)| old_page != page || old_held != held) {
+            let shared = self.typeset_shared(held);
+            self.write_typeset_place(page.saturating_add(1), shared, &href);
+            self.publish();
+        }
+    }
+
+    fn typeset_shared(&self, sentence: u32) -> u32 {
+        self.typeset
+            .as_ref()
+            .map(|session| session.shared_offset(sentence))
+            .unwrap_or(sentence)
+    }
+
+    fn write_typeset_turn(&mut self, page: u32, sentence: u32, href: &str) {
+        let shared = self.typeset_shared(sentence);
+        let (page, offset) =
+            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, shared);
+        self.write_typeset_place(page, offset, href);
+    }
+
+    fn write_typeset_place(&mut self, page: u32, offset: u32, href: &str) {
+        if page == 0 || self.book_path.is_empty() || href.is_empty() {
+            return;
+        }
+        self.pdf_saved_page = page;
+        self.pdf_saved_offset = offset;
+        let book = self.book_path.clone();
+        let total = self.page_total;
+        let _ = crate::settings::record_progress(
+            &crate::settings::path(),
+            &book,
+            page,
+            total,
+            offset,
+            href,
+        );
+        crate::web::remember_place(href, page, offset);
+    }
+
+    fn typeset_reveal(&mut self, offset: u32) {
+        self.typeset_motion = None;
+        let (page, held, href) = {
+            let Some(session) = self.typeset.as_mut() else {
+                return;
+            };
+            let local = session.local_offset(offset);
+            session.show_sentence(local);
+            (
+                session.page().saturating_add(1),
+                session.held(),
+                session.href().to_string(),
+            )
+        };
+        self.sync_typeset_counts();
+        let shared = self.typeset_shared(held);
+        self.write_typeset_place(page, shared, &href);
+        self.paint_typeset_hits();
+    }
+
+    fn typeset_chapter(&mut self, index: usize, offset: u32) {
+        self.typeset_motion = None;
+        let fragment = std::mem::take(&mut self.typeset_fragment);
+        let href = self
+            .typeset
+            .as_ref()
+            .and_then(|session| session.spine().get(index).cloned());
+        let Some(href) = href else {
+            return;
+        };
+        let opened = self
+            .typeset
+            .as_mut()
+            .and_then(|session| session.open_href(&href, offset).ok());
+        if opened.is_none() {
+            eprintln!("typeset chapter did not open: {href}");
+            let (page, sentence, shown) = {
+                let Some(session) = self.typeset.as_ref() else {
+                    return;
+                };
+                (
+                    session.page().saturating_add(1),
+                    session.held(),
+                    session.href().to_string(),
+                )
+            };
+            let shared = self.typeset_shared(sentence);
+            self.write_typeset_place(page, shared, &shown);
+            return;
+        }
+        if offset == 0 && !fragment.is_empty() {
+            if let Some(session) = self.typeset.as_mut() {
+                if let Some(sentence) = session.anchor_sentence(&fragment) {
+                    session.show_sentence(sentence);
+                }
+            }
+        }
+        let (page, sentence, shown) = {
+            let Some(session) = self.typeset.as_ref() else {
+                return;
+            };
+            (
+                session.page().saturating_add(1),
+                session.held(),
+                session.href().to_string(),
+            )
+        };
+        self.clear_selection();
+        self.sync_typeset_counts();
+        let shared = self.typeset_shared(sentence);
+        self.write_typeset_place(page, shared, &shown);
+        self.paint_typeset_hits();
+    }
+
+    fn typeset_jump(&mut self, href: &str, offset: u32) {
+        let here = self.visit_place();
+        let dest = crate::visit::ReadingPlace {
+            href: href.to_string(),
+            page: 1,
+            offset,
+        };
+        let spine = self
+            .typeset
+            .as_ref()
+            .map(|session| session.spine().to_vec())
+            .unwrap_or_default();
+        let step = crate::visit::place_jump(&here, &dest, &spine, crate::web::reader_back());
+        crate::web::set_reader_back(step.back);
+        self.typeset_motion = None;
+        match step.go {
+            crate::visit::ChapterMove::Reveal { offset } => self.typeset_reveal(offset),
+            crate::visit::ChapterMove::Chapter { index, offset } => {
+                self.typeset_chapter(index, offset)
+            }
+            _ => {}
+        }
+    }
+
+    fn follow_typeset_link(&mut self, raw: &str) {
+        let (shown, spine) = {
+            let Some(session) = self.typeset.as_ref() else {
+                return;
+            };
+            (session.href().to_string(), session.spine().to_vec())
+        };
+        let Some(dest) = crate::visit::resolve_link(raw, &shown, &spine) else {
+            return;
+        };
+        let sentence = if dest.fragment.is_empty() {
+            0
+        } else if dest.same {
+            let Some(shared) = self.typeset.as_ref().and_then(|session| {
+                let at = session.anchor_sentence(&dest.fragment)?;
+                Some(session.shared_offset(at))
+            }) else {
+                return;
+            };
+            shared
+        } else {
+            self.typeset_fragment = dest.fragment.clone();
+            0
+        };
+        self.typeset_motion = None;
+        self.jump_place(&dest.href, 1, sentence, sentence);
+    }
+
+    fn apply_typeset_chapter(&mut self, tag: isize) {
+        let (spine, title, href, page, offset) = {
+            let Some(session) = self.typeset.as_ref() else {
+                return;
+            };
+            let local = session.held();
+            (
+                session.spine().to_vec(),
+                session.title().to_string(),
+                session.href().to_string(),
+                session.page().saturating_add(1),
+                session.shared_offset(local),
+            )
+        };
+        crate::web::remember_place(&href, page, offset);
+        let marks = crate::visit::contents_marks(&title, &spine);
+        let decided = crate::web::turn_chapter(tag, &marks, &spine, &href);
+        if !decided.accepted {
+            return;
+        }
+        spike_library::column::arm_nav(spike_library::column::NavIntent::Toc);
+        self.typeset_motion = None;
+        match decided.go.unwrap_or(crate::visit::ChapterMove::Stay) {
+            crate::visit::ChapterMove::Reveal { offset } => self.typeset_reveal(offset),
+            crate::visit::ChapterMove::Chapter { index, offset } => {
+                self.typeset_chapter(index, offset)
+            }
+            _ => {}
+        }
+        self.publish();
+    }
+
+    fn pump_typeset_find(&mut self) -> bool {
+        let loaded = self
+            .find
+            .as_ref()
+            .is_some_and(|job| job.ready && !job.spine.is_empty());
+        if !loaded {
+            let path = self.book_path.clone();
+            match spike_epub::pack(&path) {
+                Ok(packed) => {
+                    let spine = packed
+                        .spine
+                        .iter()
+                        .filter_map(|href| {
+                            let bytes = packed.files.get(href)?;
+                            let raw = String::from_utf8_lossy(bytes);
+                            Some((href.clone(), raw.into_owned()))
+                        })
+                        .collect::<Vec<_>>();
+                    if let Some(job) = self.find.as_mut() {
+                        job.total = spine.len();
+                        job.ready = true;
+                        job.spine = spine;
+                        if job.total == 0 {
+                            job.empty_units = 1;
+                            job.total = 1;
+                            job.next = 1;
+                        }
+                    }
+                }
+                Err(_) => return self.fail_find(),
+            }
+        }
+        let index = self.find.as_ref().map(|job| job.next).unwrap_or(0);
+        let total = self.find.as_ref().map(|job| job.total).unwrap_or(0);
+        if index >= total {
+            return true;
+        }
+        let unit = self
+            .find
+            .as_ref()
+            .and_then(|job| job.spine.get(index).cloned());
+        let Some((href, text)) = unit else {
+            return true;
+        };
+        let query = self
+            .find
+            .as_ref()
+            .map(|job| job.query.clone())
+            .unwrap_or_default();
+        let chapter = superreader_typeset::chapter_text(&text);
+        let plain = chapter.plain().to_string();
+        let mut hits = if plain.trim().is_empty() {
+            Vec::new()
+        } else {
+            spike_library::column::hits_in(
+                &plain,
+                &query,
+                index as u32 + 1,
+                &href,
+                spike_library::column::IndexKind::Chars,
+            )
+        };
+        for hit in &mut hits {
+            hit.start = chapter.to_web(hit.start);
+            hit.end = chapter.to_web(hit.end);
+            hit.kind = spike_library::column::IndexKind::Utf16;
+        }
+        if let Some(job) = self.find.as_mut() {
+            if plain.trim().is_empty() {
+                job.empty_units = job.empty_units.saturating_add(1);
+            } else {
+                job.text_units = job.text_units.saturating_add(1);
+                job.hits.extend(hits);
+            }
+            job.next += 1;
+        }
+        self.paint_typeset_hits();
+        true
+    }
+
+    fn paint_typeset_hits(&mut self) {
+        let shown = self
+            .typeset
+            .as_ref()
+            .map(|session| spike_epub::normalize_href(session.href()))
+            .unwrap_or_default();
+        let current = self.find_current;
+        let hits = self
+            .find
+            .as_ref()
+            .map(|job| {
+                job.hits
+                    .iter()
+                    .filter(|hit| spike_epub::normalize_href(&hit.href) == shown)
+                    .map(|hit| {
+                        (
+                            hit.start,
+                            hit.end,
+                            current.is_some_and(|(_, start, end)| {
+                                hit.start == start && hit.end == end
+                            }),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(session) = self.typeset.as_mut() {
+            let spans = hits
+                .into_iter()
+                .map(|(start, end, current)| crate::typeset_page::FindSpan {
+                    start: session.local_offset(start),
+                    end: session.local_offset(end),
+                    current,
+                })
+                .collect();
+            session.set_find(spans);
+        }
+    }
+
+    fn typeset_measures(&self) -> Value {
+        if self.typeset_motion.is_some() {
+            return Value::Array(Vec::new());
+        }
+        let Some(session) = self.typeset.as_ref() else {
+            return Value::Array(Vec::new());
+        };
+        let href = session.href().to_string();
+        let page = session.page().saturating_add(1);
+        let notes = crate::form::load_spine(&self.book_path, &href).unwrap_or_default();
+        Value::Array(
+            notes
+                .iter()
+                .filter_map(|note| {
+                    let (rects, right) = session.note_rects(note.start, note.end);
+                    if rects.is_empty() || right <= 0.0 {
+                        return None;
+                    }
+                    Some(json!({
+                        "id": note.id,
+                        "page": page,
+                        "text_right": f64::from(right),
+                        "rects": rects.iter().map(|rect| json!({
+                            "x": f64::from(rect.x),
+                            "y": f64::from(rect.y),
+                            "w": f64::from(rect.width),
+                            "h": f64::from(rect.height),
+                        })).collect::<Vec<_>>(),
+                    }))
+                })
+                .collect(),
+        )
     }
 
     fn current_page(&self) -> usize {
@@ -3589,6 +4360,8 @@ impl Stage {
             anchor_payload: String::new(),
             web: None,
             typeset: None,
+            typeset_motion: None,
+            typeset_fragment: String::new(),
             web_pages: 1,
             trim_id: crate::settings::load(&crate::settings::path()),
             declared: None,

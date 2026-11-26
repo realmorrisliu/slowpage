@@ -445,6 +445,11 @@ pub fn reading_clock_open(web: bool, pdf: bool) -> bool {
     web || pdf
 }
 
+/// The glyph-run page is a reader too. The clock stays on while it is showing.
+pub fn reading_surface_open(web: bool, pdf: bool, typeset: bool) -> bool {
+    reading_clock_open(web, pdf) || typeset
+}
+
 /// The first status for a shell book. The open-time title is the other path.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReadingChrome {
@@ -2518,6 +2523,8 @@ mod tests {
         assert!(reader_shown(reading_clock_open(false, true), false));
         assert!(!reader_shown(reading_clock_open(false, true), true));
         assert!(!reading_clock_open(false, false));
+        assert!(reading_surface_open(false, false, true));
+        assert!(!reading_surface_open(false, false, false));
 
         clock = step_chrome(clock, chrome_sample(0, false, true, 16, false));
         assert_eq!(clock.alpha, 1.0);
@@ -2669,8 +2676,9 @@ mod tests {
             .map(|at| start + 1 + at)
             .unwrap_or(pump.len());
         let body = &pump[start..end];
-        assert!(body.contains("reading_clock_open("));
+        assert!(body.contains("reading_surface_open("));
         assert!(body.contains("state.pdf.is_some()"));
+        assert!(body.contains("Mode::Typeset"));
     }
 
     #[test]
