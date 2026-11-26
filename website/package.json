@@ -1,0 +1,31 @@
+{
+  "name": "slowpage-website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && node scripts/prerender.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solidjs/web": "^2.0.3",
+    "@ui-sdk/core": "0.1.0-beta.16",
+    "@ui-sdk/solid": "0.1.0-beta.16",
+    "solid-js": "^2.0.3",
+    "solid-liquid-glass": "github:realmorrisliu/solid-liquid-glass"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@cloudflare/vite-plugin": "^2.0.0-rc.1",
+    "@solidjs/babel-plugin": "^2.0.0",
+    "@solidjs/vite-plugin": "^3.0.1",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^26.6.6",
+    "cf": "1.0.0-rc.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.0.0"
+  }
+}

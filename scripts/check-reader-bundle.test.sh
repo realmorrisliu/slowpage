@@ -141,26 +141,26 @@ if [ -z "$dmg_sign_line" ] || [ -z "$mounted_line" ] || [ "$dmg_sign_line" -ge "
   exit 1
 fi
 
-svg="$root/assets/icon/Slowpage.svg"
-if [ ! -f "$svg" ]; then
-  echo "missing Slowpage.svg" >&2
+icon="$root/assets/icon/Slowpage.png"
+if [ ! -f "$icon" ]; then
+  echo "missing Slowpage.png" >&2
   exit 1
 fi
 if [ -e "$root/assets/app-icon/AppIcon-1024.png" ]; then
   echo "D3 icon is still in the tree" >&2
   exit 1
 fi
-if ! grep -F -q 'assets/icon/Slowpage.svg' "$root/spikes/shell/nsh.json"; then
-  echo "nsh.json does not point at Slowpage.svg" >&2
+if ! grep -F -q 'assets/icon/Slowpage.png' "$root/spikes/shell/nsh.json"; then
+  echo "nsh.json does not point at Slowpage.png" >&2
   exit 1
 fi
 if command -v sha256sum >/dev/null 2>&1; then
-  actual="$(sha256sum "$svg" | awk '{print $1}')"
+  actual="$(sha256sum "$icon" | awk '{print $1}')"
 else
-  actual="$(shasum -a 256 "$svg" | awk '{print $1}')"
+  actual="$(shasum -a 256 "$icon" | awk '{print $1}')"
 fi
-if [ "$actual" != "7022c4ce34184f20bc46ec202fdc2fab98ac71bf989bc886224de9e2759d2af3" ]; then
-  echo "Slowpage.svg sha256 is $actual" >&2
+if [ "$actual" != "cfc5e6f5b741ca3f2d9b3e3565be7cc3fe10e7c4189db45147d94715cbd06dd3" ]; then
+  echo "Slowpage.png sha256 is $actual" >&2
   exit 1
 fi
 
