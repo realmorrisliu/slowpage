@@ -35,6 +35,10 @@ pub struct Piece {
     pub node: u32,
     pub text: String,
     pub paint: Paint,
+    /// The enclosing `a` href, when this text is inside one.
+    pub link: Option<String>,
+    /// Element ids whose first text is this piece.
+    pub anchors: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -326,6 +330,9 @@ struct Frame {
     tag: String,
     class: String,
     id: String,
+    href: String,
+    /// This frame's id has not yet been attached to a text piece.
+    id_pending: bool,
     paint: Paint,
     prev_tag: String,
     container: bool,
@@ -415,10 +422,26 @@ impl<'a> Parser<'a> {
                     let text = decode_entities(&xhtml[start..i]);
                     if !text.is_empty() && !self.stack.is_empty() {
                         let paint = self.stack.last().unwrap().paint.clone();
+                        let link = self
+                            .stack
+                            .iter()
+                            .rev()
+                            .find(|frame| !frame.href.is_empty())
+                            .map(|frame| frame.href.clone());
+                        let mut anchors = Vec::new();
+                        for frame in self.stack.iter_mut().rev() {
+                            if frame.id_pending {
+                                frame.id_pending = false;
+                                anchors.push(frame.id.clone());
+                            }
+                        }
+                        anchors.reverse();
                         self.chunks.push(Chunk::Text(Piece {
                             node: self.node,
                             text,
                             paint,
+                            link,
+                            anchors,
                         }));
                         self.node += 1;
                     }
@@ -444,6 +467,8 @@ impl<'a> Parser<'a> {
                 tag: tag.to_string(),
                 class,
                 id,
+                href: String::new(),
+                id_pending: false,
                 paint: self.fallback.clone(),
                 prev_tag: String::new(),
                 container: true,
@@ -468,10 +493,17 @@ impl<'a> Parser<'a> {
         if !container {
             self.finish_chunks();
         }
+        let href = if tag == "a" {
+            attr(attrs, "href").unwrap_or_default()
+        } else {
+            String::new()
+        };
         self.stack.push(Frame {
             tag: tag.to_string(),
             class,
-            id,
+            id: id.clone(),
+            href,
+            id_pending: !id.is_empty(),
             paint,
             prev_tag: String::new(),
             container,

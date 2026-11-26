@@ -4,6 +4,10 @@
 //! caret bar and the selection rects the crate already returns. The paper
 //! is Books-white and the ink is the recorded `#1c1915`. A missing face or
 //! a chapter the crate cannot open leaves the page on WKWebView.
+//!
+//! Page turns, the stored sentence, contents, links, notes, bookmarks,
+//! find, live reflow, and Bold Word Starts stay on this view. The default
+//! reader is still WKWebView.
 
 use std::path::Path;
 
@@ -65,15 +69,26 @@ pub fn contained_frame(outer: PageFrame, raster_w: f32, raster_h: f32) -> PageFr
 
 /// A stage point inside the fitted page, in the layout's top-down space.
 pub fn layout_point(frame: PageFrame, x: f64, y: f64) -> Option<Point> {
+    layout_point_on(frame, x, y, PAPERBACK_WIDTH, PAPERBACK_HEIGHT)
+}
+
+/// `page_w` and `page_h` are the layout the raster was painted from.
+pub fn layout_point_on(
+    frame: PageFrame,
+    x: f64,
+    y: f64,
+    page_w: f32,
+    page_h: f32,
+) -> Option<Point> {
     if !crate::visit::point_in_box(x, y, frame.x, frame.y, frame.w, frame.h) {
         return None;
     }
-    if frame.w <= 0.0 || frame.h <= 0.0 {
+    if frame.w <= 0.0 || frame.h <= 0.0 || page_w <= 0.0 || page_h <= 0.0 {
         return None;
     }
     Some(Point {
-        x: ((x - frame.x) / frame.w) as f32 * PAPERBACK_WIDTH,
-        y: ((y - frame.y) / frame.h) as f32 * PAPERBACK_HEIGHT,
+        x: ((x - frame.x) / frame.w) as f32 * page_w,
+        y: ((y - frame.y) / frame.h) as f32 * page_h,
     })
 }
 
@@ -93,16 +108,45 @@ struct FacePaths {
     latin_index: u32,
     italic_index: u32,
     cjk_index: u32,
+    bold: Option<(String, u32)>,
+    bold_italic: Option<(String, u32)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FindSpan {
+    pub start: u32,
+    pub end: u32,
+    pub current: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SelectionMark {
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub rects: Vec<SelectionRect>,
+    pub text_right: f32,
 }
 
 pub struct Session {
     setter: Typesetter,
     layout: ChapterLayout,
+    epub_path: String,
+    href: String,
+    spine: Vec<String>,
+    xhtml: String,
+    stylesheet: String,
     title: String,
     declared: Option<(f64, f64)>,
     page: u32,
+    held: u32,
+    flow: Option<(f32, f32)>,
+    bold: bool,
+    bold_ready: bool,
+    generation: u64,
     caret: Option<Caret>,
     range: Option<CaretRange>,
+    find: Vec<FindSpan>,
     clean: Option<(u32, PageRaster)>,
 }
 
@@ -113,7 +157,7 @@ impl Session {
         })?;
         let packed = spike_epub::pack(epub_path)?;
         let loaded = open_chapter(epub_path, href, &packed.href)?;
-        let setter = Typesetter::open_at(
+        let mut setter = Typesetter::open_at(
             &faces.latin,
             faces.latin_index,
             &faces.italic,
@@ -122,26 +166,229 @@ impl Session {
             faces.cjk_index,
         )
         .map_err(|err| err.to_string())?;
-        let layout = setter
-            .compose(ChapterInput {
-                xhtml: &loaded.xhtml,
-                stylesheet: &loaded.stylesheet,
-                base_href: &loaded.href,
-                measure: None,
-                font_size: None,
-                tune: BreakTune::default(),
-                bold_word_starts: false,
-            })
-            .map_err(|err| err.to_string())?;
+        let bold_ready = if let (Some((bold, bold_index)), Some((italic, italic_index))) =
+            (&faces.bold, &faces.bold_italic)
+        {
+            setter
+                .load_bold_at(bold, *bold_index, italic, *italic_index)
+                .is_ok()
+        } else {
+            false
+        };
+        let href = spine_href(&packed.spine, &loaded.href);
+        let bold = bold_ready && crate::settings::bold_word_starts(&crate::settings::path());
+        let layout = compose_chapter(
+            &setter,
+            &loaded.xhtml,
+            &loaded.stylesheet,
+            &href,
+            None,
+            bold,
+        )?;
         Ok(Self {
             setter,
             layout,
+            epub_path: epub_path.to_string(),
+            href,
+            spine: packed.spine,
+            xhtml: loaded.xhtml,
+            stylesheet: loaded.stylesheet,
             title: packed.title,
             declared: packed.declared_page,
             page: 0,
+            held: 0,
+            flow: None,
+            bold,
+            bold_ready,
+            generation: 1,
             caret: None,
             range: None,
+            find: Vec::new(),
             clean: None,
+        })
+    }
+
+    pub fn href(&self) -> &str {
+        &self.href
+    }
+
+    pub fn spine(&self) -> &[String] {
+        &self.spine
+    }
+
+    pub fn plain(&self) -> &str {
+        self.layout.plain()
+    }
+
+    pub fn held(&self) -> u32 {
+        self.held
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn page_size(&self) -> (f32, f32) {
+        (
+            self.layout.page_width() as f32,
+            self.layout.page_height() as f32,
+        )
+    }
+
+    pub fn anchor_sentence(&self, id: &str) -> Option<u32> {
+        self.layout.anchor_sentence(id)
+    }
+
+    pub fn link_at(&self, point: Point) -> Option<String> {
+        self.layout.link_href(self.page, point)
+    }
+
+    /// The sentence under the same sample the page script uses: about a
+    /// fifth of the way across and a fifth of the way down.
+    pub fn sentence_near(&self) -> u32 {
+        let (width, height) = self.page_size();
+        let point = Point {
+            x: width * 0.20,
+            y: height * 0.18,
+        };
+        self.layout
+            .hit_test(self.page, point)
+            .map(|caret| self.layout.sentence_of(caret))
+            .unwrap_or_else(|| self.layout.sentence_on_page(self.page))
+    }
+
+    pub fn show_page(&mut self, page: u32) {
+        let count = self.page_count();
+        self.page = if count == 0 { 0 } else { page.min(count - 1) };
+        self.caret = None;
+        self.range = None;
+        self.clean = None;
+    }
+
+    pub fn show_sentence(&mut self, sentence: u32) {
+        self.page = self.layout.page_of_sentence(sentence);
+        self.held = sentence;
+        self.caret = None;
+        self.range = None;
+        self.clean = None;
+    }
+
+    pub fn open_href(&mut self, href: &str, sentence: u32) -> Result<(), String> {
+        let loaded = open_chapter(&self.epub_path, href, href)?;
+        let href = spine_href(&self.spine, &loaded.href);
+        let layout = compose_chapter(
+            &self.setter,
+            &loaded.xhtml,
+            &loaded.stylesheet,
+            &href,
+            self.flow,
+            self.bold && self.bold_ready,
+        )?;
+        self.layout = layout;
+        self.xhtml = loaded.xhtml;
+        self.stylesheet = loaded.stylesheet;
+        self.href = href;
+        self.clean = None;
+        self.show_sentence(sentence);
+        self.generation = self.generation.saturating_add(1);
+        Ok(())
+    }
+
+    /// Reflow to the fitted page. The sentence near the top of the column stays.
+    pub fn reflow(&mut self, width: f32, height: f32) -> bool {
+        if width < 1.0 || height < 1.0 {
+            return false;
+        }
+        let next = (width.round(), height.round());
+        if self.flow == Some(next) {
+            return false;
+        }
+        let sentence = self.held;
+        let page = self.page;
+        let previous = self.flow;
+        self.flow = Some(next);
+        if self.compose_current().is_err() {
+            self.flow = previous;
+            return false;
+        }
+        self.keep_place(sentence, page);
+        self.generation = self.generation.saturating_add(1);
+        true
+    }
+
+    pub fn set_bold(&mut self, on: bool) -> bool {
+        let on = on && self.bold_ready;
+        if self.bold == on {
+            return false;
+        }
+        let sentence = self.held;
+        let page = self.page;
+        let previous = self.bold;
+        self.bold = on;
+        if self.compose_current().is_err() {
+            self.bold = previous;
+            return false;
+        }
+        self.keep_place(sentence, page);
+        self.generation = self.generation.saturating_add(1);
+        true
+    }
+
+    pub fn hold(&mut self, sentence: u32) {
+        self.held = sentence;
+    }
+
+    fn keep_place(&mut self, sentence: u32, page: u32) {
+        if sentence > 0 {
+            self.show_sentence(sentence);
+        } else {
+            self.show_page(page);
+            self.held = 0;
+        }
+    }
+
+    pub fn note_rects(&self, start: u32, end: u32) -> (Vec<SelectionRect>, f32) {
+        let rects = self.layout.rects_for_sentence(self.page, start, end);
+        let right = rects
+            .iter()
+            .map(|rect| rect.x + rect.width)
+            .fold(0.0_f32, f32::max);
+        (rects, right)
+    }
+
+    pub fn set_find(&mut self, spans: Vec<FindSpan>) {
+        self.find = spans;
+        self.clean = None;
+    }
+
+    pub fn selection_mark(&self) -> Option<SelectionMark> {
+        let range = self.range?;
+        let mut start = self.layout.sentence_of(range.start);
+        let mut end = self.layout.sentence_of(range.end);
+        if end < start {
+            std::mem::swap(&mut start, &mut end);
+        }
+        if end <= start {
+            return None;
+        }
+        let text = self.layout.sentence_slice(start, end);
+        if text.trim().is_empty() || text.chars().count() != (end - start) as usize {
+            return None;
+        }
+        let rects = self.layout.rects_for_sentence(self.page, start, end);
+        let text_right = rects
+            .iter()
+            .map(|rect| rect.x + rect.width)
+            .fold(0.0_f32, f32::max);
+        if rects.is_empty() || text_right <= 0.0 {
+            return None;
+        }
+        Some(SelectionMark {
+            start,
+            end,
+            text,
+            rects,
+            text_right,
         })
     }
 
@@ -164,11 +411,34 @@ impl Session {
     pub fn turn(&mut self, delta: i32) {
         let next = turned_page(self.page, self.page_count(), delta);
         if next != self.page {
-            self.page = next;
-            self.caret = None;
-            self.range = None;
-            self.clean = None;
+            self.show_page(next);
+            self.held = self.layout.sentence_on_page(self.page);
         }
+    }
+
+    pub fn image(&mut self, page: u32) -> Option<PageRaster> {
+        if self
+            .clean
+            .as_ref()
+            .is_some_and(|(shown, _)| *shown == page && self.find.is_empty())
+        {
+            return self.clean.as_ref().map(|(_, image)| image.clone());
+        }
+        self.setter.raster(&self.layout, page)
+    }
+
+    fn compose_current(&mut self) -> Result<(), String> {
+        let layout = compose_chapter(
+            &self.setter,
+            &self.xhtml,
+            &self.stylesheet,
+            &self.href,
+            self.flow,
+            self.bold && self.bold_ready,
+        )?;
+        self.layout = layout;
+        self.clean = None;
+        Ok(())
     }
 
     pub fn place_caret(&mut self, point: Point) {
@@ -198,6 +468,14 @@ impl Session {
     /// The clean page, with a drag preview or the committed caret and selection.
     pub fn marked(&mut self, preview: Option<(Point, Point)>) -> Option<PageRaster> {
         let mut image = self.clean_page()?;
+        for span in &self.find {
+            for rect in self
+                .layout
+                .rects_for_sentence(self.page, span.start, span.end)
+            {
+                tint_rect(&mut image, rect);
+            }
+        }
         let rects = self.mark_rects(preview);
         for rect in rects {
             tint_rect(&mut image, rect);
@@ -243,6 +521,39 @@ impl Session {
     }
 }
 
+fn compose_chapter(
+    setter: &Typesetter,
+    xhtml: &str,
+    stylesheet: &str,
+    href: &str,
+    flow: Option<(f32, f32)>,
+    bold: bool,
+) -> Result<ChapterLayout, String> {
+    setter
+        .compose_box(
+            ChapterInput {
+                xhtml,
+                stylesheet,
+                base_href: href,
+                measure: None,
+                font_size: None,
+                tune: BreakTune::default(),
+                bold_word_starts: bold,
+            },
+            flow,
+        )
+        .map_err(|err| err.to_string())
+}
+
+fn spine_href(spine: &[String], loaded: &str) -> String {
+    let want = spike_epub::normalize_href(loaded);
+    spine
+        .iter()
+        .find(|href| spike_epub::normalize_href(href) == want)
+        .cloned()
+        .unwrap_or(want)
+}
+
 fn open_chapter(
     epub_path: &str,
     href: &str,
@@ -280,6 +591,10 @@ fn env_faces() -> Option<FacePaths> {
     let latin = env_path("SPIKE_TYPESET_LATIN")?;
     let italic = env_path("SPIKE_TYPESET_ITALIC")?;
     let cjk = env_path("SPIKE_TYPESET_CJK")?;
+    let bold =
+        env_path("SPIKE_TYPESET_BOLD").map(|path| (path, env_index("SPIKE_TYPESET_BOLD_INDEX")));
+    let bold_italic = env_path("SPIKE_TYPESET_BOLD_ITALIC")
+        .map(|path| (path, env_index("SPIKE_TYPESET_BOLD_ITALIC_INDEX")));
     Some(FacePaths {
         latin,
         italic,
@@ -287,6 +602,8 @@ fn env_faces() -> Option<FacePaths> {
         latin_index: env_index("SPIKE_TYPESET_LATIN_INDEX"),
         italic_index: env_index("SPIKE_TYPESET_ITALIC_INDEX"),
         cjk_index: env_index("SPIKE_TYPESET_CJK_INDEX"),
+        bold,
+        bold_italic,
     })
 }
 
@@ -313,6 +630,8 @@ fn fixture_faces() -> Option<FacePaths> {
     if !latin.is_file() || !italic.is_file() || !cjk.is_file() {
         return None;
     }
+    let bold = dir.join("EBGaramond-Bold.ttf");
+    let bold_italic = dir.join("EBGaramond-BoldItalic.ttf");
     Some(FacePaths {
         latin: latin.display().to_string(),
         italic: italic.display().to_string(),
@@ -320,13 +639,26 @@ fn fixture_faces() -> Option<FacePaths> {
         latin_index: 0,
         italic_index: 0,
         cjk_index: 0,
+        bold: bold.is_file().then(|| (bold.display().to_string(), 0)),
+        bold_italic: bold_italic
+            .is_file()
+            .then(|| (bold_italic.display().to_string(), 0)),
     })
+}
+
+fn optional_file(path: &Option<(String, u32)>) -> bool {
+    match path {
+        None => true,
+        Some((path, _)) => Path::new(path).is_file(),
+    }
 }
 
 fn files_ok(paths: &FacePaths) -> bool {
     Path::new(&paths.latin).is_file()
         && Path::new(&paths.italic).is_file()
         && Path::new(&paths.cjk).is_file()
+        && optional_file(&paths.bold)
+        && optional_file(&paths.bold_italic)
 }
 
 #[cfg(target_os = "macos")]
@@ -346,6 +678,16 @@ fn reader_faces() -> Option<FacePaths> {
         &["songti"],
         &["bold"],
     )?;
+    let bold = system_face(
+        &["Iowan Old Style.ttc", "IowanOldStyle.ttc"],
+        &["iowan", "bold"],
+        &["italic"],
+    );
+    let bold_italic = system_face(
+        &["Iowan Old Style.ttc", "IowanOldStyle.ttc"],
+        &["iowan", "bold", "italic"],
+        &[],
+    );
     Some(FacePaths {
         latin: latin.0,
         latin_index: latin.1,
@@ -353,6 +695,8 @@ fn reader_faces() -> Option<FacePaths> {
         italic_index: italic.1,
         cjk: cjk.0,
         cjk_index: cjk.1,
+        bold,
+        bold_italic,
     })
 }
 
