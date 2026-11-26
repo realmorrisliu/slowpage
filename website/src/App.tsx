@@ -103,11 +103,14 @@ export function App() {
     const onHash = () => {
       const target = window.location.hash.slice(1)
       if (SECTION_HASHES.has(target)) alignAnchor(target)
+      else pendingAnchor = null
     }
     const onAnchorClick = (event: MouseEvent) => {
       const anchor = (event.target as Element | null)?.closest('a[href^="#"]')
-      const target = anchor?.getAttribute('href')?.slice(1)
+      if (!anchor) return
+      const target = anchor.getAttribute('href')?.slice(1)
       if (target && SECTION_HASHES.has(target)) alignAnchor(target)
+      else pendingAnchor = null
     }
     const onCancelScroll = () => {
       pendingAnchor = null
