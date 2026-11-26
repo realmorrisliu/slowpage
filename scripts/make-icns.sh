@@ -1,9 +1,9 @@
 #!/bin/bash
-# Rasterize the Slowpage SVG into AppIcon.icns. 16 and 32 @1x are the small variant.
+# Rasterize or downsample the Slowpage icon PNG/SVG into AppIcon.icns.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-src="${1:-$root/assets/icon/Slowpage.svg}"
+src="${1:-$root/assets/icon/Slowpage.png}"
 out="${2:-$root/dist/AppIcon.icns}"
 
 if [ ! -f "$src" ]; then
@@ -11,9 +11,9 @@ if [ ! -f "$src" ]; then
   exit 1
 fi
 case "$src" in
-  *.svg) ;;
+  *.png|*.svg) ;;
   *)
-    echo "app icon must be an SVG: $src" >&2
+    echo "app icon must be a PNG or SVG: $src" >&2
     exit 1
     ;;
 esac

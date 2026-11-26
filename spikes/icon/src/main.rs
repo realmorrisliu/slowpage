@@ -14,15 +14,26 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1);
-    let svg_path = args
+    let src_path = args
         .next()
-        .ok_or("usage: spike-icon <svg> <iconset> <preview>")?;
+        .ok_or("usage: spike-icon <png|svg> <iconset> <preview>")?;
     let iconset = args
         .next()
-        .ok_or("usage: spike-icon <svg> <iconset> <preview>")?;
+        .ok_or("usage: spike-icon <png|svg> <iconset> <preview>")?;
     let preview = args
         .next()
-        .ok_or("usage: spike-icon <svg> <iconset> <preview>")?;
-    let svg = std::fs::read_to_string(&svg_path).map_err(|err| format!("{svg_path}: {err}"))?;
-    spike_icon::write_set(&svg, &PathBuf::from(iconset), &PathBuf::from(preview))
+        .ok_or("usage: spike-icon <png|svg> <iconset> <preview>")?;
+    let iconset_path = PathBuf::from(iconset);
+    let preview_path = PathBuf::from(preview);
+    if src_path
+        .rsplit('.')
+        .next()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+    {
+        let bytes = std::fs::read(&src_path).map_err(|err| format!("{src_path}: {err}"))?;
+        spike_icon::write_set_png(&bytes, &iconset_path, &preview_path)
+    } else {
+        let svg = std::fs::read_to_string(&src_path).map_err(|err| format!("{src_path}: {err}"))?;
+        spike_icon::write_set(&svg, &iconset_path, &preview_path)
+    }
 }
