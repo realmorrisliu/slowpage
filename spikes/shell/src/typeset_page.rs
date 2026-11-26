@@ -305,7 +305,8 @@ fn env_index(key: &str) -> u32 {
 }
 
 fn fixture_faces() -> Option<FacePaths> {
-    let dir = Path::new(&spike_report::fixtures_dir());
+    let fixtures = spike_report::fixtures_dir();
+    let dir = Path::new(&fixtures);
     let latin = dir.join("EBGaramond-Regular.ttf");
     let italic = dir.join("EBGaramond-Italic.ttf");
     let cjk = dir.join("NotoSerifCJKsc-Regular.otf");
