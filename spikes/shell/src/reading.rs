@@ -440,6 +440,11 @@ pub fn reader_shown(book_open: bool, on_library: bool) -> bool {
     book_open && !on_library
 }
 
+/// An open PDF has no web view. The reading clock still uses that book.
+pub fn reading_clock_open(web: bool, pdf: bool) -> bool {
+    web || pdf
+}
+
 /// The first status for a shell book. The open-time title is the other path.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReadingChrome {
@@ -1286,7 +1291,7 @@ const SCRIPT: &str = r#"
       if (source === "restore") post({ frames: [], chase: true });
       else {
         pendingUser = true;
-        post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [] });
+        post({ kind: "turn", edge: delta < 0 ? "prev" : "next", frames: [], sentence: 0 });
         easeOut(delta);
       }
       return;
@@ -1757,12 +1762,18 @@ const SCRIPT: &str = r#"
       post();
     });
   }
-  if (window.__spikeFragment) {
+  function postFragment(waited) {
     const stored = String(window.__spikeFragment);
     const id = decodeHref(stored);
-    const at = id == null ? null : textOffsetIn(document.getElementById(id));
+    const el = id == null ? null : document.getElementById(id);
+    const at = el ? textOffsetIn(el) : null;
+    if (el && at == null && !waited) {
+      requestAnimationFrame(function () { postFragment(true); });
+      return;
+    }
     post({ kind: "link", raw: '#' + (id == null ? stored : id), load: pageLoad, offset: at == null ? 0 : at, measured: at != null, auto: true });
   }
+  if (window.__spikeFragment) postFragment(false);
   requestAnimationFrame(function () { post(); });
 })();
 "#;
@@ -1842,6 +1853,46 @@ mod tests {
     }
 
     #[test]
+    fn a_fragment_waits_for_a_rect_then_posts_the_offset() {
+        let script = page_script("en");
+        let dir = std::env::temp_dir();
+        let page = dir.join(format!(
+            "superreader-fragment-wait-{}.js",
+            std::process::id()
+        ));
+        let drive = dir.join(format!(
+            "superreader-fragment-wait-drive-{}.js",
+            std::process::id()
+        ));
+        std::fs::write(&page, &script).unwrap();
+        std::fs::write(&drive, super::FRAGMENT_WAIT_DRIVE).unwrap();
+        let ran = std::process::Command::new("node")
+            .arg(&drive)
+            .arg(&page)
+            .output()
+            .expect("node");
+        let _ = std::fs::remove_file(&page);
+        let _ = std::fs::remove_file(&drive);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&ran.stdout)));
+        assert_eq!(v["waited"]["before"], 0);
+        assert_eq!(v["waited"]["measured"], true);
+        assert_eq!(v["waited"]["offset"], 2);
+        assert_eq!(v["waited"]["raw"], "#fn1");
+        assert_eq!(v["waited"]["auto"], true);
+        assert_eq!(v["ready"]["measured"], true);
+        assert_eq!(v["ready"]["offset"], 2);
+        assert_eq!(v["ready"]["sync"], 1);
+        assert_eq!(v["missing"]["measured"], false);
+        assert_eq!(v["missing"]["sync"], 1);
+    }
+
+    #[test]
     fn space_and_shift_space_use_the_existing_page_turn() {
         let script = page_script("zh");
         assert!(script.contains("event.key === \" \""));
@@ -1893,6 +1944,7 @@ mod tests {
         assert_eq!(v["back"]["edge"], "prev");
         assert_eq!(v["back"]["page"], 1);
         assert_eq!(v["back"]["sentence"], 0);
+        assert!(v["back"]["caret"].as_u64().unwrap_or(0) > 0);
         assert_eq!(v["back"]["frames"], 0);
         assert_eq!(v["shift"]["at80"], "translate3d(24px,0,0)");
         assert_eq!(v["shift"]["scroll"], 0);
@@ -2462,6 +2514,10 @@ mod tests {
         }
         assert_eq!(clock.alpha, 1.0);
         assert_eq!(clock.away_ms, None);
+        assert!(reading_clock_open(false, true));
+        assert!(reader_shown(reading_clock_open(false, true), false));
+        assert!(!reader_shown(reading_clock_open(false, true), true));
+        assert!(!reading_clock_open(false, false));
 
         clock = step_chrome(clock, chrome_sample(0, false, true, 16, false));
         assert_eq!(clock.alpha, 1.0);
@@ -2605,6 +2661,16 @@ mod tests {
         let waiting = enter_reading_chrome(true, false, 0.0, title_alpha(0));
         assert_eq!(waiting.title_opacity, 1.0);
         assert!(!waiting.chrome_shared);
+        let pump = include_str!("stage.rs");
+        let start = pump.find("fn pump_lights").expect("pump");
+        let rest = &pump[start + 1..];
+        let end = rest
+            .find("\n        fn ")
+            .map(|at| start + 1 + at)
+            .unwrap_or(pump.len());
+        let body = &pump[start..end];
+        assert!(body.contains("reading_clock_open("));
+        assert!(body.contains("state.pdf.is_some()"));
     }
 
     #[test]
@@ -3314,6 +3380,131 @@ console.log(JSON.stringify({
 }));
 "#;
 
+const FRAGMENT_WAIT_DRIVE: &str = r#"
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const raf = [];
+const posts = [];
+global.__now = 0;
+global.requestAnimationFrame = (fn) => { raf.push(fn); return raf.length; };
+global.performance = { now: () => global.__now };
+global.getComputedStyle = () => ({
+  position: 'static', lineHeight: '32px', paddingLeft: '0px', paddingRight: '0px',
+  fontFamily: 'serif', fontSize: '16px', fontVariant: 'normal', fontVariantNumeric: 'normal',
+  display: 'block', visibility: 'visible'
+});
+let glyph = { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+function sized(w, h) { return { left: 0, right: w, top: 0, bottom: h, width: w, height: h }; }
+const textNode = {
+  nodeType: 3, textContent: '  Hello', nodeValue: '  Hello',
+  parentElement: null
+};
+function el() {
+  return {
+    id: '', lang: '', style: { setProperty(){}, transform: '', cssText: '' },
+    textContent: '', innerHTML: '', innerText: '',
+    scrollLeft: 0, scrollWidth: 400,
+    appendChild(){}, prepend(){}, remove(){},
+    querySelector(){ return null; },
+    querySelectorAll(){ return []; },
+    addEventListener(){},
+    getBoundingClientRect(){ return sized(400, 800); },
+    closest(){ return null; },
+    getContext(){ return null; },
+    parentElement: null, parentNode: null, nodeType: 1, nodeValue: ''
+  };
+}
+const body = el();
+body.innerText = '  Hello';
+textNode.parentElement = body;
+const target = el();
+target.id = 'fn1';
+const rootEl = el();
+function walker(list) {
+  let i = -1;
+  return {
+    currentNode: null,
+    nextNode() {
+      i += 1;
+      this.currentNode = list[i] || null;
+      return i < list.length;
+    }
+  };
+}
+let present = true;
+global.document = {
+  createElement(){ return el(); },
+  documentElement: rootEl,
+  head: el(),
+  body,
+  querySelectorAll(){ return []; },
+  querySelector(){ return null; },
+  getElementById(id){ return present && id === 'fn1' ? target : null; },
+  createTreeWalker(root){
+    if (root === target || root === body) return walker([textNode]);
+    return walker([]);
+  },
+  addEventListener(){},
+  caretRangeFromPoint(){ return null; },
+  createRange(){
+    return {
+      setStart(){}, setEnd(){}, selectNodeContents(){},
+      getClientRects(){ return []; },
+      getBoundingClientRect(){ return glyph; }
+    };
+  }
+};
+global.NodeFilter = { SHOW_TEXT: 4 };
+global.addEventListener = () => {};
+global.window = global;
+window.innerWidth = 400;
+window.innerHeight = 800;
+window.__spikeLoad = 7;
+window.webkit = { messageHandlers: { spike: { postMessage(raw){ posts.push(JSON.parse(raw)); } } } };
+function links() { return posts.filter((post) => post.kind === 'link'); }
+function boot() {
+  raf.length = 0;
+  posts.length = 0;
+  window.__spikeFragment = 'fn1';
+  eval(script);
+}
+glyph = sized(0, 0);
+present = true;
+boot();
+const before = links().length;
+glyph = sized(8, 12);
+const batch = raf.splice(0, raf.length);
+for (const fn of batch) fn(0);
+const waitedLink = links()[0] || null;
+glyph = sized(8, 12);
+present = true;
+boot();
+const readyLink = links()[0] || null;
+const readySync = links().length;
+present = false;
+boot();
+const missingLink = links()[0] || null;
+const missingSync = links().length;
+console.log(JSON.stringify({
+  waited: {
+    before,
+    measured: waitedLink && waitedLink.measured,
+    offset: waitedLink && waitedLink.offset,
+    raw: waitedLink && waitedLink.raw,
+    auto: waitedLink && waitedLink.auto
+  },
+  ready: {
+    measured: readyLink && readyLink.measured,
+    offset: readyLink && readyLink.offset,
+    sync: readySync
+  },
+  missing: {
+    measured: missingLink && missingLink.measured,
+    sync: missingSync
+  }
+}));
+"#;
+
 const EDGE_EASE_DRIVE: &str = r#"
 const fs = require('fs');
 const script = fs.readFileSync(process.argv[2], 'utf8');
@@ -3419,7 +3610,28 @@ function sample() {
 }
 function turns() { return posts.filter((post) => post.kind === 'turn'); }
 
-boot(); spy();
+const caretNode = { nodeType: 3, textContent: 'sentence', nodeValue: 'sentence', parentElement: { closest(){ return null; } } };
+const plainCaret = document.caretRangeFromPoint;
+const plainWalker = document.createTreeWalker;
+let caretHits = 0;
+document.caretRangeFromPoint = () => {
+  caretHits += 1;
+  return { startContainer: caretNode, startOffset: 4 };
+};
+document.createTreeWalker = () => {
+  let n = 0;
+  return {
+    currentNode: caretNode,
+    nextNode() {
+      n += 1;
+      this.currentNode = caretNode;
+      return n === 1;
+    },
+  };
+};
+boot();
+caretHits = 0;
+spy();
 const backAnswers = press('ArrowLeft', false);
 const backEase = sample();
 const backTurns = turns();
@@ -3430,7 +3642,10 @@ const back = Object.assign({
   page: backTurns[0] && backTurns[0].page,
   sentence: backTurns[0] && backTurns[0].sentence,
   frames: backTurns[0] && backTurns[0].frames && backTurns[0].frames.length,
+  caret: caretHits,
 }, backEase);
+document.caretRangeFromPoint = plainCaret;
+document.createTreeWalker = plainWalker;
 
 boot(); spy();
 press(' ', true);
