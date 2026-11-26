@@ -21,6 +21,8 @@ export function ClosingSection() {
           <img
             src="/slowpage-icon.png"
             alt="Slowpage"
+            width="80"
+            height="80"
             class="mx-auto size-20 drop-shadow-[0_12px_28px_rgba(29,29,31,0.14)]"
           />
         </div>

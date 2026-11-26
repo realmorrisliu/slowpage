@@ -3,56 +3,92 @@ import { GlassTabs } from 'solid-liquid-glass'
 
 import { BookCover, type CoverId } from '../components/BookCover'
 import { IconBook, IconCheck, IconFolder, IconLibrary } from '../components/Icons'
-import { t } from '../i18n'
+import { locale, t } from '../i18n'
 import { prefersReducedMotion, useReveal } from '../utils/motion'
 
 type SourceKey = 'apple-books' | 'calibre' | 'local-files'
 
-// The card mirrors the app's Chinese library UI, like the other product demos.
-const SOURCE_DETAILS: Record<
-  SourceKey,
-  {
-    name: string
-    locationLabel: string
-    countLabel: string
-    covers: CoverId[]
-    assurances: string[]
-  }
-> = {
-  'apple-books': {
-    name: 'Apple Books 书库',
-    locationLabel: '本机 Apple Books 藏书目录',
-    countLabel: '已索引 16 本',
-    covers: ['pride', 'dawn-blossoms', 'walden'],
-    assurances: [
-      '自动发现系统里已有的书目、封面与分类',
-      '不改写原始电子书文件，保持原书库整洁',
-      '可识别尚未下载到本机的 iCloud 书目占位',
-    ],
-  },
-  calibre: {
-    name: 'Calibre 书库',
-    locationLabel: '本机 Calibre 书库目录',
-    countLabel: '已索引 48 本',
-    covers: ['three-body', 'taocp', 'nahan'],
-    assurances: [
-      '直接读取作者、书名与已整理好的个人书单结构',
-      '上千本藏书也能就地浏览，不必额外导入拷贝副本',
-      '所有高亮、页边笔记与进度稳稳保存在本地',
-    ],
-  },
-  'local-files': {
-    name: 'EPUB & PDF',
-    locationLabel: '~/Books 及任意本地文件夹',
-    countLabel: '随选随读',
-    covers: ['moby-dick', 'middlemarch', 'weicheng'],
-    assurances: [
-      'EPUB 自动整理版心、段首与中英文标点间距',
-      'PDF 始终完整保留原本版面、公式与图表比例',
-      '没有账号与云端强制同步，断网同样完整可用',
-    ],
-  },
+type SourceDetail = {
+  name: string
+  locationLabel: string
+  countLabel: string
+  covers: CoverId[]
+  assurances: string[]
 }
+
+const isEn = locale === 'en'
+
+const SOURCE_DETAILS: Record<SourceKey, SourceDetail> = isEn
+  ? {
+      'apple-books': {
+        name: 'Apple Books Library',
+        locationLabel: 'Local Apple Books library folder',
+        countLabel: '16 indexed',
+        covers: ['pride', 'dawn-blossoms', 'walden'],
+        assurances: [
+          'Automatically discovers your existing books, covers and collections',
+          'Never modifies original ebook files, keeping your library intact',
+          'Recognizes iCloud placeholders for titles not yet downloaded locally',
+        ],
+      },
+      calibre: {
+        name: 'Calibre Library',
+        locationLabel: 'Local Calibre library folder',
+        countLabel: '48 indexed',
+        covers: ['three-body', 'taocp', 'nahan'],
+        assurances: [
+          'Reads your curated authors, titles and personal shelves directly',
+          'Browse thousands of books in place without importing duplicate copies',
+          'Highlights, margin notes and reading progress stay safely on your Mac',
+        ],
+      },
+      'local-files': {
+        name: 'EPUB & PDF',
+        locationLabel: '~/Books or any local folder',
+        countLabel: 'Open anytime',
+        covers: ['moby-dick', 'middlemarch', 'weicheng'],
+        assurances: [
+          'EPUBs receive full-paragraph justification, indents and CJK/Latin spacing',
+          'PDFs preserve original layouts, equations and diagram proportions',
+          'No account or forced cloud sync — works completely offline',
+        ],
+      },
+    }
+  : {
+      'apple-books': {
+        name: 'Apple Books 书库',
+        locationLabel: '本机 Apple Books 藏书目录',
+        countLabel: '已索引 16 本',
+        covers: ['pride', 'dawn-blossoms', 'walden'],
+        assurances: [
+          '自动发现系统里已有的书目、封面与分类',
+          '不改写原始电子书文件，保持原书库整洁',
+          '可识别尚未下载到本机的 iCloud 书目占位',
+        ],
+      },
+      calibre: {
+        name: 'Calibre 书库',
+        locationLabel: '本机 Calibre 书库目录',
+        countLabel: '已索引 48 本',
+        covers: ['three-body', 'taocp', 'nahan'],
+        assurances: [
+          '直接读取作者、书名与已整理好的个人书单结构',
+          '上千本藏书也能就地浏览，不必额外导入拷贝副本',
+          '所有高亮、页边笔记与进度稳稳保存在本地',
+        ],
+      },
+      'local-files': {
+        name: 'EPUB & PDF',
+        locationLabel: '~/Books 及任意本地文件夹',
+        countLabel: '随选随读',
+        covers: ['moby-dick', 'middlemarch', 'weicheng'],
+        assurances: [
+          'EPUB 自动整理版心、段首与中英文标点间距',
+          'PDF 始终完整保留原本版面、公式与图表比例',
+          '没有账号与云端强制同步，断网同样完整可用',
+        ],
+      },
+    }
 
 export function LibrarySection() {
   const [source, setSource] = createSignal<SourceKey>('apple-books')
@@ -112,7 +148,7 @@ export function LibrarySection() {
                 </div>
                 <div>
                   <div class="text-[14px] font-semibold text-[#1D1D1F]">{activeSource().name}</div>
-                  <div class="text-[12px] text-[#6E6E73]">{activeSource().locationLabel}</div>
+                  <div class="text-[12px] text-[#59595E]">{activeSource().locationLabel}</div>
                 </div>
               </div>
 
@@ -160,7 +196,7 @@ export function LibrarySection() {
           <p
             data-shown={headerShown() ? 'true' : 'false'}
             style={{ '--sp-delay': '120ms' }}
-            class="sp-reveal mt-4 text-[16px] leading-[1.65] text-[#6E6E73] [text-wrap:pretty] sm:text-[17px]"
+            class="sp-reveal mt-4 text-[16px] leading-[1.65] text-[#59595E] [text-wrap:pretty] sm:text-[17px]"
           >
             {t.libLead}
           </p>

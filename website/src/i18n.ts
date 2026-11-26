@@ -1,6 +1,6 @@
 /**
- * Marketing copy for the two locales. The in-page product demos (library,
- * reader, margin cards) mirror the Chinese app UI and stay as they are.
+ * Marketing copy for the two locales. Interactive product demos also read
+ * `locale` so UI chrome, sample notes, and library descriptions match the page.
  *
  * The locale comes from <html lang>, which each HTML entry sets statically:
  * `/` is zh-CN and `/en/` is en.

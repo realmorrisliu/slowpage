@@ -22,7 +22,13 @@ export function Navbar() {
           href="#top"
           class="sp-pressable flex items-center gap-2 text-[15px] font-semibold tracking-[-0.015em] text-[#1D1D1F]"
         >
-          <img src="/slowpage-icon.png" alt="" class="size-6 drop-shadow-[0_1px_2px_rgba(0,0,0,0.1)]" />
+          <img
+            src="/slowpage-icon.png"
+            alt=""
+            width="24"
+            height="24"
+            class="size-6 drop-shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+          />
           <span>Slowpage</span>
         </a>
 
