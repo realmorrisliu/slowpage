@@ -6,14 +6,28 @@
  */
 type PostHog = { capture: (event: string, props?: Record<string, unknown>) => void }
 
+// Events raised before `/ph.js` runs wait here and are flushed once its stub exists.
+const pending: Array<[string, Record<string, unknown> | undefined]> = []
+
 function ph(): PostHog | undefined {
   return (window as unknown as { posthog?: PostHog }).posthog
+}
+
+function capture(event: string, props?: Record<string, unknown>) {
+  const client = ph()
+  if (client) client.capture(event, props)
+  else pending.push([event, props])
 }
 
 function loadPostHog() {
   const s = document.createElement('script')
   s.src = '/ph.js'
   s.async = true
+  s.onload = () => {
+    const client = ph()
+    if (!client) return
+    for (const [event, props] of pending.splice(0)) client.capture(event, props)
+  }
   document.head.appendChild(s)
 }
 
@@ -28,7 +42,7 @@ export function installAnalytics() {
     (event) => {
       const el = (event.target as Element | null)?.closest<HTMLElement>('[data-track]')
       if (!el) return
-      ph()?.capture(el.dataset.track!, { href: el.getAttribute('href') ?? undefined })
+      capture(el.dataset.track!, { href: el.getAttribute('href') ?? undefined })
     },
     { capture: true },
   )
@@ -40,7 +54,7 @@ export function installAnalytics() {
     const depth = (window.scrollY + window.innerHeight) / doc.scrollHeight
     if (depth >= 0.75) {
       sent = true
-      ph()?.capture('scroll_75')
+      capture('scroll_75')
       window.removeEventListener('scroll', onScroll)
     }
   }
