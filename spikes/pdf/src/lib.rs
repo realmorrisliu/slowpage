@@ -169,6 +169,23 @@ impl Document {
             Document::Hayro(_) => Vec::new(),
         }
     }
+
+    /// The document outline, depth-first. `page` is 1-based. Zero means the
+    /// row has a title and no page in this file. Hayro does not read the tree.
+    pub fn outline(&self) -> Vec<OutlineMark> {
+        match self {
+            Document::Pdfium(doc) => pdfium_outline(doc),
+            Document::Hayro(_) => Vec::new(),
+        }
+    }
+}
+
+/// One outline row. `depth` is zero for a top-level bookmark.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutlineMark {
+    pub title: String,
+    pub page: u32,
+    pub depth: u32,
 }
 
 pub enum PageRead {
@@ -207,6 +224,54 @@ fn rendered_origin(page: &PdfPage<'_>) -> (f32, f32) {
         Some(boundary) => (boundary.bounds.left().value, boundary.bounds.bottom().value),
         None => (0.0, 0.0),
     }
+}
+
+fn pdfium_outline(doc: &PdfiumDoc) -> Vec<OutlineMark> {
+    let Some(root) = doc.doc.bookmarks().root() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk_bookmark(root, 0, doc.count, &mut out);
+    out
+}
+
+fn walk_bookmark(mark: PdfBookmark<'_>, depth: u32, pages: usize, out: &mut Vec<OutlineMark>) {
+    let mut current = Some(mark);
+    while let Some(mark) = current {
+        let title = mark.title().unwrap_or_default();
+        let title = title.trim();
+        if !title.is_empty() {
+            out.push(OutlineMark {
+                title: title.to_string(),
+                page: bookmark_page(&mark, pages),
+                depth,
+            });
+        }
+        if let Some(child) = mark.first_child() {
+            walk_bookmark(child, depth.saturating_add(1), pages, out);
+        }
+        current = mark.next_sibling();
+    }
+}
+
+fn bookmark_page(mark: &PdfBookmark<'_>, pages: usize) -> u32 {
+    let index = mark
+        .destination()
+        .and_then(|dest| dest.page_index().ok())
+        .or_else(|| match mark.action() {
+            Some(PdfAction::LocalDestination(action)) => action
+                .destination()
+                .ok()
+                .and_then(|dest| dest.page_index().ok()),
+            _ => None,
+        });
+    let Some(index) = index else {
+        return 0;
+    };
+    if index < 0 || index as usize >= pages {
+        return 0;
+    }
+    index as u32 + 1
 }
 
 fn same_document_page(link: &PdfLink<'_>, pages: usize) -> Option<u32> {
@@ -1144,6 +1209,62 @@ mod tests {
             }
         }
         n
+    }
+
+    #[test]
+    fn an_outline_lists_each_destination_page() {
+        let bytes = outline_fixture();
+        let (doc, _, _) = Document::open(
+            PdfEngine::Pdfium,
+            bytes.clone(),
+            &spike_report::pdfium_lib(),
+        )
+        .expect("pdfium outline");
+        let marks = doc.outline();
+        assert_eq!(marks.len(), 3, "{marks:?}");
+        assert_eq!(marks[0].title, "One");
+        assert_eq!(marks[0].page, 1);
+        assert_eq!(marks[0].depth, 0);
+        assert_eq!(marks[1].title, "Nested");
+        assert_eq!(marks[1].page, 2);
+        assert_eq!(marks[1].depth, 1);
+        assert_eq!(marks[2].title, "Two");
+        assert_eq!(marks[2].page, 2);
+        assert_eq!(marks[2].depth, 0);
+        let (hayro, _, _) =
+            Document::open(PdfEngine::Hayro, bytes, &spike_report::pdfium_lib()).unwrap();
+        assert!(hayro.outline().is_empty());
+    }
+
+    /// Two pages. The outline is One, its child Nested, then Two.
+    fn outline_fixture() -> Vec<u8> {
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>\nendobj\n".to_vec(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>\nendobj\n".to_vec(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] >>\nendobj\n".to_vec(),
+            b"4 0 obj\n<< /Type /Outlines /First 6 0 R /Last 7 0 R /Count 2 >>\nendobj\n".to_vec(),
+            b"5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] >>\nendobj\n".to_vec(),
+            b"6 0 obj\n<< /Title (One) /Parent 4 0 R /Dest [3 0 R /Fit] /Next 7 0 R /First 8 0 R /Last 8 0 R /Count 1 >>\nendobj\n".to_vec(),
+            b"7 0 obj\n<< /Title (Two) /Parent 4 0 R /Dest [5 0 R /Fit] /Prev 6 0 R >>\nendobj\n".to_vec(),
+            b"8 0 obj\n<< /Title (Nested) /Parent 6 0 R /Dest [5 0 R /Fit] >>\nendobj\n".to_vec(),
+        ];
+        let mut body = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for object in objects {
+            offsets.push(body.len());
+            body.extend_from_slice(&object);
+        }
+        let xref = body.len();
+        let count = offsets.len() + 1;
+        let mut table = format!("xref\n0 {count}\n0000000000 65535 f \n");
+        for offset in offsets {
+            table.push_str(&format!("{offset:010} 00000 n \n"));
+        }
+        body.extend(table.as_bytes());
+        let trailer =
+            format!("trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        body.extend(trailer.as_bytes());
+        body
     }
 }
 

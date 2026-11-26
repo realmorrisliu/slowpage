@@ -259,8 +259,9 @@ pub struct Presented {
 }
 
 pub fn present(width: f64, height: f64, top: f64, trip: Trip) -> Presented {
-    let hidden = reading_frame(width, height, top, 0.0, false);
-    let shown = reading_frame(width, height, top, 0.0, true);
+    let side = reading_side(trip);
+    let hidden = reading_frame(width, height, top, side, false);
+    let shown = reading_frame(width, height, top, side, true);
     let end = immersive_frame(width, height);
     let pose = trip.pose();
     let card = mix3(hidden.card, shown.card, end.card, pose);
@@ -295,7 +296,7 @@ pub fn present(width: f64, height: f64, top: f64, trip: Trip) -> Presented {
     };
     if pose.immersive < 1e-3 {
         if let Some(card) = crate::shelf_pass::card_blend(width, height, top) {
-            let frame = reading_frame(width, height, top, 0.0, crate::form::margin_shown());
+            let frame = reading_frame(width, height, top, side, crate::form::margin_shown());
             presented.card = card;
             presented.page = frame.card;
             presented.margin = frame.margin.filter(|rect| rect.w > 0.5);
@@ -346,6 +347,16 @@ pub fn button_seat(width: f64, top: f64) -> Rect {
         y: top + f64::from(TOGGLE_TOP),
         w: size,
         h: size,
+    }
+}
+
+/// A shown reading sidebar insets the page card. Once immersive reading has
+/// landed, the card is the window, so the inset is gone.
+fn reading_side(trip: Trip) -> f64 {
+    if trip.pose().immersive >= LANDED || crate::shelf_pass::moving() {
+        0.0
+    } else {
+        crate::form::reading_sidebar_width()
     }
 }
 
