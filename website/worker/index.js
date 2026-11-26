@@ -26,12 +26,17 @@ export default {
     const url = new URL(request.url)
 
     if (url.hostname === 'www.slowpage.app') {
-      return Response.redirect(`https://slowpage.app${url.pathname}${url.search}`, 301)
+      const targetPath = url.pathname === '/en' ? '/en/' : url.pathname
+      return Response.redirect(`https://slowpage.app${targetPath}${url.search}`, 301)
     }
 
-    const isRoot = url.pathname === '/' || url.pathname === ''
-    if (isRoot && (ua.includes('curl') || ua.includes('wget') || ua.includes('httpie'))) {
-      return new Response(BANNER, {
+    if (url.pathname === '/en') {
+      return Response.redirect(`${url.origin}/en/${url.search}`, 301)
+    }
+
+    const isLocalizedRoot = url.pathname === '/' || url.pathname === '' || url.pathname === '/en/'
+    if (isLocalizedRoot && (ua.includes('curl') || ua.includes('wget') || ua.includes('httpie'))) {
+      return new Response(request.method === 'HEAD' ? null : BANNER, {
         headers: {
           'content-type': 'text/plain; charset=utf-8',
           'cache-control': 'public, max-age=300',
@@ -41,7 +46,7 @@ export default {
     }
 
     const res = await env.ASSETS.fetch(request)
-    if (isRoot) {
+    if (isLocalizedRoot) {
       const headers = new Headers(res.headers)
       headers.set('vary', 'User-Agent')
       return new Response(res.body, {

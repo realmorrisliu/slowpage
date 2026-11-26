@@ -10,7 +10,7 @@ export default defineConfig({
       ASSETS: bindings.assets(),
     },
     assets: {
-      runWorkerFirst: ['/'],
+      runWorkerFirst: ['/', '/en', '/en/'],
     },
     domains: ['slowpage.app', 'www.slowpage.app'],
   },

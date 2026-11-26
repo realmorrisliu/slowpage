@@ -28,26 +28,33 @@ Slowpage's visual identity is built on the contrast between **still, opaque read
 
 ## Website stack (`website/`)
 
-- **Framework**: Solid 2.0 (`solid-js@^2.0.0`, `@solidjs/web@^2.0.0`, `@solidjs/vite-plugin@^3.0.1`, Vite 8)
+- **Framework**: Solid 2.0 (`solid-js@^2.0.3`, `@solidjs/web@^2.0.3`, `@solidjs/vite-plugin@^3.0.1`, Vite 8)
 - **Behaviors**: Vercel Labs UI SDK (`@ui-sdk/core`, `@ui-sdk/solid`)
 - **Liquid Glass**: `solid-liquid-glass` v2.0 (`github:realmorrisliu/solid-liquid-glass`, MIT, preserving `bilalgursen/liquid-glass` 2.0 WebGL2 refraction/cohesion engine + `prefers-reduced-transparency` fallback)
-- **Styling & Deployment**: Tailwind CSS v4 (`@tailwindcss/vite`), Cloudflare Vite plugin (`@cloudflare/vite-plugin`), Worker entrypoint (`website/worker/index.js`), and `cf` CLI deployment (`website/cloudflare.config.ts`) serving `https://slowpage.app` and `https://www.slowpage.app`.
+- **Prerendering & Bundle Splitting**: Build-time static prerendering (`website/scripts/prerender.mjs`, wired into `pnpm build` after `vite build`) injects semantic Navbar and Hero markup and inlines the compiled CSS stylesheet into `<style>` in both `.cloudflare/output/v1/workers/default/assets/index.html` and `en/index.html`, replaced cleanly via `root.replaceChildren()` in `website/src/main.tsx` on mount; below-the-fold sections (`TypographySection`, `MarginaliaSection`, `LibrarySection`) are gated behind `DeferredSection` (`IntersectionObserver` with `250px` root margin plus hash/anchor-click activation) and Solid `lazy()` + `<Loading>`, and Google Fonts load non-blockingly (`media="print" onload="this.media='all'"` + `<noscript>`).
+- **Styling & Deployment**: Tailwind CSS v4 (`@tailwindcss/vite`), Cloudflare Vite plugin (`@cloudflare/vite-plugin`), Worker entrypoint (`website/worker/index.js`), and `cf` CLI deployment (`website/cloudflare.config.ts`) serving `https://slowpage.app` and `https://www.slowpage.app` (see `website/README.md`).
 
 ## Page structure (2026-11-26 refinement)
 
 Approved by Morris on 2026-11-26. The page runs hero, typography, marginalia, library, closing, footer. Backgrounds alternate white and `#F5F5F7` so no two neighbors share a field. The centered template appears only in the hero and the closing; the middle sections are a full-width comparison, a left-aligned two-column header, and a split row.
 
-- **Hero**: headline 「读得慢一点，懂得多一点。」 / "Read slower. Understand more." in one color. The first mention of @alan reads 「内置 AI 伴读 @alan」 with a hover and focus explanation. One primary button (download); the browser trial is a text link.
-- **Typography**: the signature section. The same English or Chinese text is set twice side by side. The English Slowpage column runs the reader's own line breaker: `website/src/typeset/knuthPlass.ts` loads `spikes/justify/vendor/tex-linebreak/layout.js` and the `hyphenated-en-us` patterns with the `BREAKS`, hyphen cost and hyphenation limits of `spikes/justify/justify.js`. When no break set fits the cap, the paragraph falls back to the browser, as the reader does. The Chinese columns compare `line-break: anywhere` with the reader's kinsoku, punctuation trim and mixed-script spacing.
+- **Hero**: headline 「读得慢一点，懂得多一点。」 / "Read slower. Understand more." in one color, painted immediately at full opacity without reveal delay so prerendered HTML hands off to Solid with zero LCP flash. The first mention of @alan reads 「内置 AI 伴读 @alan」 / "the built-in AI reader @alan" with a hover and focus explanation. One primary button (download); the browser trial is a text link.
+- **Typography**: the signature section. The same English or Chinese text is set twice side by side across switchable book-trim measures (`32kai` / `Pocket` `130 × 184 mm`, `paperback` / `Paperback` `129 × 198 mm`, and `trade` / `Trade` `140 × 216 mm`) with a restrained live trim/measure caption below the sheets. The English Slowpage column runs the reader's own line breaker: `website/src/typeset/knuthPlass.ts` loads `spikes/justify/vendor/tex-linebreak/layout.js` and the `hyphenated-en-us` patterns (lazy-loaded on viewport approach via `IntersectionObserver`) with the `BREAKS`, hyphen cost and hyphenation limits of `spikes/justify/justify.js`, re-laying out via `ResizeObserver` on trim switches. When no break set fits the cap, the paragraph falls back to the browser, as the reader does. The Chinese columns compare `line-break: anywhere` with the reader's kinsoku, punctuation trim and mixed-script spacing.
 - **Marginalia**: the interactive reading window, with a "Powered by Alan" link to `https://alanworks.app`.
 - **Library**: source card on the left, copy on the right. The Liquid Glass material card was removed; glass stays on controls only.
 - The three-column highlights band and the bento were removed as SaaS card soup.
 
-Accent text uses `#B4531F` (`--sp-accent-text`), which keeps 5:1 contrast on white and `#F5F5F7`. The brand gradient stays on the icon.
+### WCAG AA contrast & image sizing
 
-## Locales, analytics and release label
+- Accent text uses `#B4531F` (`--sp-accent-text`), keeping ≥ 5:1 contrast on white and `#F5F5F7`. The brand gradient stays on the icon.
+- Secondary/muted UI text on light surfaces avoids `#86868B` / `#8E8E93` in favor of accessible grays (`#59595E` / `#636366`), comparison tags use `#9A4317` on `#FBEBE2` and `#4A4A50` on `#F0F0F2`, unselected `GlassTabs` labels darken to `#4A4A50`, and `BookCover` surfaces for *Pride and Prejudice* (`#4E5E44`) and *朝花夕拾* (`#963A1F`) maintain full AA contrast.
+- `slowpage-icon.png` is optimized to 200 × 200 PNG with explicit `width`/`height` attributes (`24×24` in `Navbar`, `80×80` in `ClosingSection`, `18×18` in `Footer`) to prevent layout shift.
 
-- `/` is Chinese and `/en/` is English. Both HTML entries mount the same app; `website/src/i18n.ts` keys the marketing copy off `<html lang>`. The product demos mirror the Chinese app UI on both.
-- Analytics are anonymous PostHog events shared by name with alanworks.app and M3: `$pageview`, `download_click`, `github_click`, `scroll_75`. `/ph.js` loads after `load` when the main thread is idle, with session recording off and no person profiles. The footer says so.
-- The release label comes from the GitHub latest release at runtime, with the build-time label as the fallback. Download links point at `releases/latest`.
-- Social cards are `website/public/og.png` and `og-en.png`, 1200 × 630.
+## Locales, SEO, analytics and deploy workflow
+
+- **Locales**: `/` is Chinese (`zh-CN`) and `/en/` is English (`en`). Both HTML entries mount the same app; `website/src/i18n.ts` keys marketing copy off `<html lang>`, and interactive product demos (`HeroSection`, `MarginaliaSection`, `LibrarySection`, `TypographySection`) localize UI chrome, controls, prompts, and descriptions on `/en/` while keeping authentic Chinese book titles/covers (such as《三体》and《朝花夕拾》) on the shelf as a bilingual reading showcase.
+- **Worker routing**: `website/worker/index.js` 301-redirects `www.slowpage.app` -> `slowpage.app` and `/en` -> `/en/`, and serves an ANSI terminal banner for `curl` / `wget` / `httpie` on both `/` and `/en/` with `Vary: User-Agent` (`website/cloudflare.config.ts` sets `assets.runWorkerFirst: ['/', '/en', '/en/']`).
+- **SEO & social cards**: Both HTML entries include canonical + `hreflang` alternates (`zh-CN`, `en`, `x-default`), `SoftwareApplication` JSON-LD metadata, and `1200 × 630` social cards (`website/public/og.png` and `og-en.png`), paired with `website/public/robots.txt` and `website/public/sitemap.xml`.
+- **Analytics**: Anonymous PostHog events shared by name with `alanworks.app` and M3 (`$pageview`, `download_click`, `github_click`, `scroll_75`). `/ph.js` loads after `load` when the main thread is idle, with session recording off and no person profiles. The footer says so.
+- **Release label**: Comes from the GitHub latest release at runtime, with the build-time label as fallback. Download links point at `releases/latest`.
+- **CI/CD**: `.github/workflows/website.yml` pins all GitHub Actions to 40-char commit SHAs, sets `concurrency` (`cancel-in-progress: false`), verifies built assets (`index.html`, `en/index.html`, `robots.txt`, `sitemap.xml`, `og.png`, `og-en.png`, worker bundle, and prerendered hero strings), and auto-deploys on `main` (and `workflow_dispatch`) via `pnpm exec cf deploy` whenever `CLOUDFLARE_API_TOKEN` is configured.
