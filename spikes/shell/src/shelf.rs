@@ -528,6 +528,7 @@ mod tests {
                 .open_path
                 .clone()
         };
+        assert_eq!(crate::form::SEARCH_PLACEHOLDER, "搜索书名、作者、笔记");
         assert!(all.covers.len() > 4);
         assert_eq!(searched(all.clone(), "   "), all);
 
