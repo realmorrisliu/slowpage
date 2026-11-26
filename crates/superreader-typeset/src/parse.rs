@@ -39,6 +39,17 @@ pub struct Piece {
     pub link: Option<String>,
     /// Element ids whose first text is this piece.
     pub anchors: Vec<String>,
+    /// UTF-16 index of this text in the body stream WKWebView stores.
+    pub web_at: u32,
+}
+
+/// One chapter parse. `web_units` is the UTF-16 length of the body text
+/// stream, including whitespace and hidden body text the typesetter drops.
+pub struct Parsed {
+    pub blocks: Vec<Block>,
+    pub web_units: u32,
+    /// Ids that closed with no following text. They sit at the end.
+    pub trailing_anchors: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,7 +69,7 @@ pub fn parse_chapter(
     stylesheet: &str,
     cjk_book: bool,
     font_size: Option<f32>,
-) -> Vec<Block> {
+) -> Parsed {
     let rules = parse_css(stylesheet);
     let mut style_buf = String::new();
     harvest_style(xhtml, &mut style_buf);
@@ -73,6 +84,8 @@ pub fn parse_chapter(
         stack: Vec::new(),
         chunks: Vec::new(),
         skip: 0,
+        web_units: 0,
+        carry_ids: Vec::new(),
     };
     parser.open_tag("body", "");
     parser.feed(xhtml);
@@ -80,7 +93,11 @@ pub fn parse_chapter(
         parser.close_top();
     }
     parser.finish_chunks();
-    parser.blocks
+    Parsed {
+        blocks: parser.blocks,
+        web_units: parser.web_units,
+        trailing_anchors: parser.carry_ids,
+    }
 }
 
 pub fn cjk_book(xhtml: &str) -> bool {
@@ -347,6 +364,10 @@ struct Parser<'a> {
     stack: Vec<Frame>,
     chunks: Vec<Chunk>,
     skip: u32,
+    /// UTF-16 units of body text, including text the typesetter does not keep.
+    web_units: u32,
+    /// Ids from elements that closed before any text. The next text takes them.
+    carry_ids: Vec<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -418,34 +439,43 @@ impl<'a> Parser<'a> {
                 while i < bytes.len() && bytes[i] != b'<' {
                     i += 1;
                 }
-                if self.skip == 0 {
-                    let text = decode_entities(&xhtml[start..i]);
-                    if !text.is_empty() && !self.stack.is_empty() {
-                        let paint = self.stack.last().unwrap().paint.clone();
-                        let link = self
-                            .stack
-                            .iter()
-                            .rev()
-                            .find(|frame| !frame.href.is_empty())
-                            .map(|frame| frame.href.clone());
-                        let mut anchors = Vec::new();
-                        for frame in self.stack.iter_mut().rev() {
-                            if frame.id_pending {
-                                frame.id_pending = false;
-                                anchors.push(frame.id.clone());
-                            }
-                        }
-                        anchors.reverse();
-                        self.chunks.push(Chunk::Text(Piece {
-                            node: self.node,
-                            text,
-                            paint,
-                            link,
-                            anchors,
-                        }));
-                        self.node += 1;
+                if self.in_head() || self.stack.is_empty() {
+                    continue;
+                }
+                let text = decode_entities(&xhtml[start..i]);
+                if text.is_empty() {
+                    continue;
+                }
+                let web_at = self.web_units;
+                self.web_units = self.web_units.saturating_add(utf16_units(&text));
+                if self.skip > 0 {
+                    continue;
+                }
+                let paint = self.stack.last().unwrap().paint.clone();
+                let link = self
+                    .stack
+                    .iter()
+                    .rev()
+                    .find(|frame| !frame.href.is_empty())
+                    .map(|frame| frame.href.clone());
+                let mut anchors = Vec::new();
+                for frame in self.stack.iter_mut().rev() {
+                    if frame.id_pending {
+                        frame.id_pending = false;
+                        anchors.push(frame.id.clone());
                     }
                 }
+                anchors.reverse();
+                anchors.extend(std::mem::take(&mut self.carry_ids));
+                self.chunks.push(Chunk::Text(Piece {
+                    node: self.node,
+                    text,
+                    paint,
+                    link,
+                    anchors,
+                    web_at,
+                }));
+                self.node += 1;
             }
         }
     }
@@ -532,17 +562,15 @@ impl<'a> Parser<'a> {
             self.skip -= 1;
             return;
         }
+        if frame.id_pending && !frame.id.is_empty() {
+            self.carry_ids.push(frame.id);
+        }
         if frame.inline {
             return;
         }
         if !frame.container {
             let chunks = std::mem::take(&mut self.chunks);
-            if chunks.iter().any(|chunk| matches!(chunk, Chunk::Text(p) if p.text.chars().any(|c| !c.is_whitespace()))) {
-                self.blocks.push(Block {
-                    paint: frame.paint.clone(),
-                    chunks,
-                });
-            }
+            self.keep_chunks(frame.paint.clone(), chunks);
         } else {
             self.finish_chunks();
         }
@@ -561,11 +589,28 @@ impl<'a> Parser<'a> {
             .map(|f| f.paint.clone())
             .unwrap_or_else(|| self.fallback.clone());
         let chunks = std::mem::take(&mut self.chunks);
-        if chunks.iter().any(
-            |chunk| matches!(chunk, Chunk::Text(p) if p.text.chars().any(|c| !c.is_whitespace())),
-        ) {
+        self.keep_chunks(paint, chunks);
+    }
+
+    /// A whitespace-only block is not typeset, but an id on it belongs to the
+    /// next kept text. That is the following position in the chapter.
+    fn keep_chunks(&mut self, paint: Paint, chunks: Vec<Chunk>) {
+        let keep = chunks.iter().any(|chunk| {
+            matches!(chunk, Chunk::Text(piece) if piece.text.chars().any(|c| !c.is_whitespace()))
+        });
+        if keep {
             self.blocks.push(Block { paint, chunks });
+            return;
         }
+        for chunk in chunks {
+            if let Chunk::Text(piece) = chunk {
+                self.carry_ids.extend(piece.anchors);
+            }
+        }
+    }
+
+    fn in_head(&self) -> bool {
+        self.stack.iter().any(|frame| frame.tag == "head")
     }
 
     fn apply(&self, paint: &mut Paint, tag: &str, class: &str, id: &str, prev: &str, attrs: &str) {
@@ -818,6 +863,10 @@ fn harvest_style(xhtml: &str, out: &mut String) {
         out.push('\n');
         from = body + close + 8;
     }
+}
+
+fn utf16_units(text: &str) -> u32 {
+    text.encode_utf16().count() as u32
 }
 
 fn decode_entities(text: &str) -> String {

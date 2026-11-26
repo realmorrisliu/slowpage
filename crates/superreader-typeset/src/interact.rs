@@ -1,7 +1,10 @@
 //! Sentence, link, and find coordinates for one chapter.
 //!
-//! The offset is a Unicode scalar into the parsed chapter text, in document
-//! order. It does not move when the window reflows. A blocked page turn
+//! Inside the typesetter the offset is a Unicode scalar into the parsed
+//! chapter text, in document order. It does not move when the window reflows.
+//! The history file and the WKWebView reader store a different number: the
+//! UTF-16 length of `body` text, including whitespace this parser drops.
+//! `to_web` and `from_web` translate at that boundary. A blocked page turn
 //! reports offset 0 so the stored sentence stays.
 
 use crate::parse::{Block, Chunk};
@@ -53,13 +56,17 @@ pub struct ChapterText {
     nodes: Vec<NodeSpan>,
     anchors: Vec<(String, u32)>,
     links: Vec<LinkSpan>,
+    /// UTF-16 index, in the WKWebView body stream, of each kept scalar.
+    at: Vec<u32>,
+    web_units: u32,
 }
 
-pub fn index_blocks(blocks: &[Block]) -> ChapterText {
+pub fn index_blocks(blocks: &[Block], trailing: &[String], web_units: u32) -> ChapterText {
     let mut plain = String::new();
     let mut nodes = Vec::new();
     let mut anchors = Vec::new();
     let mut links: Vec<LinkSpan> = Vec::new();
+    let mut at = Vec::new();
     let mut chars = 0u32;
     for block in blocks {
         for chunk in &block.chunks {
@@ -68,20 +75,30 @@ pub fn index_blocks(blocks: &[Block]) -> ChapterText {
             };
             let count = piece.text.chars().count() as u32;
             let start = chars;
-            nodes.push(NodeSpan {
-                node: piece.node,
-                start,
-                chars: count,
-            });
+            if count > 0 {
+                nodes.push(NodeSpan {
+                    node: piece.node,
+                    start,
+                    chars: count,
+                });
+            }
             for id in &piece.anchors {
                 if !anchors.iter().any(|(name, _)| name == id) {
                     anchors.push((id.clone(), start));
                 }
             }
-            if let Some(href) = &piece.link {
-                if let Some(open) = links.last_mut() {
-                    if open.href == *href && open.end == start {
-                        open.end = start + count;
+            if count > 0 {
+                if let Some(href) = &piece.link {
+                    if let Some(open) = links.last_mut() {
+                        if open.href == *href && open.end == start {
+                            open.end = start + count;
+                        } else {
+                            links.push(LinkSpan {
+                                start,
+                                end: start + count,
+                                href: href.clone(),
+                            });
+                        }
                     } else {
                         links.push(LinkSpan {
                             start,
@@ -89,16 +106,20 @@ pub fn index_blocks(blocks: &[Block]) -> ChapterText {
                             href: href.clone(),
                         });
                     }
-                } else {
-                    links.push(LinkSpan {
-                        start,
-                        end: start + count,
-                        href: href.clone(),
-                    });
                 }
+                let mut web = piece.web_at;
+                for ch in piece.text.chars() {
+                    at.push(web);
+                    web = web.saturating_add(ch.len_utf16() as u32);
+                }
+                plain.push_str(&piece.text);
+                chars += count;
             }
-            plain.push_str(&piece.text);
-            chars += count;
+        }
+    }
+    for id in trailing {
+        if !anchors.iter().any(|(name, _)| name == id) {
+            anchors.push((id.clone(), chars));
         }
     }
     ChapterText {
@@ -106,12 +127,18 @@ pub fn index_blocks(blocks: &[Block]) -> ChapterText {
         nodes,
         anchors,
         links,
+        at,
+        web_units,
     }
 }
 
+pub fn chapter_text(xhtml: &str) -> ChapterText {
+    let parsed = crate::parse::parse_chapter(xhtml, "", crate::parse::cjk_book(xhtml), None);
+    index_blocks(&parsed.blocks, &parsed.trailing_anchors, parsed.web_units)
+}
+
 pub fn chapter_plain(xhtml: &str) -> String {
-    let blocks = crate::parse::parse_chapter(xhtml, "", crate::parse::cjk_book(xhtml), None);
-    index_blocks(&blocks).plain
+    chapter_text(xhtml).plain
 }
 
 impl ChapterText {
@@ -167,6 +194,34 @@ impl ChapterText {
             .find(|link| sentence >= link.start && sentence < link.end)
             .map(|link| link.href.as_str())
     }
+
+    /// The WKWebView body offset for a typesetter sentence.
+    pub fn to_web(&self, sentence: u32) -> u32 {
+        let index = sentence as usize;
+        if index >= self.at.len() {
+            return self.web_units;
+        }
+        self.at[index]
+    }
+
+    /// The typesetter sentence at or before a WKWebView body offset.
+    pub fn from_web(&self, utf16: u32) -> u32 {
+        let count = self.at.len();
+        if count == 0 || utf16 >= self.web_units {
+            return count as u32;
+        }
+        let mut lo = 0usize;
+        let mut hi = count;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if self.at[mid] <= utf16 {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo.saturating_sub(1) as u32
+    }
 }
 
 #[cfg(test)]
@@ -190,8 +245,8 @@ mod tests {
     fn links_and_anchors_share_the_chapter_text() {
         let xhtml =
             r#"<p>See <a href="next.xhtml#there">this</a> now.</p><h2 id="there">There</h2>"#;
-        let blocks = crate::parse::parse_chapter(xhtml, "", false, None);
-        let text = index_blocks(&blocks);
+        let parsed = crate::parse::parse_chapter(xhtml, "", false, None);
+        let text = index_blocks(&parsed.blocks, &parsed.trailing_anchors, parsed.web_units);
         let plain = text.plain();
         let this_at = plain.find("this").unwrap() as u32;
         assert_eq!(text.link_at(this_at), Some("next.xhtml#there"));
@@ -201,5 +256,52 @@ mod tests {
         let (node, offset) = text.caret_at(this_at).unwrap();
         assert_eq!(text.locate(node, offset), this_at);
         assert_eq!(chapter_plain(xhtml), plain);
+    }
+
+    #[test]
+    fn an_empty_anchor_points_at_the_following_text() {
+        let text = chapter_text(r#"<a id="note"></a>Second"#);
+        let at = text.anchor("note").expect("empty target");
+        assert_eq!(text.slice(at, at + 6), "Second");
+
+        let split = chapter_text("<p>First</p><a id=\"note\"></a><p>Second</p>");
+        let at = split.anchor("note").expect("target between paragraphs");
+        assert_eq!(split.slice(at, at + 6), "Second");
+
+        let end = chapter_text("<p>First</p><a id=\"note\"></a>");
+        assert_eq!(end.anchor("note"), Some(end.plain().chars().count() as u32));
+    }
+
+    #[test]
+    fn a_web_offset_round_trips_onto_the_kept_sentence() {
+        let text = chapter_text("<body>\n<p>First</p>\n<p>Second</p>\n</body>");
+        assert_eq!(text.plain(), "FirstSecond");
+        let second = text.plain().find("Second").unwrap() as u32;
+        assert_eq!(text.to_web(second), 7);
+        assert_eq!(text.from_web(7), second);
+        assert_eq!(text.from_web(text.to_web(0)), 0);
+        let end = text.plain().chars().count() as u32;
+        for index in 0..=end {
+            assert_eq!(text.from_web(text.to_web(index)), index);
+        }
+
+        let emoji = chapter_text("<p>A😀B</p>");
+        assert_eq!(emoji.plain(), "A😀B");
+        assert_eq!(emoji.to_web(0), 0);
+        assert_eq!(emoji.to_web(1), 1);
+        assert_eq!(emoji.to_web(2), 3);
+        assert_eq!(emoji.from_web(2), 1);
+        assert_eq!(emoji.from_web(3), 2);
+
+        let hidden =
+            chapter_text(r#"<body><div class="pg-boilerplate">Header</div><p>Body</p></body>"#);
+        assert_eq!(hidden.plain(), "Body");
+        assert_eq!(hidden.to_web(0), 6);
+        assert_eq!(hidden.from_web(6), 0);
+
+        let titled =
+            chapter_text("<html><head><title>Title</title></head><body><p>Hi</p></body></html>");
+        assert_eq!(titled.plain(), "Hi");
+        assert_eq!(titled.to_web(0), 0);
     }
 }

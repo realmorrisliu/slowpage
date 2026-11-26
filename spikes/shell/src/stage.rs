@@ -1420,10 +1420,11 @@ impl State {
     fn visit_place(&self) -> crate::visit::ReadingPlace {
         if self.mode == Mode::Typeset {
             if let Some(session) = &self.typeset {
+                let local = session.held();
                 return crate::visit::ReadingPlace {
                     href: session.href().to_string(),
                     page: session.page().saturating_add(1),
-                    offset: session.held(),
+                    offset: session.shared_offset(local),
                 };
             }
         }
@@ -2232,21 +2233,21 @@ impl State {
                 match crate::typeset_page::Session::open(&book.path, &href) {
                     Ok(mut session) => {
                         if offset > 0 {
-                            session.show_sentence(offset);
+                            let local = session.local_offset(offset);
+                            session.show_sentence(local);
                         } else if page > 1 {
                             session.show_page(page.saturating_sub(1));
                             session.hold(0);
                         }
                         let shown = session.page().saturating_add(1);
-                        let kept = if offset > 0 { session.held() } else { 0 };
                         self.web_pages = session.page_count() as usize;
                         self.epub_page = session.page() as usize;
                         self.page_total = Some(session.page_count());
                         self.pdf_saved_page = shown;
-                        self.pdf_saved_offset = kept;
+                        self.pdf_saved_offset = offset;
                         self.declared = session.declared();
                         self.shown_at = Some(Instant::now());
-                        crate::web::remember_place(session.href(), shown, kept);
+                        crate::web::remember_place(session.href(), shown, offset);
                         self.typeset = Some(session);
                         self.typeset_motion = None;
                         true
@@ -3702,14 +3703,23 @@ impl State {
         };
         self.sync_typeset_counts();
         if before.is_some_and(|(old_page, old_held)| old_page != page || old_held != held) {
-            self.write_typeset_place(page.saturating_add(1), held, &href);
+            let shared = self.typeset_shared(held);
+            self.write_typeset_place(page.saturating_add(1), shared, &href);
             self.publish();
         }
     }
 
+    fn typeset_shared(&self, sentence: u32) -> u32 {
+        self.typeset
+            .as_ref()
+            .map(|session| session.shared_offset(sentence))
+            .unwrap_or(sentence)
+    }
+
     fn write_typeset_turn(&mut self, page: u32, sentence: u32, href: &str) {
+        let shared = self.typeset_shared(sentence);
         let (page, offset) =
-            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, sentence);
+            crate::visit::next_sentence(self.pdf_saved_page, self.pdf_saved_offset, page, shared);
         self.write_typeset_place(page, offset, href);
     }
 
@@ -3738,7 +3748,8 @@ impl State {
             let Some(session) = self.typeset.as_mut() else {
                 return;
             };
-            session.show_sentence(offset);
+            let local = session.local_offset(offset);
+            session.show_sentence(local);
             (
                 session.page().saturating_add(1),
                 session.held(),
@@ -3746,7 +3757,9 @@ impl State {
             )
         };
         self.sync_typeset_counts();
-        self.write_typeset_place(page, held, &href);
+        let shared = self.typeset_shared(held);
+        self.write_typeset_place(page, shared, &href);
+        self.paint_typeset_hits();
     }
 
     fn typeset_chapter(&mut self, index: usize, offset: u32) {
@@ -3775,7 +3788,8 @@ impl State {
                     session.href().to_string(),
                 )
             };
-            self.write_typeset_place(page, sentence, &shown);
+            let shared = self.typeset_shared(sentence);
+            self.write_typeset_place(page, shared, &shown);
             return;
         }
         if offset == 0 && !fragment.is_empty() {
@@ -3797,7 +3811,9 @@ impl State {
         };
         self.clear_selection();
         self.sync_typeset_counts();
-        self.write_typeset_place(page, sentence, &shown);
+        let shared = self.typeset_shared(sentence);
+        self.write_typeset_place(page, shared, &shown);
+        self.paint_typeset_hits();
     }
 
     fn typeset_jump(&mut self, href: &str, offset: u32) {
@@ -3837,14 +3853,13 @@ impl State {
         let sentence = if dest.fragment.is_empty() {
             0
         } else if dest.same {
-            let Some(at) = self
-                .typeset
-                .as_ref()
-                .and_then(|session| session.anchor_sentence(&dest.fragment))
-            else {
+            let Some(shared) = self.typeset.as_ref().and_then(|session| {
+                let at = session.anchor_sentence(&dest.fragment)?;
+                Some(session.shared_offset(at))
+            }) else {
                 return;
             };
-            at
+            shared
         } else {
             self.typeset_fragment = dest.fragment.clone();
             0
@@ -3858,12 +3873,13 @@ impl State {
             let Some(session) = self.typeset.as_ref() else {
                 return;
             };
+            let local = session.held();
             (
                 session.spine().to_vec(),
                 session.title().to_string(),
                 session.href().to_string(),
                 session.page().saturating_add(1),
-                session.held(),
+                session.shared_offset(local),
             )
         };
         crate::web::remember_place(&href, page, offset);
@@ -3899,7 +3915,7 @@ impl State {
                         .filter_map(|href| {
                             let bytes = packed.files.get(href)?;
                             let raw = String::from_utf8_lossy(bytes);
-                            Some((href.clone(), superreader_typeset::chapter_plain(&raw)))
+                            Some((href.clone(), raw.into_owned()))
                         })
                         .collect::<Vec<_>>();
                     if let Some(job) = self.find.as_mut() {
@@ -3933,19 +3949,26 @@ impl State {
             .as_ref()
             .map(|job| job.query.clone())
             .unwrap_or_default();
-        let hits = if text.trim().is_empty() {
+        let chapter = superreader_typeset::chapter_text(&text);
+        let plain = chapter.plain().to_string();
+        let mut hits = if plain.trim().is_empty() {
             Vec::new()
         } else {
             spike_library::column::hits_in(
-                &text,
+                &plain,
                 &query,
                 index as u32 + 1,
                 &href,
                 spike_library::column::IndexKind::Chars,
             )
         };
+        for hit in &mut hits {
+            hit.start = chapter.to_web(hit.start);
+            hit.end = chapter.to_web(hit.end);
+            hit.kind = spike_library::column::IndexKind::Utf16;
+        }
         if let Some(job) = self.find.as_mut() {
-            if text.trim().is_empty() {
+            if plain.trim().is_empty() {
                 job.empty_units = job.empty_units.saturating_add(1);
             } else {
                 job.text_units = job.text_units.saturating_add(1);
@@ -3964,23 +3987,34 @@ impl State {
             .map(|session| spike_epub::normalize_href(session.href()))
             .unwrap_or_default();
         let current = self.find_current;
-        let spans = self
+        let hits = self
             .find
             .as_ref()
             .map(|job| {
                 job.hits
                     .iter()
                     .filter(|hit| spike_epub::normalize_href(&hit.href) == shown)
-                    .map(|hit| crate::typeset_page::FindSpan {
-                        start: hit.start,
-                        end: hit.end,
-                        current: current
-                            .is_some_and(|(_, start, end)| hit.start == start && hit.end == end),
+                    .map(|hit| {
+                        (
+                            hit.start,
+                            hit.end,
+                            current.is_some_and(|(_, start, end)| {
+                                hit.start == start && hit.end == end
+                            }),
+                        )
                     })
-                    .collect()
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         if let Some(session) = self.typeset.as_mut() {
+            let spans = hits
+                .into_iter()
+                .map(|(start, end, current)| crate::typeset_page::FindSpan {
+                    start: session.local_offset(start),
+                    end: session.local_offset(end),
+                    current,
+                })
+                .collect();
             session.set_find(spans);
         }
     }

@@ -20,5 +20,7 @@ pub use book::{load_chapter, LoadedChapter};
 pub use compose::{ChapterLayout, Typesetter};
 pub use face::{list_faces, BOLD_FACE, BOLD_ITALIC_FACE};
 pub use gate::{nearest_rank_p95, phase1, Phase1Failure, Phase1Input};
-pub use interact::{blocked_ease, chapter_plain, turn_sentence, SLIDE_MS};
+pub use interact::{
+    blocked_ease, chapter_plain, chapter_text, turn_sentence, ChapterText, SLIDE_MS,
+};
 pub use types::*;

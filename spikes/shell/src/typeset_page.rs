@@ -224,6 +224,15 @@ impl Session {
         self.held
     }
 
+    /// The history file stores the WKWebView body offset. The session stores a scalar.
+    pub fn shared_offset(&self, sentence: u32) -> u32 {
+        self.layout.to_web(sentence)
+    }
+
+    pub fn local_offset(&self, shared: u32) -> u32 {
+        self.layout.from_web(shared)
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -273,7 +282,8 @@ impl Session {
         self.clean = None;
     }
 
-    pub fn open_href(&mut self, href: &str, sentence: u32) -> Result<(), String> {
+    /// `shared` is the WKWebView body offset. The session then holds the scalar.
+    pub fn open_href(&mut self, href: &str, shared: u32) -> Result<(), String> {
         let loaded = open_chapter(&self.epub_path, href, href)?;
         let href = spine_href(&self.spine, &loaded.href);
         let layout = compose_chapter(
@@ -284,12 +294,13 @@ impl Session {
             self.flow,
             self.bold && self.bold_ready,
         )?;
+        let local = layout.from_web(shared);
         self.layout = layout;
         self.xhtml = loaded.xhtml;
         self.stylesheet = loaded.stylesheet;
         self.href = href;
         self.clean = None;
-        self.show_sentence(sentence);
+        self.show_sentence(local);
         self.generation = self.generation.saturating_add(1);
         Ok(())
     }

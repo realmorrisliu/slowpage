@@ -320,7 +320,11 @@ impl Typesetter {
             },
             width: frame.width,
             height: frame.height,
-            text: interact::index_blocks(&prepared.blocks),
+            text: interact::index_blocks(
+                &prepared.blocks,
+                &prepared.trailing_anchors,
+                prepared.web_units,
+            ),
             report: LayoutReport {
                 page_count: pages.len() as u32,
                 word_gap_p95,
@@ -378,6 +382,14 @@ impl ChapterLayout {
 
     pub fn anchor_sentence(&self, id: &str) -> Option<u32> {
         self.text.anchor(id)
+    }
+
+    pub fn to_web(&self, sentence: u32) -> u32 {
+        self.text.to_web(sentence)
+    }
+
+    pub fn from_web(&self, shared: u32) -> u32 {
+        self.text.from_web(shared)
     }
 
     pub fn sentence_of(&self, caret: Caret) -> u32 {
@@ -639,13 +651,18 @@ fn caret_bar_at(line: &Line, x: f32) -> SelectionRect {
 struct Prepared {
     blocks: Vec<Block>,
     cjk: bool,
+    trailing_anchors: Vec<String>,
+    web_units: u32,
 }
 
 fn prepare(xhtml: &str, stylesheet: &str, font_size: Option<f32>) -> Prepared {
     let cjk = parse::cjk_book(xhtml);
+    let parsed = parse::parse_chapter(xhtml, stylesheet, cjk, font_size);
     Prepared {
-        blocks: parse::parse_chapter(xhtml, stylesheet, cjk, font_size),
+        blocks: parsed.blocks,
         cjk,
+        trailing_anchors: parsed.trailing_anchors,
+        web_units: parsed.web_units,
     }
 }
 
