@@ -1,0 +1,204 @@
+@import 'tailwindcss';
+@import 'solid-liquid-glass/styles.css';
+@source '../../node_modules/solid-liquid-glass/src';
+
+:root {
+  color-scheme: light;
+  --sp-surface-white: #ffffff;
+  --sp-surface-studio: #f5f5f7;
+  --sp-field-top: #eeeef0;
+  --sp-field-bottom: #e9e9ec;
+  --sp-card: #ffffff;
+  --sp-paper: #ffffff;
+  --sp-ink: #1d1d1f;
+  --sp-ink-reading: #1c1915;
+  --sp-chip-ink: #3a3a3f;
+  --sp-cite: #55555b;
+  --sp-icon: #6e6e73;
+  --sp-quiet: #86868b;
+  --sp-faint: #a1a1a6;
+  --sp-accent: #fc7401;
+  --sp-warm-from: #f0b267;
+  --sp-warm-to: #d2693c;
+  --sp-ring: rgba(0, 0, 0, 0.07);
+
+  --sp-card-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 8px 24px -6px rgba(0, 0, 0, 0.05);
+  --sp-window-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 12px 32px -8px rgba(0, 0, 0, 0.1),
+    0 36px 80px -16px rgba(0, 0, 0, 0.14);
+  --sp-sheet-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.06),
+    0 2px 6px rgba(0, 0, 0, 0.04),
+    0 20px 50px -16px rgba(0, 0, 0, 0.09);
+  --sp-cover-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.09),
+    0 2px 4px rgba(0, 0, 0, 0.11),
+    0 8px 18px -5px rgba(0, 0, 0, 0.16);
+
+  --sp-font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', sans-serif;
+  --sp-font-serif-en: 'Iowan Old Style', 'EB Garamond', Georgia, serif;
+  --sp-font-serif-zh: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', serif;
+  --sp-ease-apple: cubic-bezier(0.22, 1, 0.36, 1);
+  --sp-cosine: cubic-bezier(0.37, 0, 0.63, 1);
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 4rem;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--sp-surface-white);
+  color: var(--sp-ink);
+  font-family: var(--sp-font-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(252, 116, 1, 0.16);
+}
+
+@layer components {
+  .sp-card {
+    background: var(--sp-card);
+    box-shadow: var(--sp-card-shadow);
+  }
+
+  .sp-sheet {
+    background: var(--sp-paper);
+    box-shadow: var(--sp-sheet-shadow), inset 10px 0 18px -14px rgba(0, 0, 0, 0.08);
+  }
+
+  .sp-cover {
+    box-shadow: var(--sp-cover-shadow), inset 3px 0 6px rgba(0, 0, 0, 0.12), inset 1px 0 0 rgba(255, 255, 255, 0.22);
+  }
+
+  .sp-reading-en {
+    font-family: var(--sp-font-serif-en);
+    color: var(--sp-ink-reading);
+  }
+
+  .sp-reading-zh {
+    font-family: var(--sp-font-serif-zh);
+    color: var(--sp-ink-reading);
+  }
+}
+
+.sp-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bold Word Starts typography option */
+.sp-bws b {
+  font-weight: 700;
+}
+
+/* Organic line-hugging text highlighter */
+.sp-highlight-amber {
+  padding: 1px 3px;
+  border-radius: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 160ms ease;
+}
+
+.sp-highlight-blue {
+  padding: 1px 3px;
+  border-radius: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 160ms ease;
+}
+
+/* Press responsiveness matching Apple HIG & Emil design engineering */
+.sp-pressable {
+  transition: transform 160ms var(--sp-ease-apple);
+}
+
+.sp-pressable:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sp-cover-hover {
+    transition: transform 220ms var(--sp-ease-apple), box-shadow 220ms var(--sp-ease-apple);
+  }
+  .group:hover .sp-cover-hover {
+    transform: translateY(-3px);
+  }
+}
+
+/* One-shot viewport staggered reveal */
+.sp-reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 540ms var(--sp-ease-apple),
+    transform 540ms var(--sp-ease-apple);
+  transition-delay: var(--sp-delay, 0ms);
+}
+
+.sp-reveal[data-shown='true'] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Smooth entry for dynamic margin cards */
+.sp-card-enter {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 260ms var(--sp-ease-apple),
+    transform 260ms var(--sp-ease-apple),
+    box-shadow 180ms ease;
+}
+
+@starting-style {
+  .sp-card-enter {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+/* Subtle optical micro-blur pulse when switching typography modes */
+@keyframes sp-optical-settle {
+  0% {
+    opacity: 0.72;
+    filter: blur(1.5px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0px);
+  }
+}
+
+.sp-optical-pulse {
+  animation: sp-optical-settle 200ms var(--sp-ease-apple);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .sp-reveal,
+  .sp-reveal[data-shown='true'] {
+    opacity: 1;
+    transform: none;
+    transition: opacity 150ms ease;
+    transition-delay: 0ms;
+  }
+  .sp-card-enter {
+    transition: opacity 140ms ease;
+  }
+  .sp-optical-pulse {
+    animation: none;
+  }
+}

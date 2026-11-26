@@ -1,8 +1,6 @@
 use std::fs;
 use std::path::Path;
 
-const EYE_SCALE: f64 = 1.3;
-
 struct Slot {
     name: &'static str,
     px: u32,
@@ -73,6 +71,139 @@ const SLOTS: &[Slot] = &[
     },
 ];
 
+pub fn write_set_png(png: &[u8], iconset: &Path, preview: &Path) -> Result<(), String> {
+    fs::create_dir_all(iconset).map_err(|err| err.to_string())?;
+    fs::create_dir_all(preview).map_err(|err| err.to_string())?;
+    let source = decode_non_empty_png(png)?;
+    for slot in SLOTS {
+        let resized = resize_pixmap(&source, slot.px)?;
+        let encoded = resized.encode_png().map_err(|err| err.to_string())?;
+        fs::write(iconset.join(slot.name), &encoded).map_err(|err| err.to_string())?;
+        if let Some(name) = slot.preview {
+            fs::write(preview.join(name), &encoded).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+pub fn resize_png(png: &[u8], px: u32) -> Result<Vec<u8>, String> {
+    let source = decode_non_empty_png(png)?;
+    let resized = resize_pixmap(&source, px)?;
+    resized.encode_png().map_err(|err| err.to_string())
+}
+
+fn decode_non_empty_png(png: &[u8]) -> Result<resvg::tiny_skia::Pixmap, String> {
+    let pixmap = resvg::tiny_skia::Pixmap::decode_png(png).map_err(|err| err.to_string())?;
+    if pixmap.width() == 0 || pixmap.height() == 0 {
+        return Err("png has no size".into());
+    }
+    if !pixmap.pixels().iter().any(|px| px.alpha() > 0) {
+        return Err("icon png is empty".into());
+    }
+    Ok(pixmap)
+}
+
+pub fn resize_pixmap(
+    src: &resvg::tiny_skia::Pixmap,
+    px: u32,
+) -> Result<resvg::tiny_skia::Pixmap, String> {
+    if px == 0 {
+        return Err("target icon size must be positive".into());
+    }
+    if src.width() == 0 || src.height() == 0 {
+        return Err("source icon pixmap has no size".into());
+    }
+
+    let mut cur: Option<resvg::tiny_skia::Pixmap> = None;
+    loop {
+        let active = cur.as_ref().unwrap_or(src);
+        if active.width() >= px * 2 && active.height() >= px * 2 {
+            cur = Some(halve_pixmap(active)?);
+        } else {
+            break;
+        }
+    }
+
+    let active = cur.as_ref().unwrap_or(src);
+    let result = if active.width() == px && active.height() == px {
+        match cur {
+            Some(owned) => owned,
+            None => active.clone(),
+        }
+    } else {
+        let mut dst = resvg::tiny_skia::Pixmap::new(px, px).ok_or("pixmap")?;
+        let paint = resvg::tiny_skia::PixmapPaint {
+            quality: resvg::tiny_skia::FilterQuality::Bicubic,
+            ..resvg::tiny_skia::PixmapPaint::default()
+        };
+        let transform = resvg::tiny_skia::Transform::from_scale(
+            px as f32 / active.width() as f32,
+            px as f32 / active.height() as f32,
+        );
+        dst.draw_pixmap(0, 0, active.as_ref(), &paint, transform, None);
+        dst
+    };
+
+    if !result.pixels().iter().any(|p| p.alpha() > 0) {
+        return Err("icon raster is empty".into());
+    }
+    Ok(result)
+}
+
+fn halve_pixmap(src: &resvg::tiny_skia::Pixmap) -> Result<resvg::tiny_skia::Pixmap, String> {
+    let dst_w = src.width() / 2;
+    let dst_h = src.height() / 2;
+    if dst_w == 0 || dst_h == 0 {
+        return Err("cannot halve pixmap below 1px".into());
+    }
+    let src_w = src.width() as usize;
+    let src_pixels = src.pixels();
+    let mut dst = resvg::tiny_skia::Pixmap::new(dst_w, dst_h).ok_or("pixmap")?;
+    let dst_pixels = dst.pixels_mut();
+
+    for y in 0..dst_h as usize {
+        let sy = y * 2;
+        for x in 0..dst_w as usize {
+            let sx = x * 2;
+            let p00 = src_pixels[sy * src_w + sx];
+            let p10 = src_pixels[sy * src_w + sx + 1];
+            let p01 = src_pixels[(sy + 1) * src_w + sx];
+            let p11 = src_pixels[(sy + 1) * src_w + sx + 1];
+
+            let r = ((u16::from(p00.red())
+                + u16::from(p10.red())
+                + u16::from(p01.red())
+                + u16::from(p11.red())
+                + 2)
+                / 4) as u8;
+            let g = ((u16::from(p00.green())
+                + u16::from(p10.green())
+                + u16::from(p01.green())
+                + u16::from(p11.green())
+                + 2)
+                / 4) as u8;
+            let b = ((u16::from(p00.blue())
+                + u16::from(p10.blue())
+                + u16::from(p01.blue())
+                + u16::from(p11.blue())
+                + 2)
+                / 4) as u8;
+            let a = ((u16::from(p00.alpha())
+                + u16::from(p10.alpha())
+                + u16::from(p01.alpha())
+                + u16::from(p11.alpha())
+                + 2)
+                / 4) as u8;
+
+            dst_pixels[y * dst_w as usize + x] =
+                resvg::tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a)
+                    .ok_or("invalid premultiplied pixel")?;
+        }
+    }
+
+    Ok(dst)
+}
+
 pub fn write_set(svg: &str, iconset: &Path, preview: &Path) -> Result<(), String> {
     fs::create_dir_all(iconset).map_err(|err| err.to_string())?;
     fs::create_dir_all(preview).map_err(|err| err.to_string())?;
@@ -118,174 +249,100 @@ pub fn raster(svg: &str, px: u32) -> Result<resvg::tiny_skia::Pixmap, String> {
     Ok(pixmap)
 }
 
-/// 16 and 32 point @1x. The page sliver and the back rim are thinner than a
-/// pixel there, so this keeps the slab and draws the eyes wider.
+/// 16 and 32 point @1x. Strips fine cadence lines and ribbon details that blur
+/// below half a pixel, keeping the warm squircle and open turning pages crisp.
 pub fn small_variant(svg: &str) -> Result<String, String> {
-    let face = between(svg, "id=\"face\" d=\"", "\"")?;
-    let edge: Vec<&str> = svg
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.contains("fill=\"#E36103\""))
-        .collect();
-    let face_use: Vec<&str> = svg
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.contains("fill=\"#FC7401\""))
-        .collect();
-    let rects: Vec<&str> = svg
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with("<rect "))
-        .collect();
-    if edge.is_empty() || face_use.len() != 1 || rects.len() != 2 {
-        return Err("icon svg is missing the slab or the eyes".into());
-    }
-    let mut eyes = String::new();
-    for rect in rects {
-        eyes.push_str("    ");
-        eyes.push_str(&widen_eye(rect)?);
-        eyes.push('\n');
-    }
-    Ok(format!(
-        concat!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1024\" height=\"1024\" viewBox=\"0 0 1024 1024\">\n",
-            "  <defs>\n",
-            "    <path id=\"face\" d=\"{face}\"/>\n",
-            "  </defs>\n",
-            "  {edge}\n",
-            "  {face_use}\n",
-            "  <g fill=\"#FCFCFC\">\n",
-            "{eyes}",
-            "  </g>\n",
-            "</svg>\n",
-        ),
-        face = face,
-        edge = edge.join("\n  "),
-        face_use = face_use[0],
-        eyes = eyes,
-    ))
-}
-
-fn widen_eye(tag: &str) -> Result<String, String> {
-    let x = attr(tag, "x")?
-        .parse::<f64>()
-        .map_err(|err| err.to_string())?;
-    let width = attr(tag, "width")?
-        .parse::<f64>()
-        .map_err(|err| err.to_string())?;
-    let rx = attr(tag, "rx")?
-        .parse::<f64>()
-        .map_err(|err| err.to_string())?;
-    let mut widened = tag.to_string();
-    widened = replace_attr(&widened, "x", &num(x - width * (EYE_SCALE - 1.0) / 2.0))?;
-    widened = replace_attr(&widened, "width", &num(width * EYE_SCALE))?;
-    widened = replace_attr(&widened, "rx", &num(rx * EYE_SCALE))?;
-    Ok(widened)
-}
-
-fn attr<'a>(tag: &'a str, name: &str) -> Result<&'a str, String> {
-    let key = format!("{name}=\"");
-    between(tag, &key, "\"")
-}
-
-fn replace_attr(tag: &str, name: &str, value: &str) -> Result<String, String> {
-    let key = format!("{name}=\"");
-    let start = tag.find(&key).ok_or_else(|| format!("missing {name}"))? + key.len();
-    let end = start
-        + tag[start..]
-            .find('"')
-            .ok_or_else(|| format!("truncated {name}"))?;
-    let mut out = String::new();
-    out.push_str(&tag[..start]);
-    out.push_str(value);
-    out.push_str(&tag[end..]);
-    Ok(out)
-}
-
-fn between<'a>(text: &'a str, start_mark: &str, end_mark: &str) -> Result<&'a str, String> {
-    let start = text
+    let start_mark = "<g id=\"detail-fine\">";
+    let end_mark = "</g>";
+    let start = svg
         .find(start_mark)
-        .ok_or_else(|| format!("missing {start_mark}"))?
-        + start_mark.len();
-    let end = start
-        + text[start..]
-            .find(end_mark)
-            .ok_or_else(|| format!("truncated {start_mark}"))?;
-    Ok(&text[start..end])
-}
-
-fn num(value: f64) -> String {
-    let rounded = (value * 1000.0).round() / 1000.0;
-    let text = format!("{rounded:.3}");
-    text.trim_end_matches('0').trim_end_matches('.').to_string()
+        .ok_or_else(|| "icon svg is missing #detail-fine".to_string())?;
+    let after = start + start_mark.len();
+    let rel_end = svg[after..]
+        .find(end_mark)
+        .ok_or_else(|| "truncated #detail-fine group".to_string())?;
+    let end = after + rel_end + end_mark.len();
+    let mut out = String::with_capacity(svg.len());
+    out.push_str(&svg[..start]);
+    out.push_str(&svg[end..]);
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    const SVG: &str = include_str!("../../../assets/icon/Slowpage.svg");
-
-    #[test]
-    fn source_keeps_the_chosen_drawing() {
-        assert!(SVG.contains("M606.1 112.5"));
-        assert!(SVG.contains("fill=\"#FC7401\""));
-        assert!(SVG.contains("fill=\"#E15F02\""));
-        assert!(SVG.contains("fill=\"#F9DEC6\""));
-        assert!(SVG.contains("width=\"72.5\""));
-    }
+    const PNG: &[u8] = include_bytes!("../../../assets/icon/Slowpage.png");
 
     #[test]
-    fn small_variant_drops_the_sliver_and_widens_the_eyes() {
-        let small = small_variant(SVG).unwrap();
-        assert!(!small.contains("#E15F02"));
-        assert!(!small.contains("#F9DEC6"));
-        assert!(!small.contains("#F3CBAC"));
-        assert!(small.contains("#FC7401"));
-        assert!(small.contains("#E36103"));
-        assert!(small.contains("width=\"94.25\""));
-        assert!(small.contains("width=\"92.95\""));
-        assert!(small.contains("rx=\"47.19\""));
-        assert!(small.contains("rx=\"46.41\""));
+    fn source_is_1024_transparent_png() {
+        let pixmap = decode_non_empty_png(PNG).unwrap();
+        assert_eq!(pixmap.width(), 1024);
+        assert_eq!(pixmap.height(), 1024);
+        assert_eq!(pixmap.pixel(0, 0).unwrap().alpha(), 0);
+        assert_eq!(pixmap.pixel(1023, 0).unwrap().alpha(), 0);
+        assert_eq!(pixmap.pixel(0, 1023).unwrap().alpha(), 0);
+        assert_eq!(pixmap.pixel(1023, 1023).unwrap().alpha(), 0);
     }
 
     fn tally(
-        svg: &str,
-        px: u32,
+        pixmap: &resvg::tiny_skia::Pixmap,
         pred: fn(&resvg::tiny_skia::PremultipliedColorU8) -> bool,
     ) -> usize {
-        raster(svg, px)
-            .unwrap()
-            .pixels()
-            .iter()
-            .filter(|pixel| pred(pixel))
-            .count()
+        pixmap.pixels().iter().filter(|pixel| pred(pixel)).count()
     }
 
-    fn orange(pixel: &resvg::tiny_skia::PremultipliedColorU8) -> bool {
+    fn amber_glass(pixel: &resvg::tiny_skia::PremultipliedColorU8) -> bool {
         pixel.alpha() > 200
-            && pixel.red() > 220
-            && pixel.green() > 80
-            && pixel.green() < 160
-            && pixel.blue() < 40
+            && pixel.red() > 170
+            && pixel.green() > 55
+            && pixel.red() > pixel.blue().saturating_add(30)
     }
 
-    fn cream(pixel: &resvg::tiny_skia::PremultipliedColorU8) -> bool {
-        pixel.alpha() > 200 && pixel.red() > 230 && pixel.green() > 190 && pixel.blue() > 160
-    }
-
-    fn eye(pixel: &resvg::tiny_skia::PremultipliedColorU8) -> bool {
-        pixel.alpha() > 200 && pixel.red() > 230 && pixel.green() > 230 && pixel.blue() > 230
+    fn white_paper(pixel: &resvg::tiny_skia::PremultipliedColorU8) -> bool {
+        pixel.alpha() > 220 && pixel.red() > 220 && pixel.green() > 220 && pixel.blue() > 220
     }
 
     #[test]
-    fn full_icon_has_the_page_and_small_icon_has_wider_eyes() {
-        assert!(tally(SVG, 128, orange) > 100);
-        assert!(tally(SVG, 128, cream) > 20);
-        let full_eyes = tally(SVG, 128, eye);
-        assert!(full_eyes > 10);
-        let small = small_variant(SVG).unwrap();
-        assert!(tally(&small, 128, orange) > 100);
-        assert!(tally(&small, 128, eye) > full_eyes);
+    fn resized_slots_preserve_amber_glass_and_white_paper() {
+        let source = decode_non_empty_png(PNG).unwrap();
+        let p128 = resize_pixmap(&source, 128).unwrap();
+        assert_eq!(p128.pixel(0, 0).unwrap().alpha(), 0);
+        assert!(tally(&p128, amber_glass) > 600);
+        assert!(tally(&p128, white_paper) > 3000);
+
+        let p32 = resize_pixmap(&source, 32).unwrap();
+        assert_eq!(p32.pixel(0, 0).unwrap().alpha(), 0);
+        assert!(tally(&p32, amber_glass) > 40);
+        assert!(tally(&p32, white_paper) > 180);
+    }
+
+    #[test]
+    fn write_set_png_populates_iconset_and_previews() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = std::env::temp_dir().join(format!("spike-icon-test-{stamp}"));
+        let iconset = tmp.join("AppIcon.iconset");
+        let preview = tmp.join("preview");
+
+        write_set_png(PNG, &iconset, &preview).unwrap();
+
+        for slot in SLOTS {
+            let bytes = fs::read(iconset.join(slot.name)).unwrap();
+            let decoded = resvg::tiny_skia::Pixmap::decode_png(&bytes).unwrap();
+            assert_eq!(decoded.width(), slot.px);
+            assert_eq!(decoded.height(), slot.px);
+            if let Some(prev_name) = slot.preview {
+                let prev_bytes = fs::read(preview.join(prev_name)).unwrap();
+                let prev_decoded = resvg::tiny_skia::Pixmap::decode_png(&prev_bytes).unwrap();
+                assert_eq!(prev_decoded.width(), slot.px);
+                assert_eq!(prev_decoded.height(), slot.px);
+            }
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
