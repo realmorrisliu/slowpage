@@ -15,6 +15,7 @@ spike-pdf = { path = "../pdf" }
 spike-epub = { path = "../epub" }
 spike-bold-word-starts = { path = "../bold-word-starts" }
 spike-library = { path = "../library" }
+superreader-typeset = { path = "../../crates/superreader-typeset" }
 nsh-core = "=0.6.1"
 nsh-base = "=0.6.1"
 nsh-platform-macos = { version = "=0.6.1", default-features = false }

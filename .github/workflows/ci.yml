@@ -102,6 +102,11 @@ jobs:
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
             fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
             epub_open_keeps_the_shelf_scroll_and_returns_the_page \
+            the_switch_stays_on_webkit_until_the_typesetter_opens \
+            a_turn_stops_at_the_chapter_ends \
+            a_point_maps_into_the_paperback_page \
+            selection_tints_paper_and_the_caret_is_ink \
+            a_raster_keeps_its_aspect_inside_a_wider_page \
             pdf_open_keeps_the_shelf_scroll_and_returns_the_page \
             leave_keys_skip_editing_and_immersive \
             an_empty_path_and_a_bad_offset_do_not_move_the_shelf \
@@ -193,6 +198,11 @@ jobs:
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
             fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
             epub_open_keeps_the_shelf_scroll_and_returns_the_page \
+            the_switch_stays_on_webkit_until_the_typesetter_opens \
+            a_turn_stops_at_the_chapter_ends \
+            a_point_maps_into_the_paperback_page \
+            selection_tints_paper_and_the_caret_is_ink \
+            a_raster_keeps_its_aspect_inside_a_wider_page \
             pdf_open_keeps_the_shelf_scroll_and_returns_the_page \
             leave_keys_skip_editing_and_immersive \
             an_empty_path_and_a_bad_offset_do_not_move_the_shelf \

@@ -3,6 +3,19 @@ use std::time::Duration;
 pub const PAPERBACK_WIDTH: f32 = 534.0;
 pub const PAPERBACK_HEIGHT: f32 = 819.0;
 
+/// Apple Books white. Rendered pages use this background.
+pub const PAPER_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
+/// Recorded ink. Glyphs and the caret use this.
+pub const INK_RGB: (u8, u8, u8) = (0x1c, 0x19, 0x15);
+
+/// One paperback page, top-down premultiplied RGBA. The Mac view scales it.
+#[derive(Clone, Debug)]
+pub struct PageRaster {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 /// TeX hyphenation parameters used when the book leaves `hyphens` unset, or sets `auto`.
 pub const TEX_HYPHEN_PENALTY: f64 = 50.0;
 pub const TEX_HYPHEN_LEFT_MIN: usize = 2;
@@ -11,11 +24,23 @@ pub const TEX_HYPHEN_RIGHT_MIN: usize = 3;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FontId(pub u16);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Caret {
     pub node: u32,
     pub offset: u32,
+    /// The hit was past the last glyph of its line. A wrapped line can start
+    /// at this same text offset. Equality ignores the edge, so a selection is
+    /// still the two offsets.
+    pub at_line_end: bool,
 }
+
+impl PartialEq for Caret {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node && self.offset == other.offset
+    }
+}
+
+impl Eq for Caret {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaretRange {

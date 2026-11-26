@@ -320,9 +320,19 @@ fn face_label(font: &FontRef) -> Option<String> {
 }
 
 pub fn paper() -> Color {
-    Color::from_rgba8(0xff, 0xff, 0xff, 0xff)
+    Color::from_rgba8(
+        crate::types::PAPER_RGB.0,
+        crate::types::PAPER_RGB.1,
+        crate::types::PAPER_RGB.2,
+        0xff,
+    )
 }
 
 pub fn ink() -> Color {
-    Color::from_rgba8(0x1c, 0x19, 0x15, 0xff)
+    Color::from_rgba8(
+        crate::types::INK_RGB.0,
+        crate::types::INK_RGB.1,
+        crate::types::INK_RGB.2,
+        0xff,
+    )
 }

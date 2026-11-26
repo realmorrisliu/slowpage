@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Headless EPUB chapter typesetter. WKWebView stays the reader until the gates pass."
+description = "Headless EPUB chapter typesetter. The shell paints its glyph runs behind SPIKE_TYPESET=1. WKWebView stays the default reader."
 
 [[bin]]
 name = "typeset-pages"
@@ -14,7 +14,7 @@ path = "src/bin/pages.rs"
 harfrust = "0.15"
 spike-bold-word-starts = { path = "../../spikes/bold-word-starts" }
 icu_segmenter = "2.4"
-rbook = "=0.7.12"
+rbook = "=0.7.13"
 read-fonts = "=0.46.0"
 skrifa = "0.49"
 tiny-skia = "0.12"

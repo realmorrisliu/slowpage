@@ -79,6 +79,20 @@ impl Typesetter {
     }
 
     pub fn png(&self, layout: &ChapterLayout, page: u32) -> Option<Vec<u8>> {
+        self.paint_page(layout, page)?.encode_png().ok()
+    }
+
+    /// The glyph runs of one page, on Books-white, in ink. Top-down RGBA.
+    pub fn raster(&self, layout: &ChapterLayout, page: u32) -> Option<PageRaster> {
+        let pixmap = self.paint_page(layout, page)?;
+        Some(PageRaster {
+            width: pixmap.width(),
+            height: pixmap.height(),
+            rgba: pixmap.data().to_vec(),
+        })
+    }
+
+    fn paint_page(&self, layout: &ChapterLayout, page: u32) -> Option<Pixmap> {
         let page = layout.pages.get(page as usize)?;
         let mut pixmap = Pixmap::new(PAPERBACK_WIDTH as u32, PAPERBACK_HEIGHT as u32)?;
         pixmap.fill(face::paper());
@@ -96,7 +110,7 @@ impl Typesetter {
                 );
             }
         }
-        pixmap.encode_png().ok()
+        Some(pixmap)
     }
 
     /// White crop of one page. `scale` is image pixels per CSS pixel.
@@ -334,6 +348,43 @@ impl ChapterLayout {
         runs
     }
 
+    /// A one-pixel bar at the caret, in the same space as [`Self::selection_rects`].
+    ///
+    /// A trailing hit stays on the glyph that ends at the caret. A leading hit
+    /// stays on the glyph that starts there, even when a wrap makes those two
+    /// text offsets the same.
+    pub fn caret_bar(&self, page: u32, caret: Caret) -> Option<SelectionRect> {
+        let page = self.pages.get(page as usize)?;
+        let key = (caret.node, caret.offset);
+        let mut last: Option<(&Line, &PlacedGlyph)> = None;
+        for line in &page.lines {
+            let mut at_end: Option<f32> = None;
+            for glyph in &line.glyphs {
+                if glyph.hyphen {
+                    continue;
+                }
+                if !caret.at_line_end && (glyph.node, glyph.offset) >= key {
+                    return Some(caret_bar_at(line, glyph.x));
+                }
+                if glyph.node == caret.node
+                    && glyph.offset.saturating_add(glyph.span) == caret.offset
+                {
+                    at_end = Some(glyph.x + glyph.advance);
+                } else {
+                    at_end = None;
+                }
+                last = Some((line, glyph));
+            }
+            if caret.at_line_end {
+                if let Some(x) = at_end {
+                    return Some(caret_bar_at(line, x));
+                }
+            }
+        }
+        let (line, glyph) = last?;
+        Some(caret_bar_at(line, glyph.x + glyph.advance))
+    }
+
     pub fn hit_test(&self, page: u32, point: Point) -> Option<Caret> {
         let page = self.pages.get(page as usize)?;
         let line = page
@@ -347,6 +398,7 @@ impl ChapterLayout {
             return Some(Caret {
                 node: first.node,
                 offset: first.offset,
+                at_line_end: false,
             });
         }
         for glyph in &glyphs {
@@ -354,6 +406,7 @@ impl ChapterLayout {
                 return Some(Caret {
                     node: glyph.node,
                     offset: glyph.offset,
+                    at_line_end: false,
                 });
             }
         }
@@ -361,6 +414,7 @@ impl ChapterLayout {
         Some(Caret {
             node: last.node,
             offset: last.offset.saturating_add(last.span),
+            at_line_end: true,
         })
     }
 
@@ -427,6 +481,15 @@ impl ChapterLayout {
             lines_over_cap: over,
             longest_hyphen_run: longest,
         }
+    }
+}
+
+fn caret_bar_at(line: &Line, x: f32) -> SelectionRect {
+    SelectionRect {
+        x,
+        y: line.top,
+        width: 1.0,
+        height: line.height.max(1.0),
     }
 }
 
