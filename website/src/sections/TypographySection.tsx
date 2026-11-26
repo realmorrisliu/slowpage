@@ -110,6 +110,8 @@ function EnglishPage(props: {
   onSettled(() => {
     if (props.mode !== 'slowpage' || !root) return
     const ro = new ResizeObserver(layout)
+    const onFontsLoaded = () => layout()
+    document.fonts?.addEventListener?.('loadingdone', onFontsLoaded)
     // Load and run the line breaker only when the section comes near the viewport.
     const io = new IntersectionObserver(
       (entries) => {
@@ -134,6 +136,7 @@ function EnglishPage(props: {
     return () => {
       disposed = true
       if (rafId) cancelAnimationFrame(rafId)
+      document.fonts?.removeEventListener?.('loadingdone', onFontsLoaded)
       io.disconnect()
       ro.disconnect()
       props.onMetrics?.(null)
@@ -207,12 +210,12 @@ export function TypographySection() {
 
   const caption = () => {
     const current = activeTrim()
-    const label = locale === 'en' ? current.labelEn : current.labelZh
+    const label = locale() === 'en' ? current.labelEn : current.labelZh
     const base = `${label} · ${current.dimensions}`
     const m = metrics()
     if (lang() !== 'en' || !m) return base
     const ws = formatWordSpacing(m.maxWordSpacing)
-    return locale === 'en'
+    return locale() === 'en'
       ? `${base} · ${m.lines} lines · max word-spacing ${ws}`
       : `${base} · ${m.lines} 行 · 最大词距微调 ${ws}`
   }
@@ -247,7 +250,7 @@ export function TypographySection() {
 
         <div class="mt-12 flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
           <GlassTabs
-            aria-label={locale === 'en' ? 'Language' : '语言'}
+            aria-label={locale() === 'en' ? 'Language' : '语言'}
             size="sm"
             value={lang()}
             onValueChange={(v) => setLang(v as LangKey)}
@@ -257,13 +260,13 @@ export function TypographySection() {
             ]}
           />
           <GlassTabs
-            aria-label={locale === 'en' ? 'Book trim' : '书本开本'}
+            aria-label={locale() === 'en' ? 'Book trim' : '书本开本'}
             size="sm"
             value={trimKey()}
             onValueChange={(v) => setTrimKey(v as TrimKey)}
             options={TRIMS.map((item) => ({
               value: item.key,
-              label: locale === 'en' ? item.labelEn : item.labelZh,
+              label: locale() === 'en' ? item.labelEn : item.labelZh,
             }))}
           />
         </div>
