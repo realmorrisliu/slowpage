@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const assetsDir = path.resolve(__dirname, '../.cloudflare/output/v1/workers/default/assets')
+const zhHtmlPath = path.join(assetsDir, 'index.html')
+const enHtmlPath = path.join(assetsDir, '_i18n/en.html')
 
 const REPO_URL = 'https://github.com/realmorrisliu/slowpage'
 const RELEASES_URL = `${REPO_URL}/releases/latest`
@@ -11,14 +13,11 @@ const FALLBACK_VERSION = 'Alpha 1'
 
 const LOCALES = {
   zh: {
-    file: path.join(assetsDir, 'index.html'),
     navLabel: '主导航',
     navTypography: '排印',
     navMarginalia: '页边批注',
     navLibrary: '书库',
     navOtherLocale: 'English',
-    navOtherLocaleHref: '/en/',
-    navOtherLocaleLang: 'en',
     navDownload: '下载',
     heroEyebrow: '为 macOS 打造的 EPUB 与 PDF 阅读器',
     heroTitle: '读得慢一点，懂得多一点。',
@@ -32,14 +31,11 @@ const LOCALES = {
     heroFine: `macOS 14+ · Apple Silicon · 免费开源 · ${FALLBACK_VERSION}`,
   },
   en: {
-    file: path.join(assetsDir, 'en/index.html'),
     navLabel: 'Primary',
     navTypography: 'Typography',
     navMarginalia: 'Marginalia',
     navLibrary: 'Library',
     navOtherLocale: '中文',
-    navOtherLocaleHref: '/',
-    navOtherLocaleLang: 'zh-CN',
     navDownload: 'Download',
     heroEyebrow: 'An EPUB and PDF reader for macOS',
     heroTitle: 'Read slower. Understand more.',
@@ -52,6 +48,15 @@ const LOCALES = {
     heroTry: 'Try it in the browser',
     heroFine: `macOS 14+ · Apple Silicon · Free and open source · ${FALLBACK_VERSION}`,
   },
+}
+
+const EN_HEAD_META = {
+  title: 'Slowpage — Read slower. Understand more.',
+  description:
+    'Slowpage is an EPUB and PDF reader for macOS: a quiet white page, paragraph-at-once typesetting for English and Chinese, notes in the margin and a built-in AI reading companion, @alan.',
+  ogDescription:
+    'An EPUB and PDF reader for macOS with book-grade typesetting, margin notes and a built-in AI reading companion.',
+  ogImage: 'https://slowpage.app/og-en.png',
 }
 
 function escapeHtml(text) {
@@ -77,7 +82,7 @@ function renderShell(c) {
     `<a href="#library" class="transition-colors duration-150 hover:text-[#1D1D1F]">${escapeHtml(c.navLibrary)}</a>`,
     '</div>',
     '<div class="flex items-center gap-5 text-[12.5px] text-[#424245]">',
-    `<a href="${c.navOtherLocaleHref}" hreflang="${c.navOtherLocaleLang}" class="transition-colors duration-150 hover:text-[#1D1D1F]">${escapeHtml(c.navOtherLocale)}</a>`,
+    `<button type="button" class="cursor-pointer transition-colors duration-150 hover:text-[#1D1D1F]">${escapeHtml(c.navOtherLocale)}</button>`,
     `<a href="${REPO_URL}" target="_blank" rel="noopener noreferrer" data-track="github_click" class="hidden transition-colors duration-150 hover:text-[#1D1D1F] sm:inline">GitHub</a>`,
     `<a href="${RELEASES_URL}" target="_blank" rel="noopener noreferrer" data-track="download_click" class="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#1D1D1F] px-3.5 text-[12px] font-medium whitespace-nowrap text-white select-none">${escapeHtml(c.navDownload)}</a>`,
     '</div>',
@@ -101,33 +106,107 @@ function renderShell(c) {
   ].join('')
 }
 
+function replaceRequired(source, pattern, replacement, label) {
+  const next = source.replace(pattern, replacement)
+  if (next === source) {
+    throw new Error(`[prerender] failed to replace ${label}`)
+  }
+  return next
+}
+
+function localizeHtmlForEn(template) {
+  let out = template
+  out = replaceRequired(out, '<html lang="zh-CN">', '<html lang="en">', 'html lang')
+  out = replaceRequired(
+    out,
+    /<title>[^<]*<\/title>/,
+    `<title>${EN_HEAD_META.title}</title>`,
+    'title',
+  )
+  out = replaceRequired(
+    out,
+    /(<meta\s+name="description"\s+content=")[^"]*(")/,
+    `$1${EN_HEAD_META.description}$2`,
+    'meta description',
+  )
+  out = replaceRequired(
+    out,
+    /(<meta\s+property="og:locale"\s+content=")zh_CN(")/,
+    '$1en_US$2',
+    'og:locale',
+  )
+  out = replaceRequired(
+    out,
+    /(<meta\s+property="og:title"\s+content=")[^"]*(")/,
+    `$1${EN_HEAD_META.title}$2`,
+    'og:title',
+  )
+  out = replaceRequired(
+    out,
+    /(<meta\s+property="og:description"\s+content=")[^"]*(")/,
+    `$1${EN_HEAD_META.ogDescription}$2`,
+    'og:description',
+  )
+  out = replaceRequired(
+    out,
+    /(<meta\s+property="og:image"\s+content=")https:\/\/slowpage\.app\/og\.png(")/,
+    `$1${EN_HEAD_META.ogImage}$2`,
+    'og:image',
+  )
+  out = replaceRequired(
+    out,
+    /(<meta\s+name="twitter:image"\s+content=")https:\/\/slowpage\.app\/og\.png(")/,
+    `$1${EN_HEAD_META.ogImage}$2`,
+    'twitter:image',
+  )
+  out = replaceRequired(
+    out,
+    /("description":\s*")[^"]*(")/,
+    `$1${EN_HEAD_META.description}$2`,
+    'json-ld description',
+  )
+  out = replaceRequired(
+    out,
+    /("inLanguage":\s*")zh-CN(")/,
+    '$1en$2',
+    'json-ld inLanguage',
+  )
+  out = replaceRequired(
+    out,
+    /("image":\s*")https:\/\/slowpage\.app\/og\.png(")/,
+    `$1${EN_HEAD_META.ogImage}$2`,
+    'json-ld image',
+  )
+  return out
+}
+
 const ROOT_PLACEHOLDER = '<div id="root"></div>'
 const STYLESHEET_RE = /<link\s+rel="stylesheet"[^>]*href="(\/assets\/[^"]+\.css)"[^>]*>/
 
-const cssCache = new Map()
-async function loadCss(href) {
-  if (!cssCache.has(href)) {
-    const cssPath = path.join(assetsDir, href.replace(/^\//, ''))
-    const raw = await fs.readFile(cssPath, 'utf8')
-    cssCache.set(href, raw.replaceAll('</style>', '<\\/style>'))
-  }
-  return cssCache.get(href)
+const rawHtml = await fs.readFile(zhHtmlPath, 'utf8')
+if (!rawHtml.includes(ROOT_PLACEHOLDER)) {
+  throw new Error(`[prerender] ${zhHtmlPath} does not contain ${ROOT_PLACEHOLDER}`)
 }
 
-for (const [locale, copy] of Object.entries(LOCALES)) {
-  const html = await fs.readFile(copy.file, 'utf8')
-  if (!html.includes(ROOT_PLACEHOLDER)) {
-    throw new Error(`[prerender] ${copy.file} does not contain ${ROOT_PLACEHOLDER}`)
-  }
-  let updated = html.replace(ROOT_PLACEHOLDER, `<div id="root">${renderShell(copy)}</div>`)
-  const cssMatch = STYLESHEET_RE.exec(updated)
-  if (!cssMatch) {
-    throw new Error(`[prerender] ${copy.file} missing built stylesheet <link>`)
-  }
-  const inlineCss = await loadCss(cssMatch[1])
-  updated = updated.replace(cssMatch[0], `<style>${inlineCss}</style>`)
-  await fs.writeFile(copy.file, updated, 'utf8')
-  console.log(
-    `[prerender] injected ${locale} shell + inlined ${cssMatch[1]} into ${path.relative(process.cwd(), copy.file)}`,
-  )
+const cssMatch = STYLESHEET_RE.exec(rawHtml)
+if (!cssMatch) {
+  throw new Error(`[prerender] ${zhHtmlPath} missing built stylesheet <link>`)
 }
+const cssPath = path.join(assetsDir, cssMatch[1].replace(/^\//, ''))
+const inlineCss = (await fs.readFile(cssPath, 'utf8')).replaceAll('</style>', '<\\/style>')
+
+const template = rawHtml.replace(cssMatch[0], `<style>${inlineCss}</style>`)
+
+const zhHtml = template.replace(ROOT_PLACEHOLDER, `<div id="root">${renderShell(LOCALES.zh)}</div>`)
+await fs.writeFile(zhHtmlPath, zhHtml, 'utf8')
+
+const enHtml = localizeHtmlForEn(template).replace(
+  ROOT_PLACEHOLDER,
+  `<div id="root">${renderShell(LOCALES.en)}</div>`,
+)
+await fs.mkdir(path.dirname(enHtmlPath), { recursive: true })
+await fs.writeFile(enHtmlPath, enHtml, 'utf8')
+
+console.log(
+  `[prerender] inlined ${cssMatch[1]} and wrote ${path.relative(process.cwd(), zhHtmlPath)} + ${path.relative(process.cwd(), enHtmlPath)}`,
+)

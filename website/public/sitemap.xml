@@ -1,18 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset
-  xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-  xmlns:xhtml="http://www.w3.org/1999/xhtml"
->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://slowpage.app/</loc>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://slowpage.app/" />
-    <xhtml:link rel="alternate" hreflang="en" href="https://slowpage.app/en/" />
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://slowpage.app/" />
-  </url>
-  <url>
-    <loc>https://slowpage.app/en/</loc>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://slowpage.app/" />
-    <xhtml:link rel="alternate" hreflang="en" href="https://slowpage.app/en/" />
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://slowpage.app/" />
   </url>
 </urlset>
