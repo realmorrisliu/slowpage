@@ -792,7 +792,7 @@ mod tests {
         near(at_turn.card, 113.0, 3.0, 1204.0, 894.0);
         let half = present(1440.0, 900.0, 0.0, advance(40));
         near(half.card, 87.0, 4.5, 1168.5, 891.0);
-        let done = present(1440.0, 900.0, 0.0, advance(40));
+        let done = present(1440.0, 900.0, 0.0, advance(80));
         near(done.card, 6.0, 6.0, 1188.0, 888.0);
     }
 }
