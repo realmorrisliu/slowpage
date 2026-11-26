@@ -2475,7 +2475,7 @@ fn sidebar_toggle_button(
 ) -> AnyElement {
     let mut button = view()
         .absolute()
-        .left(px(toggle_x.unwrap_or(row.toggle_x)))
+        .left(px(toggle_x.unwrap_or(f64::from(row.toggle_x)) as f32))
         .top(px(row.toggle_y))
         .w(px(crate::tokens::TOGGLE_SIZE))
         .h(px(crate::tokens::TOGGLE_SIZE))
