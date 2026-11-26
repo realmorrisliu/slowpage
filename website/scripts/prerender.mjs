@@ -8,8 +8,11 @@ const zhHtmlPath = path.join(assetsDir, 'index.html')
 const enHtmlPath = path.join(assetsDir, '_i18n/en.html')
 
 const REPO_URL = 'https://github.com/realmorrisliu/slowpage'
-const RELEASES_URL = `${REPO_URL}/releases/latest`
+// Keep in sync with the baked fallback in src/release.ts.
 const FALLBACK_VERSION = 'Alpha 1'
+const FALLBACK_DMG_URL =
+  'https://github.com/realmorrisliu/slowpage/releases/download/v0.1.0-alpha.1/Slowpage-0.1.0-alpha.1.dmg'
+const FALLBACK_DMG_SIZE = 'DMG 24.8 MB'
 
 const LOCALES = {
   zh: {
@@ -18,6 +21,8 @@ const LOCALES = {
     navMarginalia: '页边批注',
     navLibrary: '书库',
     navOtherLocale: 'English',
+    navOtherLocaleLabel: 'Switch to English',
+    navOtherLocaleLang: 'en',
     navDownload: '下载',
     heroEyebrow: '为 macOS 打造的 EPUB 与 PDF 阅读器',
     heroTitle: '读得慢一点，懂得多一点。',
@@ -28,7 +33,7 @@ const LOCALES = {
     heroLeadAfter: '。像读一本印得很好的纸书，把想法记在页边。',
     heroDownload: '下载 macOS 版',
     heroTry: '在网页里试试',
-    heroFine: `macOS 14+ · Apple Silicon · 免费开源 · ${FALLBACK_VERSION}`,
+    heroFine: ['macOS 14+', 'Apple 芯片', '免费开源', FALLBACK_VERSION, FALLBACK_DMG_SIZE],
   },
   en: {
     navLabel: 'Primary',
@@ -36,6 +41,8 @@ const LOCALES = {
     navMarginalia: 'Marginalia',
     navLibrary: 'Library',
     navOtherLocale: '中文',
+    navOtherLocaleLabel: '切换到中文',
+    navOtherLocaleLang: 'zh-CN',
     navDownload: 'Download',
     heroEyebrow: 'An EPUB and PDF reader for macOS',
     heroTitle: 'Read slower. Understand more.',
@@ -46,7 +53,7 @@ const LOCALES = {
     heroLeadAfter: '. Read it like a well-printed book, and keep your thoughts in the margin.',
     heroDownload: 'Download for macOS',
     heroTry: 'Try it in the browser',
-    heroFine: `macOS 14+ · Apple Silicon · Free and open source · ${FALLBACK_VERSION}`,
+    heroFine: ['macOS 14+', 'Apple silicon', 'Free and open source', FALLBACK_VERSION, FALLBACK_DMG_SIZE],
   },
 }
 
@@ -82,9 +89,9 @@ function renderShell(c) {
     `<a href="#library" class="transition-colors duration-150 hover:text-[#1D1D1F]">${escapeHtml(c.navLibrary)}</a>`,
     '</div>',
     '<div class="flex items-center gap-5 text-[12.5px] text-[#424245]">',
-    `<button type="button" class="cursor-pointer transition-colors duration-150 hover:text-[#1D1D1F]">${escapeHtml(c.navOtherLocale)}</button>`,
+    `<button type="button" lang="${c.navOtherLocaleLang}" aria-label="${escapeHtml(c.navOtherLocaleLabel)}" class="cursor-pointer transition-colors duration-150 hover:text-[#1D1D1F]">${escapeHtml(c.navOtherLocale)}</button>`,
     `<a href="${REPO_URL}" target="_blank" rel="noopener noreferrer" data-track="github_click" class="hidden transition-colors duration-150 hover:text-[#1D1D1F] sm:inline">GitHub</a>`,
-    `<a href="${RELEASES_URL}" target="_blank" rel="noopener noreferrer" data-track="download_click" class="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#1D1D1F] px-3.5 text-[12px] font-medium whitespace-nowrap text-white select-none">${escapeHtml(c.navDownload)}</a>`,
+    `<a href="${FALLBACK_DMG_URL}" rel="noopener noreferrer" data-track="download_click" class="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#1D1D1F] px-3.5 text-[12px] font-medium whitespace-nowrap text-white select-none">${escapeHtml(c.navDownload)}</a>`,
     '</div>',
     '</nav>',
     '</header>',
@@ -95,10 +102,15 @@ function renderShell(c) {
     `<h1 class="mt-3 text-[44px] leading-[1.06] font-semibold tracking-[-0.035em] text-[#1D1D1F] [text-wrap:balance] sm:text-[64px] lg:text-[76px]">${escapeHtml(c.heroTitle)}</h1>`,
     `<p class="relative mt-6 max-w-2xl text-[17px] leading-[1.6] text-[#59595E] [text-wrap:pretty] sm:text-[20px]">${escapeHtml(c.heroLeadBefore)} <span tabindex="0" aria-describedby="alan-tip" class="sp-alan-term font-medium text-[#1D1D1F]">${escapeHtml(c.heroAlan)}<span id="alan-tip" role="tooltip" class="sp-alan-tip">${escapeHtml(c.heroAlanTip)}</span></span>${escapeHtml(c.heroLeadAfter)}</p>`,
     '<div class="mt-9 flex flex-wrap items-center justify-center gap-x-7 gap-y-4">',
-    `<a href="${RELEASES_URL}" target="_blank" rel="noopener noreferrer" data-track="download_click" class="inline-flex h-12 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#1D1D1F] px-7 text-[15px] font-semibold whitespace-nowrap text-white select-none">${escapeHtml(c.heroDownload)}</a>`,
+    `<a href="${FALLBACK_DMG_URL}" rel="noopener noreferrer" data-track="download_click" class="inline-flex h-12 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#1D1D1F] px-7 text-[15px] font-semibold whitespace-nowrap text-white select-none">${escapeHtml(c.heroDownload)}</a>`,
     `<a href="#preview" class="sp-link text-[17px]">${escapeHtml(c.heroTry)} ›</a>`,
     '</div>',
-    `<p class="sp-tabular mt-4 text-[12.5px] text-[#59595E]">${escapeHtml(c.heroFine)}</p>`,
+    `<p class="sp-tabular mt-4 text-[12.5px] text-[#59595E] [text-wrap:balance]">${c.heroFine.map((item) => `<span class="whitespace-nowrap">${escapeHtml(item)}</span>`).join(' · ')}</p>`,
+    '</div>',
+    // Matches StagePlaceholder in src/sections/HeroSection.tsx.
+    '<div id="preview" data-stage-placeholder="" class="mx-auto mt-14 max-w-[1120px]" aria-hidden="true">',
+    '<div class="mx-auto h-[620px] rounded-[16px] bg-gradient-to-b from-[#EEEEF0] to-[#E9E9EC] shadow-[var(--sp-window-shadow)] ring-1 ring-black/[0.08]" style="transform: translate3d(0, 5px, 0) scale(0.993)"></div>',
+    '<div class="sp-stage-dock-space"></div>',
     '</div>',
     '</section>',
     '</main>',

@@ -1,13 +1,15 @@
 import { GlassButton } from 'solid-liquid-glass'
 
-import { RELEASES_URL, REPO_URL, t } from '../i18n'
-import { useReleaseVersion } from '../release'
+import { FactLine } from '../components/FactLine'
+import { REPO_URL, t } from '../i18n'
+import { useDownloadLink, useReleaseVersion } from '../release'
 import { useReveal } from '../utils/motion'
 
 export function ClosingSection() {
   let blockRef: HTMLDivElement | undefined
   const shown = useReveal(() => blockRef)
   const version = useReleaseVersion()
+  const download = useDownloadLink()
 
   return (
     <section id="download" class="bg-white px-5 pt-24 pb-24 sm:px-8 sm:pt-32 sm:pb-32">
@@ -30,7 +32,7 @@ export function ClosingSection() {
         <h2
           data-shown={shown() ? 'true' : 'false'}
           style={{ '--sp-delay': '60ms' }}
-          class="sp-reveal mt-7 text-[36px] leading-[1.08] font-semibold tracking-[-0.03em] text-[#1D1D1F] [text-wrap:balance] sm:text-[52px]"
+          class="sp-reveal sp-h2 mt-7"
         >
           {t.closeTitle}
         </h2>
@@ -38,7 +40,7 @@ export function ClosingSection() {
         <p
           data-shown={shown() ? 'true' : 'false'}
           style={{ '--sp-delay': '120ms' }}
-          class="sp-reveal mx-auto mt-4 max-w-lg text-[16px] leading-[1.6] text-[#6E6E73] [text-wrap:pretty] sm:text-[18px]"
+          class="sp-reveal sp-lead mx-auto mt-4 max-w-lg"
         >
           {t.closeLead(version())}
         </p>
@@ -54,8 +56,8 @@ export function ClosingSection() {
             swell="subtle"
             backdrop="section"
             class="bg-[#1D1D1F] px-7 text-white"
-            href={RELEASES_URL}
-            target="_blank"
+            href={download.href()}
+            target={download.target()}
             rel="noopener noreferrer"
             data-track="download_click"
           >
@@ -75,9 +77,9 @@ export function ClosingSection() {
         <p
           data-shown={shown() ? 'true' : 'false'}
           style={{ '--sp-delay': '220ms' }}
-          class="sp-reveal mt-4 text-[12.5px] text-[#6E6E73]"
+          class="sp-reveal mt-4 text-[12.5px] text-[#59595E] [text-wrap:balance]"
         >
-          {t.closeFine}
+          <FactLine items={t.closeFine} />
         </p>
       </div>
     </section>
