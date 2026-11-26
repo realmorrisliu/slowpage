@@ -97,6 +97,18 @@ pub fn show_library(shell: bool, surface: Surface) -> bool {
     shell && surface == Surface::Library
 }
 
+/// The reading window's back control and sidebar. The library form is
+/// unmounted while a book is open, and the shelf layer owns the window
+/// during the flight. Immersive reading has no sidebar toggle.
+pub fn show_reading_chrome(
+    shell: bool,
+    surface: Surface,
+    shelf_layer: bool,
+    immersive: bool,
+) -> bool {
+    shell && surface == Surface::Reading && !shelf_layer && !immersive
+}
+
 pub fn show_reader_chrome(shell: bool, bars: bool, surface: Surface) -> bool {
     surface == Surface::Reading || (!shell && !bars)
 }
@@ -506,6 +518,28 @@ pub fn contents_marks(title: &str, spine: &[String]) -> Vec<ChapterMark> {
             href: href.clone(),
             offset: 0,
             page: 0,
+        })
+        .collect()
+}
+
+/// The PDF outline as contents rows. An empty title is not a row. A row
+/// with no page in this file keeps `page` 0, and choosing it stays.
+pub fn outline_marks(rows: &[spike_pdf::OutlineMark]) -> Vec<ChapterMark> {
+    rows.iter()
+        .filter_map(|row| {
+            let title = row.title.trim();
+            if title.is_empty() {
+                return None;
+            }
+            let depth = row.depth.min(8) as usize;
+            let mut labeled = "  ".repeat(depth);
+            labeled.push_str(title);
+            Some(ChapterMark {
+                title: labeled,
+                href: String::new(),
+                offset: 0,
+                page: row.page,
+            })
         })
         .collect()
 }
@@ -3521,6 +3555,88 @@ mod tests {
         assert!(!paper_background(true, Surface::Library));
         assert!(paper_background(true, Surface::Reading));
         assert!(paper_background(false, Surface::Library));
+        assert!(show_reading_chrome(true, Surface::Reading, false, false));
+        assert!(!show_reading_chrome(true, Surface::Library, false, false));
+        assert!(!show_reading_chrome(true, Surface::Reading, true, false));
+        assert!(!show_reading_chrome(true, Surface::Reading, false, true));
+        assert!(!show_reading_chrome(false, Surface::Reading, false, false));
+    }
+
+    #[test]
+    fn an_outline_choice_lands_on_that_page_and_returns() {
+        let rows = [
+            spike_pdf::OutlineMark {
+                title: "One".into(),
+                page: 1,
+                depth: 0,
+            },
+            spike_pdf::OutlineMark {
+                title: "  ".into(),
+                page: 4,
+                depth: 0,
+            },
+            spike_pdf::OutlineMark {
+                title: "Nested".into(),
+                page: 3,
+                depth: 1,
+            },
+            spike_pdf::OutlineMark {
+                title: "Lost".into(),
+                page: 0,
+                depth: 0,
+            },
+        ];
+        let marks = outline_marks(&rows);
+        assert_eq!(marks.len(), 3);
+        assert_eq!(marks[0].title, "One");
+        assert_eq!(marks[0].page, 1);
+        assert!(marks[0].href.is_empty());
+        assert_eq!(marks[1].title, "  Nested");
+        assert_eq!(marks[1].page, 3);
+        assert_eq!(marks[2].title, "Lost");
+        assert_eq!(marks[2].page, 0);
+        let here = ReadingPlace {
+            href: String::new(),
+            page: 1,
+            offset: 0,
+        };
+        let jump = chapter_jump(&here, &marks, 1, &[], None);
+        assert_eq!(jump.go, ChapterMove::Page { page: 3 });
+        assert_eq!(jump.back.as_ref().map(|place| place.page), Some(1));
+        let back = chapter_return(
+            &ReadingPlace {
+                href: String::new(),
+                page: 3,
+                offset: 0,
+            },
+            jump.back.clone(),
+            &[],
+        );
+        assert_eq!(back.go, ChapterMove::Page { page: 1 });
+        assert!(back.back.is_none());
+        let lost = chapter_jump(&here, &marks, 2, &[], jump.back.clone());
+        assert_eq!(lost.go, ChapterMove::Stay);
+        assert_eq!(lost.back.as_ref().map(|place| place.page), Some(1));
+        let same = chapter_jump(&here, &marks, 0, &[], None);
+        assert_eq!(same.go, ChapterMove::Stay);
+        assert!(same.back.is_none());
+        let spine = vec!["/OEBPS/one.xhtml".to_string()];
+        let epub = contents_marks("Plain Essay", &spine);
+        assert_eq!(epub[0].title, "Plain Essay");
+        assert!(!epub[0].href.is_empty());
+        assert_eq!(
+            leave_key(
+                LeaveKey::Back,
+                Focus::Idle,
+                Immersion::Off,
+                Surface::Reading
+            ),
+            KeyEffect::LeaveBook
+        );
+        assert_eq!(
+            leave_key(LeaveKey::Back, Focus::Idle, Immersion::On, Surface::Reading),
+            KeyEffect::None
+        );
     }
 
     #[test]

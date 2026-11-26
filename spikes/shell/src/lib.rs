@@ -677,6 +677,7 @@ pub fn SpikeApp() -> impl IntoElement {
     };
     let history = signal(settings::load_history(&settings::path()));
     let source_menu = signal(false);
+    let reading_query = signal(String::new());
     let shell_library = signal(shelf::project(
         &catalog.get(),
         shell_selected.get(),
@@ -1206,6 +1207,72 @@ pub fn SpikeApp() -> impl IntoElement {
                     },
                 )),
         )
+        .child(when(
+            {
+                let visit = visit.clone();
+                let shelf_on = shelf_on.clone();
+                let shell_form = shell_form.clone();
+                move || {
+                    visit::show_reading_chrome(
+                        shell_on,
+                        visit.get().surface,
+                        shelf_on.get(),
+                        matches!(shell_form.get(), form::Form::Immersive),
+                    )
+                }
+            },
+            {
+                let shell_form = shell_form.clone();
+                let shell_selected = shell_selected.clone();
+                let shell_window = shell_window.clone();
+                let shell_chrome = shell_chrome.clone();
+                let shell_library = shell_library.clone();
+                let source_menu = source_menu.clone();
+                let reading_query = reading_query.clone();
+                let import_apple = import_apple.clone();
+                let import_calibre = import_calibre.clone();
+                let import_folder = import_folder.clone();
+                let stage = stage.clone();
+                let visit = visit.clone();
+                let margin_note = margin_note.clone();
+                let body_on = body_on.clone();
+                let shelf_on = shelf_on.clone();
+                move || {
+                    let visit_back = visit.clone();
+                    let form_back = shell_form.clone();
+                    let note_back = margin_note.clone();
+                    let stage_back = stage.clone();
+                    let body_back = body_on.clone();
+                    let shelf_back = shelf_on.clone();
+                    let stage_chrome = stage.clone();
+                    form::reading_chrome(
+                        shell_form,
+                        shell_selected,
+                        shell_window,
+                        shell_chrome,
+                        shell_library,
+                        source_menu,
+                        reading_query,
+                        move |peer| match peer {
+                            form::Peer::AppleBooks => import_apple(),
+                            form::Peer::Calibre => import_calibre(),
+                            form::Peer::AddFolder => import_folder(),
+                        },
+                        move || {
+                            apply_leave(
+                                &visit_back,
+                                &form_back,
+                                &note_back,
+                                visit::LeaveKey::Back,
+                                &stage_back,
+                            );
+                            note_shelf_flags(&visit_back, &body_back, &shelf_back);
+                        },
+                        stage_chrome,
+                    )
+                }
+            },
+        ))
         .child(when(
             {
                 let body_on = body_on.clone();
