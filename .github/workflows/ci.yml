@@ -118,6 +118,8 @@ jobs:
             a_page_link_click_posts_the_character_offset \
             a_blocked_page_eases_back_to_the_same_column \
             a_blocked_ease_leaves_the_stored_sentence \
+            a_fragment_waits_for_a_rect_then_posts_the_offset \
+            a_reading_window_keeps_the_page_inside_the_card \
             reading_chrome_follows_the_pointer_and_drops_a_stale_hide \
             a_plain_launch_ignores_a_leftover_blur_file_and_writes_no_log \
             a_killed_verify_session_does_not_reach_the_next_plain_launch \
@@ -207,6 +209,8 @@ jobs:
             a_page_link_click_posts_the_character_offset \
             a_blocked_page_eases_back_to_the_same_column \
             a_blocked_ease_leaves_the_stored_sentence \
+            a_fragment_waits_for_a_rect_then_posts_the_offset \
+            a_reading_window_keeps_the_page_inside_the_card \
             reading_chrome_follows_the_pointer_and_drops_a_stale_hide \
             a_plain_launch_ignores_a_leftover_blur_file_and_writes_no_log \
             a_killed_verify_session_does_not_reach_the_next_plain_launch \

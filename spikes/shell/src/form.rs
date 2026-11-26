@@ -4086,6 +4086,9 @@ fn panel_toggle_button(
     button.into_element()
 }
 
+/// The sidebar field. The shell spec names titles, authors, and notes.
+pub(crate) const SEARCH_PLACEHOLDER: &str = "搜索书名、作者、笔记";
+
 fn search_field(query: Signal<String>) -> AnyElement {
     let write = query.clone();
     view()
@@ -4111,7 +4114,7 @@ fn search_field(query: Signal<String>) -> AnyElement {
                 .font_weight(crate::tokens::BODY_WEIGHT)
                 .text_color(quiet())
                 .placeholder_color(quiet())
-                .placeholder("搜索书名、作者")
+                .placeholder(SEARCH_PLACEHOLDER)
                 .auto_correct(false)
                 .bg(transparent_black())
                 .value(move || query.get())
@@ -5715,6 +5718,56 @@ mod tests {
             crate::visit::page_edge(right, cy + ch / 2.0, cx, cy, cw, ch),
             crate::visit::PageEdge::Forward
         );
+    }
+
+    #[test]
+    fn a_reading_window_keeps_the_page_inside_the_card() {
+        let sizes = [
+            (
+                crate::tokens::MIN_WINDOW_W,
+                crate::tokens::library_min_height(),
+            ),
+            (1440.0, 900.0),
+            (2560.0, 1440.0),
+        ];
+        for (width, height) in sizes {
+            for margin in [false, true] {
+                let frame = page_frame(width, height, margin, false);
+                assert!(frame.card.x >= INSET - 0.01);
+                assert!(frame.card.y >= INSET - 0.01);
+                assert!(frame.card.x + frame.card.w <= width + 0.01);
+                assert!(frame.card.y + frame.card.h <= height + 0.01);
+                assert_page_inside(frame.card, 612.0, 792.0);
+            }
+            let immersive = page_frame(width, height, true, true);
+            assert!(immersive.margin.is_none());
+            assert!((immersive.card.x).abs() < 0.01);
+            assert!((immersive.card.w - width).abs() < 0.01);
+            assert!((immersive.card.h - height).abs() < 0.01);
+            assert_page_inside(immersive.card, 612.0, 792.0);
+            let seat = crate::ease::button_seat(width, 0.0);
+            assert!(seat.x + 0.01 >= 0.0);
+            assert!(seat.x + seat.w <= width + 0.01);
+            assert!(seat.y + seat.h <= height + 0.01);
+            let band = spike_library::margin::band_bottom(height);
+            assert!(band >= spike_library::margin::BAND_TOP);
+            assert!(
+                band + spike_library::margin::COMPOSER_H
+                    <= height - spike_library::margin::COMPOSER_INSET + 0.01
+            );
+        }
+    }
+
+    fn assert_page_inside(card: Rect, page_w: f64, page_h: f64) {
+        let (x, y, w, h) =
+            spike_report::fitted_pdf_page(card.x, card.y, card.w, card.h, page_w, page_h);
+        assert!(x + 0.01 >= card.x);
+        assert!(y + 0.01 >= card.y);
+        assert!(x + w <= card.x + card.w + 0.01);
+        assert!(y + h <= card.y + card.h + 0.01);
+        let want = page_w / page_h;
+        let got = w / h;
+        assert!((got - want).abs() / want <= 0.005, "{got} vs {want}");
     }
 
     #[test]

@@ -100,7 +100,10 @@ define_class!(
                             state.chrome.bar_gen.get(),
                             state.chrome.bar_dirty.get(),
                         ),
-                        state.web.is_some(),
+                        crate::reading::reading_clock_open(
+                            state.web.is_some(),
+                            state.pdf.is_some(),
+                        ),
                     )
                 };
                 chrome.reading.set(crate::reading::reader_shown(
