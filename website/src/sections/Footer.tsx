@@ -8,10 +8,10 @@ export function Footer() {
       <div class="mx-auto max-w-[1120px] border-t border-black/[0.08] pt-6 text-left">
         <div class="flex flex-col gap-4 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div class="flex items-center gap-2 text-[12.5px]">
-            <img src="/slowpage-icon.png" alt="" class="size-4.5" />
+            <img src="/slowpage-icon.png" alt="" width="18" height="18" class="size-4.5" />
             <span class="font-semibold text-[#1D1D1F]">Slowpage</span>
-            <span class="text-[#6E6E73]">· {t.footerTagline} · </span>
-            <a href={ALAN_URL} target="_blank" rel="noopener noreferrer" class={`text-[#6E6E73] ${linkClass}`}>
+            <span class="text-[#59595E]">· {t.footerTagline} · </span>
+            <a href={ALAN_URL} target="_blank" rel="noopener noreferrer" class={`text-[#59595E] ${linkClass}`}>
               {t.poweredByAlan}
             </a>
           </div>
@@ -32,7 +32,7 @@ export function Footer() {
           </div>
         </div>
 
-        <div class="flex flex-col gap-2 border-t border-black/[0.05] pt-4 text-[11.5px] leading-relaxed text-[#6E6E73] sm:flex-row sm:items-start sm:justify-between">
+        <div class="flex flex-col gap-2 border-t border-black/[0.05] pt-4 text-[11.5px] leading-relaxed text-[#59595E] sm:flex-row sm:items-start sm:justify-between">
           <div class="max-w-[640px]">
             <p class="m-0">{t.footerPrivacy}</p>
             <p class="m-0 mt-1">

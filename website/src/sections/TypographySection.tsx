@@ -1,11 +1,44 @@
-import { createSignal, For, onSettled, Show } from 'solid-js'
+import { createEffect, createSignal, For, onSettled, Show } from 'solid-js'
 import { GlassTabs } from 'solid-liquid-glass'
 
-import { t } from '../i18n'
-import type { SetLine } from '../typeset/knuthPlass'
+import { locale, t } from '../i18n'
+import type { LayoutMetrics, SetLine } from '../typeset/knuthPlass'
 import { useReveal } from '../utils/motion'
 
 type LangKey = 'en' | 'zh'
+type TrimKey = '32kai' | 'paperback' | 'trade'
+
+type TrimSpec = {
+  key: TrimKey
+  labelZh: string
+  labelEn: string
+  dimensions: string
+  measureClass: string
+}
+
+const TRIMS: readonly TrimSpec[] = [
+  {
+    key: '32kai',
+    labelZh: '32 开',
+    labelEn: 'Pocket',
+    dimensions: '130 × 184 mm',
+    measureClass: 'max-w-[340px]',
+  },
+  {
+    key: 'paperback',
+    labelZh: '平装',
+    labelEn: 'Paperback',
+    dimensions: '129 × 198 mm',
+    measureClass: 'max-w-[430px]',
+  },
+  {
+    key: 'trade',
+    labelZh: '大开本',
+    labelEn: 'Trade',
+    dimensions: '140 × 216 mm',
+    measureClass: 'max-w-[500px]',
+  },
+]
 
 const EN_TEXT = [
   'It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.',
@@ -18,27 +51,49 @@ const ZH_TEXT = [
   '大家一怔之后，便容光焕发地互相告语，并且研究这刺客是谁，汉字是怎样三个字。但只要是绍兴人，又不专看教科书的，却早已明白了。',
 ]
 
+function formatWordSpacing(ws: number): string {
+  const rounded = Math.abs(ws) < 0.05 ? 0 : ws
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '−' : ''
+  return `${sign}${Math.abs(rounded).toFixed(1)} px`
+}
+
 /** One page of English, set either by the browser or by the reader's line breaker. */
-function EnglishPage(props: { mode: 'browser' | 'slowpage' }) {
+function EnglishPage(props: {
+  mode: 'browser' | 'slowpage'
+  trim: TrimKey
+  onMetrics?: (metrics: LayoutMetrics | null) => void
+}) {
   let root: HTMLDivElement | undefined
   // Loaded on demand: the hyphenation patterns are ~40 kB.
-  let setParagraph: ((text: string, font: string, width: number, indent: number) => SetLine[] | null) | undefined
+  let knuth:
+    | {
+        setParagraph: (text: string, font: string, width: number, indent: number) => SetLine[] | null
+        measureLayoutMetrics: (paragraphs: SetLine[][]) => LayoutMetrics
+      }
+    | undefined
+  let disposed = false
+  let rafId = 0
 
   // Static copy only, so building HTML strings is safe here.
   const layout = () => {
-    if (!root || props.mode !== 'slowpage' || !setParagraph) return
+    if (disposed || !root || props.mode !== 'slowpage' || !knuth) return
     const width = root.clientWidth
     if (width <= 0) return
     const style = getComputedStyle(root)
     const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
     const indent = parseFloat(style.fontSize) * 1.4
     const html: string[] = []
+    const allParagraphs: SetLine[][] = []
+    let fallback = false
+
     for (const para of EN_TEXT) {
-      const lines = setParagraph(para, font, width - 0.5, indent)
+      const lines = knuth.setParagraph(para, font, width - 0.5, indent)
       if (!lines) {
+        fallback = true
         html.push(`<p class="sp-cmp-p sp-cmp-browser">${para}</p>`)
         continue
       }
+      allParagraphs.push(lines)
       const rows = lines.map(
         (line, i) =>
           `<span class="sp-cmp-line" style="word-spacing:${line.wordSpacing.toFixed(2)}px${
@@ -47,32 +102,58 @@ function EnglishPage(props: { mode: 'browser' | 'slowpage' }) {
       )
       html.push(`<p class="sp-cmp-p">${rows.join('')}</p>`)
     }
+
     root.innerHTML = html.join('')
+    props.onMetrics?.(fallback ? null : knuth.measureLayoutMetrics(allParagraphs))
   }
 
   onSettled(() => {
     if (props.mode !== 'slowpage' || !root) return
     const ro = new ResizeObserver(layout)
+    const onFontsLoaded = () => layout()
+    document.fonts?.addEventListener?.('loadingdone', onFontsLoaded)
     // Load and run the line breaker only when the section comes near the viewport.
     const io = new IntersectionObserver(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return
         io.disconnect()
         import('../typeset/knuthPlass').then((mod) => {
-          setParagraph = mod.setParagraph
+          if (disposed || !root) return
+          knuth = {
+            setParagraph: mod.setParagraph,
+            measureLayoutMetrics: mod.measureLayoutMetrics,
+          }
           layout()
-          document.fonts?.ready.then(layout)
-          if (root) ro.observe(root)
+          document.fonts?.ready.then(() => {
+            if (!disposed) layout()
+          })
+          ro.observe(root)
         })
       },
       { rootMargin: '200px 0px' },
     )
     io.observe(root)
     return () => {
+      disposed = true
+      if (rafId) cancelAnimationFrame(rafId)
+      document.fonts?.removeEventListener?.('loadingdone', onFontsLoaded)
       io.disconnect()
       ro.disconnect()
+      props.onMetrics?.(null)
     }
   })
+
+  createEffect(
+    () => props.trim,
+    () => {
+      if (props.mode !== 'slowpage' || !knuth) return
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        rafId = 0
+        layout()
+      })
+    },
+  )
 
   return (
     <div
@@ -80,7 +161,7 @@ function EnglishPage(props: { mode: 'browser' | 'slowpage' }) {
         root = el
       }}
       lang="en"
-      class="sp-reading-en text-[18px] leading-[1.6] sm:text-[19px]"
+      class="sp-reading-en text-[17px] leading-[1.6] sm:text-[19px]"
     >
       <Show when={props.mode === 'browser'}>
         <For each={EN_TEXT}>{(para) => <p class="sp-cmp-p sp-cmp-browser">{para}</p>}</For>
@@ -99,23 +180,45 @@ function ChinesePage(props: { mode: 'browser' | 'slowpage' }) {
   )
 }
 
-function Page(props: { mode: 'browser' | 'slowpage'; lang: LangKey }) {
+function Page(props: {
+  mode: 'browser' | 'slowpage'
+  lang: LangKey
+  trim: TrimSpec
+  onMetrics?: (metrics: LayoutMetrics | null) => void
+}) {
   return (
-    <div class="mx-auto w-full max-w-[520px] px-7 pt-16 pb-10 sm:px-11 sm:pt-[72px] sm:pb-12">
-      <Show when={props.lang === 'en'} fallback={<ChinesePage mode={props.mode} />}>
-        <EnglishPage mode={props.mode} />
-      </Show>
+    <div class="px-5 pt-16 pb-10 sm:px-7 sm:pt-[72px] sm:pb-12">
+      <div class={`mx-auto w-full ${props.trim.measureClass}`}>
+        <Show when={props.lang === 'en'} fallback={<ChinesePage mode={props.mode} />}>
+          <EnglishPage mode={props.mode} trim={props.trim.key} onMetrics={props.onMetrics} />
+        </Show>
+      </div>
     </div>
   )
 }
 
 export function TypographySection() {
   const [lang, setLang] = createSignal<LangKey>('en')
-  
+  const [trimKey, setTrimKey] = createSignal<TrimKey>('32kai')
+  const [metrics, setMetrics] = createSignal<LayoutMetrics | null>(null)
+
   let headerRef: HTMLDivElement | undefined
   const headerShown = useReveal(() => headerRef)
 
   const notes = () => (lang() === 'en' ? t.typeNotesEn : t.typeNotesZh)
+  const activeTrim = () => TRIMS.find((item) => item.key === trimKey()) ?? TRIMS[0]
+
+  const caption = () => {
+    const current = activeTrim()
+    const label = locale() === 'en' ? current.labelEn : current.labelZh
+    const base = `${label} · ${current.dimensions}`
+    const m = metrics()
+    if (lang() !== 'en' || !m) return base
+    const ws = formatWordSpacing(m.maxWordSpacing)
+    return locale() === 'en'
+      ? `${base} · ${m.lines} lines · max word-spacing ${ws}`
+      : `${base} · ${m.lines} 行 · 最大词距微调 ${ws}`
+  }
 
   return (
     <section id="typography" class="bg-[#F5F5F7] px-5 py-24 sm:px-8 sm:py-32">
@@ -139,15 +242,15 @@ export function TypographySection() {
           <p
             data-shown={headerShown() ? 'true' : 'false'}
             style={{ '--sp-delay': '120ms' }}
-            class="sp-reveal mt-4 text-[16px] leading-[1.6] text-[#6E6E73] [text-wrap:pretty] sm:text-[18px]"
+            class="sp-reveal mt-4 text-[16px] leading-[1.6] text-[#59595E] [text-wrap:pretty] sm:text-[18px]"
           >
             {t.typeLead}
           </p>
         </div>
 
-        <div class="mt-12 flex justify-center">
+        <div class="mt-12 flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
           <GlassTabs
-            aria-label={t.typeEyebrow}
+            aria-label={locale() === 'en' ? 'Language' : '语言'}
             size="sm"
             value={lang()}
             onValueChange={(v) => setLang(v as LangKey)}
@@ -156,24 +259,38 @@ export function TypographySection() {
               { value: 'zh', label: t.typeLangZh },
             ]}
           />
+          <GlassTabs
+            aria-label={locale() === 'en' ? 'Book trim' : '书本开本'}
+            size="sm"
+            value={trimKey()}
+            onValueChange={(v) => setTrimKey(v as TrimKey)}
+            options={TRIMS.map((item) => ({
+              value: item.key,
+              label: locale() === 'en' ? item.labelEn : item.labelZh,
+            }))}
+          />
         </div>
 
         {/* Side by side: the same text, set by the browser and by the reader. */}
-        <div class="mx-auto mt-8 grid max-w-[1040px] overflow-hidden rounded-[24px] bg-white shadow-[var(--sp-sheet-shadow)] md:grid-cols-2">
+        <div class="mx-auto mt-8 grid max-w-[1120px] overflow-hidden rounded-[24px] bg-white shadow-[var(--sp-sheet-shadow)] md:grid-cols-2">
           <figure class="relative m-0">
-            <figcaption class="sp-compare-tag left-4 bg-[#F0F0F2] text-[#55555B]">{t.typeLeft}</figcaption>
-            <Page mode="browser" lang={lang()} />
+            <figcaption class="sp-compare-tag left-4 bg-[#F0F0F2] text-[#4A4A50]">{t.typeLeft}</figcaption>
+            <Page mode="browser" lang={lang()} trim={activeTrim()} />
           </figure>
           <figure class="relative m-0 border-t border-black/[0.06] md:border-t-0 md:border-l">
             <figcaption class="sp-compare-tag left-4 bg-[#FBEBE2] text-[#9A4317]">{t.typeRight}</figcaption>
-            <Page mode="slowpage" lang={lang()} />
+            <Page mode="slowpage" lang={lang()} trim={activeTrim()} onMetrics={setMetrics} />
           </figure>
         </div>
 
-        <ul class="mx-auto mt-8 grid max-w-[1040px] gap-4 text-left sm:grid-cols-3 sm:gap-8">
+        <p class="sp-tabular mx-auto mt-3.5 max-w-[1120px] text-center text-[13px] leading-[1.5] text-[#59595E]">
+          {caption()}
+        </p>
+
+        <ul class="mx-auto mt-7 grid max-w-[1120px] gap-4 text-left sm:grid-cols-3 sm:gap-8">
           <For each={notes()}>
             {(note) => (
-              <li class="text-[14px] leading-[1.55] text-[#6E6E73]">
+              <li class="text-[14px] leading-[1.55] text-[#59595E]">
                 <span class="block font-semibold text-[#1D1D1F]">{note[0]}</span>
                 {note[1]}
               </li>

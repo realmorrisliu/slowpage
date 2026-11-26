@@ -1,6 +1,6 @@
 import { GlassButton } from 'solid-liquid-glass'
 
-import { RELEASES_URL, REPO_URL, t } from '../i18n'
+import { locale, RELEASES_URL, REPO_URL, setLocale, t } from '../i18n'
 import { useScrolled } from '../utils/motion'
 
 export function Navbar() {
@@ -22,7 +22,13 @@ export function Navbar() {
           href="#top"
           class="sp-pressable flex items-center gap-2 text-[15px] font-semibold tracking-[-0.015em] text-[#1D1D1F]"
         >
-          <img src="/slowpage-icon.png" alt="" class="size-6 drop-shadow-[0_1px_2px_rgba(0,0,0,0.1)]" />
+          <img
+            src="/slowpage-icon.png"
+            alt=""
+            width="24"
+            height="24"
+            class="size-6 drop-shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+          />
           <span>Slowpage</span>
         </a>
 
@@ -39,13 +45,13 @@ export function Navbar() {
         </div>
 
         <div class="flex items-center gap-5 text-[12.5px] text-[#424245]">
-          <a
-            href={t.navOtherLocaleHref}
-            hreflang={t.navOtherLocaleHref === '/' ? 'zh-CN' : 'en'}
-            class="transition-colors duration-150 hover:text-[#1D1D1F]"
+          <button
+            type="button"
+            onClick={() => setLocale(locale() === 'en' ? 'zh' : 'en')}
+            class="cursor-pointer transition-colors duration-150 hover:text-[#1D1D1F]"
           >
             {t.navOtherLocale}
-          </a>
+          </button>
           <a
             href={REPO_URL}
             target="_blank"

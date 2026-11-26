@@ -1,14 +1,43 @@
+import { createSignal } from 'solid-js'
+
 /**
- * Marketing copy for the two locales. The in-page product demos (library,
- * reader, margin cards) mirror the Chinese app UI and stay as they are.
+ * Marketing copy for the two locales. Interactive product demos also read
+ * `locale()` so UI chrome, sample notes, and library descriptions switch in place.
  *
- * The locale comes from <html lang>, which each HTML entry sets statically:
- * `/` is zh-CN and `/en/` is en.
+ * The initial locale comes from the `sp_lang` cookie (set when toggling in-page
+ * or hitting `/en`), falling back to `<html lang>` set at the Cloudflare edge.
  */
 export type Locale = 'zh' | 'en'
 
-export const locale: Locale =
-  typeof document !== 'undefined' && document.documentElement.lang.startsWith('en') ? 'en' : 'zh'
+export function detectInitialLocale(): Locale {
+  if (typeof document === 'undefined') return 'zh'
+  const match = document.cookie.match(/(?:^|;\s*)sp_lang=(en|zh)(?:;|$)/)
+  if (match) return match[1] as Locale
+  return document.documentElement.lang.startsWith('en') ? 'en' : 'zh'
+}
+
+const [locale, setLocaleSignal] = createSignal<Locale>(detectInitialLocale())
+
+export { locale }
+
+export function setLocale(next: Locale) {
+  if (typeof document !== 'undefined') {
+    document.cookie = `sp_lang=${next}; Path=/; Max-Age=31536000; SameSite=Lax`
+    document.documentElement.lang = next === 'en' ? 'en' : 'zh-CN'
+    document.title =
+      next === 'en'
+        ? 'Slowpage — Read slower. Understand more.'
+        : 'Slowpage — 读得慢一点，懂得多一点'
+  }
+  if (typeof window !== 'undefined') {
+    ;(
+      window as unknown as {
+        posthog?: { register?: (props: Record<string, unknown>) => void }
+      }
+    ).posthog?.register?.({ locale: next })
+  }
+  setLocaleSignal(next)
+}
 
 export const REPO_URL = 'https://github.com/realmorrisliu/slowpage'
 export const RELEASES_URL = `${REPO_URL}/releases/latest`
@@ -22,7 +51,6 @@ const zh = {
   navMarginalia: '页边批注',
   navLibrary: '书库',
   navOtherLocale: 'English',
-  navOtherLocaleHref: '/en/',
   navDownload: '下载',
 
   heroEyebrow: '为 macOS 打造的 EPUB 与 PDF 阅读器',
@@ -83,7 +111,6 @@ const en: typeof zh = {
   navMarginalia: 'Marginalia',
   navLibrary: 'Library',
   navOtherLocale: '中文',
-  navOtherLocaleHref: '/',
   navDownload: 'Download',
 
   heroEyebrow: 'An EPUB and PDF reader for macOS',
@@ -143,4 +170,9 @@ const en: typeof zh = {
   footerCredits: 'MIT OR Apache-2.0 · Icons from IconMCP (MIT) · Liquid glass components open-sourced as',
 }
 
-export const t = locale === 'en' ? en : zh
+export const t: typeof zh = new Proxy({} as typeof zh, {
+  get(_target, prop) {
+    const dict = locale() === 'en' ? en : zh
+    return dict[prop as keyof typeof zh]
+  },
+})

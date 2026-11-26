@@ -101,6 +101,26 @@ function hyphenPoints(word: string): number[] {
 
 export type SetLine = { text: string; wordSpacing: number; justify: boolean }
 
+export type LayoutMetrics = {
+  lines: number
+  maxWordSpacing: number
+}
+
+/** Compute total line count and peak word-spacing adjustment across set paragraphs. */
+export function measureLayoutMetrics(paragraphs: SetLine[][]): LayoutMetrics {
+  let lines = 0
+  let maxWordSpacing = 0
+  for (const para of paragraphs) {
+    lines += para.length
+    for (const line of para) {
+      if (line.justify && Math.abs(line.wordSpacing) > Math.abs(maxWordSpacing)) {
+        maxWordSpacing = line.wordSpacing
+      }
+    }
+  }
+  return { lines, maxWordSpacing }
+}
+
 let canvas: HTMLCanvasElement | null = null
 
 function measurer(font: string) {

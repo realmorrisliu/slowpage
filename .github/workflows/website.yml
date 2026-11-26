@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -49,4 +53,11 @@ jobs:
         run: |
           test -f .cloudflare/output/v1/config.json
           test -f .cloudflare/output/v1/workers/default/assets/index.html
+          test -f .cloudflare/output/v1/workers/default/assets/_i18n/en.html
+          test -f .cloudflare/output/v1/workers/default/assets/robots.txt
+          test -f .cloudflare/output/v1/workers/default/assets/sitemap.xml
+          test -f .cloudflare/output/v1/workers/default/assets/og.png
+          test -f .cloudflare/output/v1/workers/default/assets/og-en.png
           test -f .cloudflare/output/v1/workers/default/bundle/index.js
+          grep -q "读得慢一点" .cloudflare/output/v1/workers/default/assets/index.html
+          grep -q "Read slower." .cloudflare/output/v1/workers/default/assets/_i18n/en.html
