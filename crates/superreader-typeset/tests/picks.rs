@@ -531,10 +531,12 @@ fn caret_hit_test_returns_the_glyph_under_the_point() {
             start: superreader_typeset::Caret {
                 node: glyph.node,
                 offset: 0,
+                at_line_end: false,
             },
             end: superreader_typeset::Caret {
                 node: glyph.node,
                 offset: 5,
+                at_line_end: false,
             },
         },
     );
@@ -603,6 +605,7 @@ fn a_trailing_edge_caret_stays_on_the_line_that_was_hit() {
         .unwrap();
     assert_eq!(caret.node, last.node);
     assert_eq!(caret.offset, last.offset.saturating_add(last.span));
+    assert!(caret.at_line_end);
     let bar = layout.caret_bar(0, caret).unwrap();
     let end = last.x + last.advance;
     assert!(
@@ -616,6 +619,75 @@ fn a_trailing_edge_caret_stays_on_the_line_that_was_hit() {
         (bar.x - next.x).abs() > 8.0,
         "the bar sat on the next line at {}",
         bar.x
+    );
+}
+
+#[test]
+fn a_wrapped_line_start_keeps_the_caret_on_that_line() {
+    let Some(setter) = fonts() else { return };
+    let body = "朝".repeat(80);
+    let layout = lay(
+        &setter,
+        &format!("<html><body><p>{body}</p></body></html>"),
+        "",
+    );
+    let mut lines: Vec<Vec<superreader_typeset::PlacedGlyph>> = Vec::new();
+    for glyph in layout
+        .glyph_runs(0)
+        .into_iter()
+        .flat_map(|run| run.glyphs)
+        .filter(|glyph| !glyph.hyphen)
+    {
+        let new_line = lines
+            .last()
+            .is_none_or(|line| (line[0].baseline_y - glyph.baseline_y).abs() > 0.5);
+        if new_line {
+            lines.push(vec![glyph]);
+        } else {
+            lines.last_mut().unwrap().push(glyph);
+        }
+    }
+    assert!(lines.len() >= 2, "the paragraph has to wrap");
+    let previous = lines[0].last().unwrap();
+    let start = &lines[1][0];
+    assert_eq!(
+        previous.offset.saturating_add(previous.span),
+        start.offset,
+        "the wrap has to share a text offset"
+    );
+    let caret = layout
+        .hit_test(
+            0,
+            superreader_typeset::Point {
+                x: start.x + start.advance * 0.25,
+                y: start.baseline_y,
+            },
+        )
+        .unwrap();
+    assert!(!caret.at_line_end);
+    assert_eq!(caret.offset, start.offset);
+    let bar = layout.caret_bar(0, caret).unwrap();
+    assert!(
+        (bar.x - start.x).abs() < 1.0,
+        "caret bar {} vs line start {}",
+        bar.x,
+        start.x
+    );
+    let trailing = layout
+        .hit_test(
+            0,
+            superreader_typeset::Point {
+                x: previous.x + previous.advance + 4.0,
+                y: previous.baseline_y,
+            },
+        )
+        .unwrap();
+    assert!(trailing.at_line_end);
+    assert_eq!(trailing, caret);
+    let end_bar = layout.caret_bar(0, trailing).unwrap();
+    assert!(
+        (end_bar.y - bar.y).abs() > 1.0,
+        "both edges drew on one line"
     );
 }
 
@@ -732,10 +804,12 @@ fn font_expansion_scales_advances_and_the_caret_follows() {
             start: superreader_typeset::Caret {
                 node: glyph.node,
                 offset: glyph.offset,
+                at_line_end: false,
             },
             end: superreader_typeset::Caret {
                 node: end.node,
                 offset: end.offset + end.span,
+                at_line_end: false,
             },
         },
     );

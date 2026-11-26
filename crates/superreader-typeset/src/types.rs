@@ -24,11 +24,23 @@ pub const TEX_HYPHEN_RIGHT_MIN: usize = 3;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FontId(pub u16);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Caret {
     pub node: u32,
     pub offset: u32,
+    /// The hit was past the last glyph of its line. A wrapped line can start
+    /// at this same text offset. Equality ignores the edge, so a selection is
+    /// still the two offsets.
+    pub at_line_end: bool,
 }
+
+impl PartialEq for Caret {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node && self.offset == other.offset
+    }
+}
+
+impl Eq for Caret {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaretRange {

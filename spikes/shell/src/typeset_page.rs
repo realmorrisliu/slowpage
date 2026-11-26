@@ -184,7 +184,7 @@ impl Session {
             return;
         };
         if from == to {
-            self.caret = Some(from);
+            self.caret = Some(to);
             self.range = None;
             return;
         }

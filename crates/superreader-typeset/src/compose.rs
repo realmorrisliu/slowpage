@@ -350,9 +350,9 @@ impl ChapterLayout {
 
     /// A one-pixel bar at the caret, in the same space as [`Self::selection_rects`].
     ///
-    /// A caret at the end of a line stays on that line. The next line's first
-    /// glyph often starts at the same text offset, and the bar is the advance
-    /// of the glyph that ends here.
+    /// A trailing hit stays on the glyph that ends at the caret. A leading hit
+    /// stays on the glyph that starts there, even when a wrap makes those two
+    /// text offsets the same.
     pub fn caret_bar(&self, page: u32, caret: Caret) -> Option<SelectionRect> {
         let page = self.pages.get(page as usize)?;
         let key = (caret.node, caret.offset);
@@ -363,7 +363,7 @@ impl ChapterLayout {
                 if glyph.hyphen {
                     continue;
                 }
-                if (glyph.node, glyph.offset) >= key {
+                if !caret.at_line_end && (glyph.node, glyph.offset) >= key {
                     return Some(caret_bar_at(line, glyph.x));
                 }
                 if glyph.node == caret.node
@@ -375,8 +375,10 @@ impl ChapterLayout {
                 }
                 last = Some((line, glyph));
             }
-            if let Some(x) = at_end {
-                return Some(caret_bar_at(line, x));
+            if caret.at_line_end {
+                if let Some(x) = at_end {
+                    return Some(caret_bar_at(line, x));
+                }
             }
         }
         let (line, glyph) = last?;
@@ -396,6 +398,7 @@ impl ChapterLayout {
             return Some(Caret {
                 node: first.node,
                 offset: first.offset,
+                at_line_end: false,
             });
         }
         for glyph in &glyphs {
@@ -403,6 +406,7 @@ impl ChapterLayout {
                 return Some(Caret {
                     node: glyph.node,
                     offset: glyph.offset,
+                    at_line_end: false,
                 });
             }
         }
@@ -410,6 +414,7 @@ impl ChapterLayout {
         Some(Caret {
             node: last.node,
             offset: last.offset.saturating_add(last.span),
+            at_line_end: true,
         })
     }
 
