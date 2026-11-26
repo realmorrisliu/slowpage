@@ -315,6 +315,12 @@ define_class!(
             let state = self.ivars().state.clone();
             let mut state = state.borrow_mut();
             if let Some((start, _)) = state.drag.take() {
+                if state.mode == Mode::Typeset {
+                    state.typeset_pointer(start, point);
+                    drop(state);
+                    unsafe { msg_send![self, setNeedsDisplay: true] }
+                    return;
+                }
                 let click = !crate::visit::click_is_drag(point.0 - start.0, point.1 - start.1);
                 let turns = crate::ease::pointer_turns(crate::ease::current());
                 let on_page = click
@@ -438,6 +444,7 @@ struct State {
     selection_gen: u64,
     anchor_payload: String,
     web: Option<crate::web::WebChapter>,
+    typeset: Option<crate::typeset_page::Session>,
     web_pages: usize,
     trim_id: String,
     declared: Option<(f64, f64)>,
@@ -521,6 +528,8 @@ enum Mode {
     Pdfium,
     Hayro,
     WebKit,
+    /// Glyph runs from `superreader-typeset`. `SPIKE_TYPESET=1` only.
+    Typeset,
     Blitz,
     Text,
 }
@@ -549,6 +558,7 @@ impl State {
         let (mode, pages, page) = match self.mode {
             Mode::Empty => ("empty", 0, 0),
             Mode::WebKit => ("epub", self.web_pages, self.epub_page + 1),
+            Mode::Typeset => ("typeset", self.web_pages, self.epub_page + 1),
             Mode::Pdfium | Mode::Hayro => (
                 "pdf",
                 self.pdf.as_ref().map(|pdf| pdf.sizes.len()).unwrap_or(0),
@@ -603,6 +613,12 @@ impl State {
         }
         self.paint_shell(bounds);
         if self.mode == Mode::Empty {
+            return;
+        }
+        if self.mode == Mode::Typeset {
+            self.stage_w = bounds.size.width;
+            self.stage_h = bounds.size.height;
+            self.draw_typeset(view);
             return;
         }
         if self.mode == Mode::WebKit {
@@ -943,7 +959,13 @@ impl State {
                     spike_library::column::arm_nav(intent);
                 }
                 let delta = dispatched.delta;
-                if self.mode == Mode::WebKit {
+                if self.mode == Mode::Typeset {
+                    if let Some(session) = self.typeset.as_mut() {
+                        session.turn(delta as i32);
+                        self.epub_page = session.page() as usize;
+                        self.web_pages = session.page_count() as usize;
+                    }
+                } else if self.mode == Mode::WebKit {
                     if let Some(web) = &self.web {
                         web.turn(delta as i32, crate::visit::TurnSource::User);
                     }
@@ -2121,7 +2143,6 @@ impl State {
             self.mode = Mode::Pdfium;
             self.load_pdf_at(engine, &book.path, plan.page)
         } else if plan.web {
-            self.mode = Mode::WebKit;
             let sentence = crate::settings::resume_offset(&crate::settings::path(), &book.path);
             let mut href = crate::settings::resume_href(&crate::settings::path(), &book.path);
             let mut caret = crate::settings::resume_caret(&crate::settings::path(), &book.path);
@@ -2130,26 +2151,57 @@ impl State {
             self.web_pages = 1;
             self.shown_at = None;
             self.placed = None;
-            self.open_web(view, &href);
-            if let Some(web) = &self.web {
-                let open = crate::visit::opened_place(&web.spine(), &href, page, sentence);
-                if open.page != page || open.offset != sentence {
-                    page = open.page;
-                    offset = open.offset;
-                    if offset == 0 {
-                        caret = false;
+            let debug = crate::typeset_page::debug_requested(
+                std::env::var(crate::typeset_page::TYPESET_SWITCH)
+                    .ok()
+                    .as_deref(),
+            );
+            let opened_typeset = if debug {
+                match crate::typeset_page::Session::open(&book.path, &href) {
+                    Ok(session) => {
+                        self.web_pages = session.page_count() as usize;
+                        self.epub_page = session.page() as usize;
+                        self.declared = session.declared();
+                        self.shown_at = Some(Instant::now());
+                        self.typeset = Some(session);
+                        true
                     }
-                    let shown = web.href();
-                    if !shown.is_empty() {
-                        href = shown.clone();
-                        replaced_href = shown;
+                    Err(err) => {
+                        eprintln!("typeset view fell back to WKWebView: {err}");
+                        false
                     }
                 }
+            } else {
+                false
+            };
+            if crate::typeset_page::page_engine(debug, opened_typeset)
+                == crate::typeset_page::PageEngine::Typeset
+            {
+                self.mode = Mode::Typeset;
+                true
+            } else {
+                self.mode = Mode::WebKit;
+                self.open_web(view, &href);
+                if let Some(web) = &self.web {
+                    let open = crate::visit::opened_place(&web.spine(), &href, page, sentence);
+                    if open.page != page || open.offset != sentence {
+                        page = open.page;
+                        offset = open.offset;
+                        if offset == 0 {
+                            caret = false;
+                        }
+                        let shown = web.href();
+                        if !shown.is_empty() {
+                            href = shown.clone();
+                            replaced_href = shown;
+                        }
+                    }
+                }
+                if self.web.is_some() {
+                    crate::web::open_reader(page, offset, &href, caret);
+                }
+                self.web.is_some()
             }
-            if self.web.is_some() {
-                crate::web::open_reader(page, offset, &href, caret);
-            }
-            self.web.is_some()
         } else {
             false
         };
@@ -2202,6 +2254,7 @@ impl State {
         if let Some(web) = self.web.take() {
             web.dismiss();
         }
+        self.typeset = None;
     }
 
     fn bind_swipe(&self) {
@@ -2210,6 +2263,119 @@ impl State {
         } else {
             crate::web::show_swipe_target(None);
         }
+    }
+
+    fn draw_typeset(&mut self, view: &StageView) {
+        if self
+            .shown_at
+            .map(|at| at.elapsed().as_millis() < 2200)
+            .unwrap_or(true)
+        {
+            schedule_chrome_pump(view, 0.016);
+        }
+        let Some(frame) = self.typeset_frame() else {
+            return;
+        };
+        let fitted = crate::chrome::FittedPage {
+            x: frame.x,
+            y: frame.y,
+            w: frame.w,
+            h: frame.h,
+        };
+        let (kx, ky, kw, kh) = fitted.key();
+        self.placed = Some((kx, ky, kw, kh, self.trim_id.clone()));
+        let Some(ctx) = current_context() else {
+            return;
+        };
+        let ctx = &*ctx;
+        let preview = self.typeset_preview(frame);
+        let Some(session) = self.typeset.as_mut() else {
+            return;
+        };
+        let Some(image) = session.marked(preview) else {
+            return;
+        };
+        let bytes = bitmap::flip_rows(image.width, &image.rgba);
+        let Some(cg) = bitmap::rgba_image(image.width, image.height, bytes, true) else {
+            return;
+        };
+        let rect = NSRect::new(
+            NSPoint::new(frame.x, frame.y),
+            NSSize::new(frame.w, frame.h),
+        );
+        unsafe {
+            CGContext::save_g_state(Some(ctx));
+            CGContext::set_alpha(Some(ctx), crate::shelf_pass::body_alpha());
+            CGContext::draw_image(Some(ctx), rect, Some(&cg));
+            CGContext::restore_g_state(Some(ctx));
+        }
+    }
+
+    fn typeset_frame(&self) -> Option<crate::typeset_page::PageFrame> {
+        if self.stage_w < 1.0 || self.stage_h < 1.0 {
+            return None;
+        }
+        let item = crate::reading::trim(&self.trim_id);
+        let (rw, rh, _) = crate::reading::page_ratio(self.declared, item);
+        let (box_w, box_h, left, top) = self.fit_box();
+        let fitted = crate::chrome::fitted_page(left, top, box_w, box_h, rw, rh);
+        if fitted.w < 1.0 || fitted.h < 1.0 {
+            return None;
+        }
+        Some(crate::typeset_page::PageFrame {
+            x: fitted.x,
+            y: fitted.y,
+            w: fitted.w,
+            h: fitted.h,
+        })
+    }
+
+    fn typeset_preview(
+        &self,
+        frame: crate::typeset_page::PageFrame,
+    ) -> Option<(superreader_typeset::Point, superreader_typeset::Point)> {
+        let (start, end) = self.drag?;
+        if !crate::visit::click_is_drag(end.0 - start.0, end.1 - start.1) {
+            return None;
+        }
+        let from = crate::typeset_page::layout_point(frame, start.0, start.1)?;
+        let to = crate::typeset_page::layout_point(frame, end.0, end.1)?;
+        Some((from, to))
+    }
+
+    fn typeset_pointer(&mut self, start: (f64, f64), end: (f64, f64)) {
+        let Some(frame) = self.typeset_frame() else {
+            return;
+        };
+        let click = !crate::visit::click_is_drag(end.0 - start.0, end.1 - start.1);
+        if click {
+            match crate::visit::page_edge(end.0, end.1, frame.x, frame.y, frame.w, frame.h) {
+                crate::visit::PageEdge::Back => {
+                    self.command("page", &json!({"delta": -1, "intent": "edge"}));
+                    return;
+                }
+                crate::visit::PageEdge::Forward => {
+                    self.command("page", &json!({"delta": 1, "intent": "edge"}));
+                    return;
+                }
+                crate::visit::PageEdge::None => {}
+            }
+        }
+        let Some(session) = self.typeset.as_mut() else {
+            return;
+        };
+        if click {
+            if let Some(point) = crate::typeset_page::layout_point(frame, end.0, end.1) {
+                session.place_caret(point);
+            }
+        } else if let (Some(from), Some(to)) = (
+            crate::typeset_page::layout_point(frame, start.0, start.1),
+            crate::typeset_page::layout_point(frame, end.0, end.1),
+        ) {
+            session.select_span(from, to);
+        }
+        self.epub_page = session.page() as usize;
+        self.publish();
     }
 
     fn note_page(&mut self) {
@@ -2248,7 +2414,7 @@ impl State {
                     Some(shown)
                 }
             }
-            Mode::Empty | Mode::Text | Mode::Blitz => None,
+            Mode::Typeset | Mode::Empty | Mode::Text | Mode::Blitz => None,
         }
     }
 
@@ -2683,6 +2849,22 @@ impl State {
                 let (left, right) =
                     crate::reading::shown_page_footer(self.product, current as u32, pages as u32);
                 (title, variant, left, right, false, String::new())
+            }
+            Mode::Typeset => {
+                let pages = self.web_pages.max(1);
+                let page = (self.epub_page % pages) + 1;
+                shown_page = page as u32;
+                shown_pages = pages as u32;
+                let title = self
+                    .typeset
+                    .as_ref()
+                    .map(|session| session.title().to_string())
+                    .unwrap_or_default();
+                title_opacity = crate::reading::title_alpha(elapsed_ms(self.shown_at));
+                footer_opacity = 1.0;
+                bars_row = true;
+                let (left, right) = crate::reading::footer_zh(page as u32, pages as u32);
+                (title, String::new(), left, right, false, String::new())
             }
             Mode::WebKit => {
                 let pages = self.web_pages.max(1);
@@ -3358,6 +3540,7 @@ impl Stage {
             selection_gen: 0,
             anchor_payload: String::new(),
             web: None,
+            typeset: None,
             web_pages: 1,
             trim_id: crate::settings::load(&crate::settings::path()),
             declared: None,

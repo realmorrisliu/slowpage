@@ -1294,6 +1294,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "harfrust"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "865dcc4105d51c323d8fedbb2d75b5e9c8ecddf5613f74c82f851d0afbc97114"
+dependencies = [
+ "bitflags 2.13.2",
+ "bytemuck",
+ "read-fonts 0.46.0",
+ "smallvec",
+ "yoke",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2619,7 +2632,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b74c0d373e462e504ad4436710a39f099e18e848e1ee711f70cd2dcd5a69b290"
 dependencies = [
  "fontique",
- "harfrust",
+ "harfrust 0.12.0",
  "hashbrown 0.17.1",
  "icu_locale_core",
  "icu_normalizer",
@@ -3574,6 +3587,7 @@ dependencies = [
  "spike-library",
  "spike-pdf",
  "spike-report",
+ "superreader-typeset",
 ]
 
 [[package]]
@@ -3848,6 +3862,19 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "superreader-typeset"
+version = "0.1.0"
+dependencies = [
+ "harfrust 0.15.0",
+ "icu_segmenter",
+ "rbook",
+ "read-fonts 0.46.0",
+ "skrifa 0.49.0",
+ "spike-bold-word-starts",
+ "tiny-skia",
+]
 
 [[package]]
 name = "svgtypes"
@@ -4313,7 +4340,7 @@ dependencies = [
  "data-url",
  "flate2",
  "fontdb",
- "harfrust",
+ "harfrust 0.12.0",
  "imagesize",
  "kurbo",
  "log",

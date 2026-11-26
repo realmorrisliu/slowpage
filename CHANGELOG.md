@@ -19,3 +19,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Pin the macOS shell to NSH 0.5.0.
 - EPUB direction under evaluation toward an owned pure-Rust typesetter (WKWebView remains default until then).
+- `SPIKE_TYPESET=1` paints the owned typesetter's glyph runs. The default EPUB page stays WKWebView.

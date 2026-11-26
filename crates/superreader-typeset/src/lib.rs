@@ -1,7 +1,8 @@
 //! Headless chapter typesetter for the owned EPUB engine.
 //!
-//! The Mac view consumes glyph runs, carets, hit tests, and selection rects.
-//! WKWebView remains the reader until the paperback gates pass.
+//! The shell paints those runs when `SPIKE_TYPESET=1`.
+//! WKWebView remains the default reader until phase 1 is re-measured
+//! and that view carries the reading interactions.
 //! icu_segmenter is Unicode-3.0. rbook is Apache-2.0. harfrust is MIT.
 //! skrifa is MIT OR Apache-2.0. tiny-skia is BSD-3-Clause.
 

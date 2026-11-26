@@ -1,6 +1,6 @@
 use superreader_typeset::{
-    load_chapter, ChapterInput, Typesetter, TEX_HYPHEN_LEFT_MIN, TEX_HYPHEN_PENALTY,
-    TEX_HYPHEN_RIGHT_MIN,
+    load_chapter, ChapterInput, Typesetter, PAPERBACK_HEIGHT, PAPERBACK_WIDTH, PAPER_RGB,
+    TEX_HYPHEN_LEFT_MIN, TEX_HYPHEN_PENALTY, TEX_HYPHEN_RIGHT_MIN,
 };
 
 fn fonts() -> Option<Typesetter> {
@@ -539,6 +539,29 @@ fn caret_hit_test_returns_the_glyph_under_the_point() {
         },
     );
     assert!(!rects.is_empty());
+    let bar = layout.caret_bar(0, caret).unwrap();
+    assert!(
+        (bar.x - glyph.x).abs() < 0.6,
+        "caret bar {} vs glyph {}",
+        bar.x,
+        glyph.x
+    );
+    assert!((bar.width - 1.0).abs() < 1e-6);
+    assert!(bar.height > 1.0);
+    let image = setter.raster(&layout, 0).unwrap();
+    assert_eq!(image.width, PAPERBACK_WIDTH as u32);
+    assert_eq!(image.height, PAPERBACK_HEIGHT as u32);
+    assert_eq!(
+        &image.rgba[..4],
+        &[PAPER_RGB.0, PAPER_RGB.1, PAPER_RGB.2, 255]
+    );
+    assert!(
+        image
+            .rgba
+            .chunks(4)
+            .any(|px| px[0] < 40 && px[1] < 40 && px[2] < 40),
+        "the raster has no ink"
+    );
 }
 
 fn lay_at(

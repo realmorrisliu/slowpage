@@ -44,7 +44,7 @@ The disliked reference is the same book as a two-page spread.
 
 ## Stack
 
-The app is Rust on NSH, pinned at v0.5.0, macOS first. PDF pages ship `libpdfium.dylib` through pdfium-render. EPUB pages use the system WKWebView. That EPUB choice is under re-evaluation as of 2026-11-10. The headless typesetter in `crates/superreader-typeset` is the first step. The reader stays on WKWebView until phase 1 of the typesetter gate passes. LLM calls go through [openrouter-rs](https://github.com/realmorrisliu/openrouter-rs). Annotations live in SQLite. The full-text index is tantivy. AGPL dependencies stay out, including MuPDF. The GPL `epub` crate stays out. EPUB parsing uses rbook.
+The app is Rust on NSH, pinned at v0.6.1, macOS first. PDF pages ship `libpdfium.dylib` through pdfium-render. EPUB pages use the system WKWebView. That EPUB choice is under re-evaluation as of 2026-11-10. The headless typesetter in `crates/superreader-typeset` is the first step. `SPIKE_TYPESET=1` opens a glyph-run page from that crate. The reader stays on WKWebView until phase 1 of the typesetter gate passes and that page carries the reading interactions. LLM calls go through [openrouter-rs](https://github.com/realmorrisliu/openrouter-rs). Annotations live in SQLite. The full-text index is tantivy. AGPL dependencies stay out, including MuPDF. The GPL `epub` crate stays out. EPUB parsing uses rbook.
 
 ## NSH alignment
 
@@ -67,7 +67,7 @@ Where we differ, on purpose:
 - The window is ordered front with `activateIgnoringOtherApps`. `order_front` calls `activate`.
 - `FullScreenPrimary` is added to the window's collection behavior. `set_level` is the NSH call that sets collection behavior, and it replaces the behavior with `MoveToActiveSpace`.
 - The titlebar hairline is cleared with `setTitlebarSeparatorStyle`. The traffic lights fade by setting the alpha of `standardWindowButton`. NSH exposes neither.
-- EPUB pages are a system WKWebView, and PDF pages are a pdfium bitmap. The page is outside NSH's `WebView`. The EPUB half is under re-evaluation. The first native step is the headless typesetter, and the Mac glyph-run view is not built yet. PDF via pdfium-render stays.
+- EPUB pages are a system WKWebView, and PDF pages are a pdfium bitmap. The page is outside NSH's `WebView`. The EPUB half is under re-evaluation. `SPIKE_TYPESET=1` paints the typesetter's glyph runs in that page rectangle. The default stays WKWebView. PDF via pdfium-render stays.
 - `main.rs` calls `run_app` so the spike can register the native stage and set the opening size. Verify launches that binary. `nsh test` still opens the app the documented way, from `nsh.json`.
 
 ## Agents and alan
@@ -167,6 +167,7 @@ Until S3, the spike centers the page in the area from the bar's right edge to th
 - 2026-11-20. Control-Command-I and the View menu item enter and leave immersive reading while a book is open. Escape returns to Page and panel with the margin shown.
 - 2026-11-20. A trackpad finger moves the current page by the gesture's own points, clamped to the fitted page. The existing 160 ms cosine starts from that offset: the rest of the page on a commit, and back to the same page on a shorter lift. The footer and the stored page change when the glide lands. A PDF does not draw the blocked-edge ease and does not rubber-band past the first or last page. No rubber-band distance was approved. EPUB already painted this follow in the page script. Checklist item 3 is not done.
 - 2026-11-20. Morris, through Mochi, at 20:15 Asia/Shanghai, approved the six-picture scheme. The window button and the 160 ms cosine are that scheme. The page keeps its departing frame until the motion lands. A second toggle or Escape returns from the current rectangle in at most 160 ms. The command drops the held finger, the flying page, and the queued page without writing. The toolbar stays off. S4 is not done, because the Mac window, `nsh test`, WebKit, and a real library were not run. Checklist item 3 is not done.
+- 2026-11-26. The Mac glyph-run view is behind `SPIKE_TYPESET=1`. It paints the typesetter raster of the glyph runs, on Books-white `#FFFFFF` with ink `#1c1915`, and it uses the crate's caret, hit test, and selection rects. The selection tint is the PDF highlight. A missing face, or a chapter the crate cannot open, stays on WKWebView. The default page is still WKWebView. Phase 1 was not re-measured on this change: the reader comparison needs the WKWebView census on the same build, fonts, and width. The view does not yet turn with the 160 ms slide, keep a sentence across a reopen, follow contents, in-book links, annotations, bookmarks, or in-book find, or reflow while the window resizes. Those stay on WKWebView. PDF via pdfium-render is unchanged.
 
 ## PDF reading
 

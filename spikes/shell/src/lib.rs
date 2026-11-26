@@ -14,6 +14,7 @@ mod shelf;
 mod shelf_pass;
 mod stage;
 mod tokens;
+mod typeset_page;
 mod verify_session;
 mod visit;
 mod web;
