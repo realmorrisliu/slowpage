@@ -4,20 +4,20 @@ const D = '\x1b[2m'
 const X = '\x1b[0m'
 
 const BANNER = `
-  ${B}${P}SLOWPAGE${X}  —  安静如纸，灵动如玻璃
-  Minimal macOS Single-Page Reader (EPUB & PDF)
+  ${B}${P}SLOWPAGE${X}  —  读得慢一点，懂得多一点 · Read slower. Understand more.
+  EPUB & PDF reader for macOS
 
   ${B}FEATURES${X}
     Paper-first      Opaque #FFFFFF reading sheet, warm serif proportions
     Marginalia       Line-anchored notes & in-process @alan reading companion
     Local library    Apple Books, Calibre, and local EPUB / PDF folders
-    macOS native     160 ms cosine page turns & Liquid Glass floating chrome
+    Typesetting      Paragraph-at-once (Knuth–Plass) justification, CJK kinsoku
 
   ${B}INSTALL / DOWNLOAD${X}
-    macOS Alpha 1    https://github.com/realmorrisliu/slowpage/releases/tag/v0.1.0-alpha.1
+    Latest release   https://github.com/realmorrisliu/slowpage/releases/latest
     Source           git clone https://github.com/realmorrisliu/slowpage.git
 
-  ${D}https://slowpage.app · https://github.com/realmorrisliu/slowpage · MIT OR Apache-2.0${X}
+  ${D}https://slowpage.app · https://slowpage.app/en/ · MIT OR Apache-2.0 · Powered by Alan (https://alanworks.app)${X}
 `
 
 export default {

@@ -48,7 +48,10 @@ type ShelfBook = {
   pages: BookPage[]
 }
 
-const RELEASE_URL = 'https://github.com/realmorrisliu/slowpage/releases/tag/v0.1.0-alpha.1'
+import { RELEASES_URL, t } from '../i18n'
+import { useReleaseVersion } from '../release'
+
+const version = useReleaseVersion()
 
 const SHELF_BOOKS: ShelfBook[] = [
   {
@@ -290,32 +293,42 @@ export function HeroSection() {
         <p
           data-shown={heroReady() ? 'true' : 'false'}
           style={{ '--sp-delay': '0ms' }}
-          class="sp-reveal text-[15px] font-semibold tracking-[-0.01em] text-[#D2693C]"
+          class="sp-reveal sp-eyebrow"
         >
-          专为 macOS 打造
+          {t.heroEyebrow}
         </p>
 
         <h1
           data-shown={heroReady() ? 'true' : 'false'}
           style={{ '--sp-delay': '60ms' }}
-          class="sp-reveal mt-3 text-[44px] leading-[1.06] font-semibold tracking-[-0.035em] text-[#1D1D1F] [text-wrap:balance] sm:text-[64px] lg:text-[72px]"
+          class="sp-reveal mt-3 text-[44px] leading-[1.06] font-semibold tracking-[-0.035em] text-[#1D1D1F] [text-wrap:balance] sm:text-[64px] lg:text-[76px]"
         >
-          安静如纸，<span class="text-[#86868B]">灵动如玻璃。</span>
+          {t.heroTitle}
         </h1>
 
         <p
           data-shown={heroReady() ? 'true' : 'false'}
           style={{ '--sp-delay': '120ms' }}
-          class="sp-reveal mt-6 max-w-xl text-[17px] leading-[1.58] text-[#6E6E73] sm:text-[19px]"
+          class="sp-reveal mt-6 max-w-2xl text-[17px] leading-[1.6] text-[#6E6E73] [text-wrap:pretty] sm:text-[20px]"
         >
-          打开书架，摊开纯白书页，把工具轻藏在边缘。像读一本印得很好的纸书，把灵感记在页边，需要时轻唤{' '}
-          <span class="font-medium text-[#D2693C]">@alan</span> 陪你读完这一页。
+          {t.heroLeadBefore}{' '}
+          <span
+            tabindex="0"
+            aria-describedby="alan-tip"
+            class="sp-alan-term font-medium text-[#1D1D1F]"
+          >
+            {t.heroAlan}
+            <span id="alan-tip" role="tooltip" class="sp-alan-tip">
+              {t.heroAlanTip}
+            </span>
+          </span>
+          {t.heroLeadAfter}
         </p>
 
         <div
           data-shown={heroReady() ? 'true' : 'false'}
           style={{ '--sp-delay': '180ms' }}
-          class="sp-reveal mt-9 flex flex-wrap items-center justify-center gap-3.5"
+          class="sp-reveal mt-9 flex flex-wrap items-center justify-center gap-x-7 gap-y-4"
         >
           <GlassButton
             material="tinted"
@@ -323,24 +336,25 @@ export function HeroSection() {
             swell="subtle"
             backdrop="#top"
             class="bg-[#1D1D1F] px-7 text-white"
-            href={RELEASE_URL}
+            href={RELEASES_URL}
             target="_blank"
             rel="noopener noreferrer"
+            data-track="download_click"
           >
-            下载 macOS 版
+            {t.heroDownload}
           </GlassButton>
 
-          <GlassButton size="lg" swell="subtle" backdrop="#top" class="px-7" href="#preview">
-            在网页里试试
-          </GlassButton>
+          <a href="#preview" class="sp-link text-[17px]">
+            {t.heroTry} ›
+          </a>
         </div>
 
         <p
           data-shown={heroReady() ? 'true' : 'false'}
           style={{ '--sp-delay': '220ms' }}
-          class="sp-reveal mt-4 text-[12px] text-[#86868B]"
+          class="sp-reveal sp-tabular mt-4 text-[12.5px] text-[#6E6E73]"
         >
-          macOS 14 Sonoma 及以上 · 支持 Apple Silicon · 免费开源（Alpha 1）
+          {t.heroFine(version())}
         </p>
       </div>
 
@@ -448,7 +462,7 @@ export function HeroSection() {
                     </div>
 
                     {/* Search */}
-                    <div class="mb-3.5 flex h-8 items-center gap-2 rounded-[8px] bg-black/[0.05] px-2.5 text-[12px] text-[#8E8E93]">
+                    <div class="mb-3.5 flex h-8 items-center gap-2 rounded-[8px] bg-black/[0.05] px-2.5 text-[12px] text-[#6E6E73]">
                       <IconSearch class="size-3.5 shrink-0 text-[#6E6E73]" />
                       <span class="truncate">搜索书名、作者、笔记</span>
                     </div>
@@ -456,7 +470,7 @@ export function HeroSection() {
                     {/* Groups */}
                     <div class="space-y-3 text-[13px]">
                       <div>
-                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#8E8E93]">书库</div>
+                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#6E6E73]">书库</div>
                         <div class="flex items-center justify-between rounded-[7px] bg-black/[0.07] px-2 py-1.5 font-medium text-[#1D1D1F]">
                           <span class="flex items-center gap-2">
                             <IconLibrary class="size-3.5 text-[#1D1D1F]" />
@@ -469,82 +483,82 @@ export function HeroSection() {
                             <IconBookOpen class="size-3.5 text-[#6E6E73]" />
                             正在读
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">3</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">3</span>
                         </div>
                         <div class="flex items-center justify-between rounded-[7px] px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <IconBook class="size-3.5 text-[#6E6E73]" />
                             想读
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">4</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">4</span>
                         </div>
                         <div class="flex items-center justify-between rounded-[7px] px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <IconCheck class="size-3.5 text-[#6E6E73]" />
                             已读完
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">5</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">5</span>
                         </div>
                         <div class="flex items-center justify-between rounded-[7px] px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <IconFile class="size-3.5 text-[#6E6E73]" />
                             PDF
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">1</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">1</span>
                         </div>
                       </div>
 
                       <div>
-                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#8E8E93]">笔记</div>
+                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#6E6E73]">笔记</div>
                         <div class="flex items-center justify-between rounded-[7px] px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <IconNote class="size-3.5 text-[#6E6E73]" />
                             高亮与笔记
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">86</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">86</span>
                         </div>
                       </div>
 
                       <div>
-                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#8E8E93]">书单</div>
+                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#6E6E73]">书单</div>
                         <div class="flex items-center justify-between px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <span class="size-2 rounded-full bg-[#E0773A]" />
                             2026 年想读完
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">4</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">4</span>
                         </div>
                         <div class="flex items-center justify-between px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <span class="size-2 rounded-full bg-[#5B8DEF]" />
                             鲁迅全集
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">2</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">2</span>
                         </div>
                         <div class="flex items-center justify-between px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <span class="size-2 rounded-full bg-[#7D8C6A]" />
                             英文经典
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">5</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">5</span>
                         </div>
                       </div>
 
                       <div>
-                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#8E8E93]">来源</div>
+                        <div class="px-2 pb-1 text-[11px] font-semibold text-[#6E6E73]">来源</div>
                         <div class="flex items-center justify-between px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <span class="inline-flex size-3.5 items-center justify-center rounded-[3px] bg-gradient-to-b from-[#FFA53D] to-[#F27A1A]" />
                             Apple Books
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">5</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">5</span>
                         </div>
                         <div class="flex items-center justify-between px-2 py-1 text-[#3A3A3F]">
                           <span class="flex items-center gap-2">
                             <IconFolder class="size-3.5 text-[#6B5A4A]" />
                             calibre
                           </span>
-                          <span class="sp-tabular text-[11px] text-[#8E8E93]">6</span>
+                          <span class="sp-tabular text-[11px] text-[#6E6E73]">6</span>
                         </div>
                         <div class="flex items-center gap-2 px-2 py-1 text-[#6E6E73]">
                           <IconPlus class="size-3.5" />
@@ -606,13 +620,13 @@ export function HeroSection() {
                             /* Realistic Archival PDF Sheet Facsimile */
                             <div class="mx-auto flex h-[430px] w-full max-w-[340px] flex-col justify-between rounded-[6px] border border-black/8 bg-white px-7 py-6 shadow-[0_3px_14px_rgba(0,0,0,0.05)]">
                               <div>
-                                <div class="flex items-center justify-between text-[10px] text-[#8E8E93]">
+                                <div class="flex items-center justify-between text-[10px] text-[#6E6E73]">
                                   <span>{currentPage().meta}</span>
                                   <span class="sp-tabular">p. {heroPageIdx() + 1}</span>
                                 </div>
-                                <h3 class="sp-reading-en mt-2.5 text-[15px] font-semibold leading-snug text-[#1D1D1F]">
+                                <div class="sp-reading-en mt-2.5 text-[15px] font-semibold leading-snug text-[#1D1D1F]">
                                   {currentPage().heading}
-                                </h3>
+                                </div>
                                 <Show when={currentPage().authors}>
                                   <p class="mt-1 text-[10px] leading-relaxed text-[#6E6E73]">
                                     {currentPage().authors}
@@ -634,7 +648,7 @@ export function HeroSection() {
                                   </For>
                                 </div>
                               </div>
-                              <div class="sp-tabular flex items-center justify-between text-[10px] text-[#8E8E93]">
+                              <div class="sp-tabular flex items-center justify-between text-[10px] text-[#6E6E73]">
                                 <span>{activeBook().author}</span>
                                 <span>原版面整页呈阅</span>
                               </div>
@@ -648,7 +662,7 @@ export function HeroSection() {
                                 : 'sp-reading-en text-[18px] leading-[1.52] sm:text-[19px]'
                             }
                           >
-                            <p class="mb-4 text-[12px] tracking-[0.04em] text-[#8E8E93]">{currentPage().heading}</p>
+                            <p class="mb-4 text-[12px] tracking-[0.04em] text-[#6E6E73]">{currentPage().heading}</p>
                             <For each={currentPage().paragraphs}>
                               {(para, idx) => (
                                 <p class={`${idx() > 0 ? 'mt-3.5' : ''} text-justify indent-6`}>
@@ -706,8 +720,8 @@ export function HeroSection() {
                             <IconSidebarLeft class="size-4" />
                           </button>
                         </Show>
-                        <h3 class="text-[22px] font-bold tracking-[-0.015em] text-[#1D1D1F]">全部书籍</h3>
-                        <span class="sp-tabular text-[13px] font-medium text-[#8E8E93]">12 本</span>
+                        <div class="text-[22px] font-bold tracking-[-0.015em] text-[#1D1D1F]">全部书籍</div>
+                        <span class="sp-tabular text-[13px] font-medium text-[#6E6E73]">12 本</span>
                       </div>
                       <div class="flex items-center gap-2 text-[12px] text-[#55555B]">
                         <span class="inline-flex items-center gap-1 rounded-[7px] bg-black/[0.04] px-2.5 py-1">
@@ -734,7 +748,7 @@ export function HeroSection() {
                               <BookCover id={b.id} size="thumb" />
                               <div class="min-w-0 flex-1">
                                 <div class="truncate text-[12px] font-semibold text-[#1D1D1F]">{b.title}</div>
-                                <div class="mt-0.5 truncate text-[10.5px] text-[#8E8E93]">{b.progress}</div>
+                                <div class="mt-0.5 truncate text-[10.5px] text-[#6E6E73]">{b.progress}</div>
                                 <div class="mt-1.5 flex items-center gap-1.5">
                                   <div class="h-[2.5px] flex-1 overflow-hidden rounded-full bg-black/[0.08]">
                                     <div
@@ -742,7 +756,7 @@ export function HeroSection() {
                                       style={{ width: `${b.percent ?? 24}%` }}
                                     />
                                   </div>
-                                  <span class="sp-tabular text-[10px] text-[#8E8E93]">{b.percent}%</span>
+                                  <span class="sp-tabular text-[10px] text-[#6E6E73]">{b.percent}%</span>
                                 </div>
                               </div>
                             </button>
@@ -755,7 +769,7 @@ export function HeroSection() {
                     <div class="mt-5 flex-1">
                       <div class="mb-3 flex items-baseline gap-2">
                         <span class="text-[13px] font-semibold text-[#1D1D1F]">书架</span>
-                        <span class="text-[11px] text-[#8E8E93]">按最近阅读</span>
+                        <span class="text-[11px] text-[#6E6E73]">按最近阅读</span>
                       </div>
 
                       <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
@@ -768,7 +782,7 @@ export function HeroSection() {
                             >
                               <BookCover id={b.id} size="grid" interactive />
                               <div class="mt-2 truncate text-[12px] font-medium text-[#1D1D1F]">{b.title}</div>
-                              <div class="flex items-center justify-between text-[11px] text-[#8E8E93]">
+                              <div class="flex items-center justify-between text-[11px] text-[#6E6E73]">
                                 <span class="truncate">{b.author}</span>
                                 <Show when={b.percent}>
                                   <span class="sp-tabular ml-1 shrink-0">{b.percent}%</span>
@@ -814,7 +828,7 @@ export function HeroSection() {
                       <SlowpageAvatar class="size-7" />
                       <div>
                         <div class="text-[13px] font-semibold text-[#1D1D1F]">Slowpage</div>
-                        <div class="text-[11px] text-[#8E8E93]">你的阅读助手</div>
+                        <div class="text-[11px] text-[#6E6E73]">你的阅读助手</div>
                       </div>
                     </div>
                   </div>
@@ -891,7 +905,7 @@ export function HeroSection() {
                     <div class="rounded-[12px] bg-white p-3 shadow-[0_0_0_0.5px_rgba(0,0,0,0.07)]">
                       <div class="flex items-center gap-1.5 text-[11px] font-semibold text-[#D2693C]">
                         <span>@alan</span>
-                        <span class="font-normal text-[#8E8E93]">· 伴读回复</span>
+                        <span class="font-normal text-[#6E6E73]">· 伴读回复</span>
                       </div>
                       <p class="mt-1 text-[12px] leading-snug text-[#3A3A3F]">
                         {activeBook().marginAlan}
@@ -902,7 +916,7 @@ export function HeroSection() {
                   <div class="flex h-[72px] flex-col justify-between rounded-[14px] bg-white p-2.5 shadow-[0_0_0_0.5px_rgba(0,0,0,0.08),0_2px_10px_rgba(0,0,0,0.05)]">
                     <span class="text-[12px] text-[#A1A1A6]">写下页边笔记，或 @alan…</span>
                     <div class="flex justify-end">
-                      <span class="text-[11px] font-medium text-[#8E8E93]">按回车保存</span>
+                      <span class="text-[11px] font-medium text-[#6E6E73]">按回车保存</span>
                     </div>
                   </div>
                 </div>

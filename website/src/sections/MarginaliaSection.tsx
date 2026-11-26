@@ -1,4 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js'
+
+import { ALAN_URL, t } from '../i18n'
 import {
   GlassMenu,
   GlassMenuContent,
@@ -283,38 +285,48 @@ export function MarginaliaSection() {
   }
 
   return (
-    <section id="marginalia" class="border-y border-black/[0.04] bg-[#F5F5F7] px-5 py-24 sm:px-8 sm:py-32">
+    <section id="marginalia" class="bg-white px-5 py-24 sm:px-8 sm:py-32">
       <div class="mx-auto max-w-[1120px]">
-        {/* Centered Apple Header */}
+        {/* Left-aligned header: title on the left, lead and Alan credit on the right */}
         <div
           ref={(el) => {
             headerRef = el
           }}
-          class="mx-auto max-w-2xl text-center"
+          class="mx-auto grid max-w-[1040px] gap-6 text-left lg:grid-cols-[1.1fr_0.9fr] lg:items-end lg:gap-16"
         >
-          <p
-            data-shown={headerShown() ? 'true' : 'false'}
-            style={{ '--sp-delay': '0ms' }}
-            class="sp-reveal text-[15px] font-semibold tracking-[-0.01em] text-[#D2693C]"
-          >
-            页边批注与 @alan
-          </p>
-          <h2
-            data-shown={headerShown() ? 'true' : 'false'}
-            style={{ '--sp-delay': '60ms' }}
-            class="sp-reveal mt-3 text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-[#1D1D1F] [text-wrap:balance] sm:text-[46px]"
-          >
-            想法落在页边，@alan 就在这一行旁。
-          </h2>
-          <p
+          <div>
+            <p
+              data-shown={headerShown() ? 'true' : 'false'}
+              style={{ '--sp-delay': '0ms' }}
+              class="sp-reveal sp-eyebrow"
+            >
+              {t.marginEyebrow}
+            </p>
+            <h2
+              data-shown={headerShown() ? 'true' : 'false'}
+              style={{ '--sp-delay': '60ms' }}
+              class="sp-reveal mt-3 text-[32px] leading-[1.12] font-semibold tracking-[-0.03em] text-[#1D1D1F] [text-wrap:balance] sm:text-[46px]"
+            >
+              {t.marginTitle[0]}
+              <br />
+              {t.marginTitle[1]}
+            </h2>
+          </div>
+          <div
             data-shown={headerShown() ? 'true' : 'false'}
             style={{ '--sp-delay': '120ms' }}
-            class="sp-reveal mt-4 text-[16px] leading-[1.6] text-[#6E6E73] sm:text-[18px]"
+            class="sp-reveal"
           >
-            不必跳出书页去打开聊天框。轻点一句原文记下眉批，或顺手向{' '}
-            <span class="font-medium text-[#D2693C]">@alan</span>{' '}
-            提问——静息时安静退后，选中才轻轻连起你正在读的那一行。
-          </p>
+            <p class="text-[16px] leading-[1.65] text-[#6E6E73] [text-wrap:pretty] sm:text-[17px]">{t.marginLead}</p>
+            <a
+              href={ALAN_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="sp-link mt-3 inline-block text-[14px]"
+            >
+              {t.poweredByAlan} ›
+            </a>
+          </div>
         </div>
 
         {/* Authentic Slowpage Reading Window Frame */}
