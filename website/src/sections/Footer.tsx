@@ -1,6 +1,6 @@
-const RELEASE_URL = 'https://github.com/realmorrisliu/slowpage/releases/tag/v0.1.0-alpha.1'
-const REPO_URL = 'https://github.com/realmorrisliu/slowpage'
-const ISSUES_URL = 'https://github.com/realmorrisliu/slowpage/issues'
+import { ALAN_URL, ISSUES_URL, M3_URL, RELEASES_URL, REPO_URL, t } from '../i18n'
+
+const linkClass = 'transition-colors hover:text-[#1D1D1F]'
 
 export function Footer() {
   return (
@@ -8,67 +8,64 @@ export function Footer() {
       <div class="mx-auto max-w-[1120px] border-t border-black/[0.08] pt-6 text-left">
         <div class="flex flex-col gap-4 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div class="flex items-center gap-2 text-[12.5px]">
-            <img src="/slowpage-icon.png" alt="" class="size-4.5" />
+            <img src="/slowpage-icon.png" alt="" width="18" height="18" class="size-4.5" />
             <span class="font-semibold text-[#1D1D1F]">Slowpage</span>
-            <span class="text-[#86868B]">· 为 macOS 打造的极简单页阅读器</span>
+            <span class="text-[#59595E]">· {t.footerTagline} · </span>
+            <a href={ALAN_URL} target="_blank" rel="noopener noreferrer" class={`text-[#59595E] ${linkClass}`}>
+              {t.poweredByAlan}
+            </a>
           </div>
 
           <div class="flex flex-wrap items-center gap-5 text-[12.5px] text-[#55555B]">
-            <a
-              href={RELEASE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="transition-colors hover:text-[#1D1D1F]"
-            >
-              下载 Alpha 1
+            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" data-track="download_click" class={linkClass}>
+              {t.footerDownload}
             </a>
-            <a
-              href={REPO_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="transition-colors hover:text-[#1D1D1F]"
-            >
+            <a href={REPO_URL} target="_blank" rel="noopener noreferrer" data-track="github_click" class={linkClass}>
               GitHub
             </a>
-            <a
-              href={ISSUES_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="transition-colors hover:text-[#1D1D1F]"
-            >
-              反馈建议
+            <a href={ISSUES_URL} target="_blank" rel="noopener noreferrer" class={linkClass}>
+              {t.footerFeedback}
             </a>
-            <a
-              href={`${REPO_URL}/blob/main/LICENSE-MIT`}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="transition-colors hover:text-[#1D1D1F]"
-            >
-              开源许可
+            <a href={`${REPO_URL}/blob/main/LICENSE-MIT`} target="_blank" rel="noopener noreferrer" class={linkClass}>
+              {t.footerLicense}
             </a>
           </div>
         </div>
 
-        <div class="text-[11px] leading-relaxed text-[#86868B]">
-          <span>MIT OR Apache-2.0 · 图标来自 IconMCP (MIT) · 网页液态玻璃组件开源于 </span>
-          <a
-            href="https://github.com/realmorrisliu/solid-liquid-glass"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="underline decoration-black/20 underline-offset-2 hover:text-[#1D1D1F]"
-          >
-            solid-liquid-glass
-          </a>
-          <span>（致谢 </span>
-          <a
-            href="https://github.com/bilalgursen/liquid-glass"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="underline decoration-black/20 underline-offset-2 hover:text-[#1D1D1F]"
-          >
-            bilalgursen/liquid-glass
-          </a>
-          <span>）</span>
+        <div class="flex flex-col gap-2 border-t border-black/[0.05] pt-4 text-[11.5px] leading-relaxed text-[#59595E] sm:flex-row sm:items-start sm:justify-between">
+          <div class="max-w-[640px]">
+            <p class="m-0">{t.footerPrivacy}</p>
+            <p class="m-0 mt-1">
+              {t.footerCredits}{' '}
+              <a
+                href="https://github.com/realmorrisliu/solid-liquid-glass"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="underline decoration-black/20 underline-offset-2 hover:text-[#1D1D1F]"
+              >
+                solid-liquid-glass
+              </a>{' '}
+              (
+              <a
+                href="https://github.com/bilalgursen/liquid-glass"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="underline decoration-black/20 underline-offset-2 hover:text-[#1D1D1F]"
+              >
+                bilalgursen/liquid-glass
+              </a>
+              )
+            </p>
+          </div>
+          <nav aria-label={t.footerFamily} class="flex items-center gap-3 whitespace-nowrap">
+            <span>{t.footerFamily}</span>
+            <a href={ALAN_URL} target="_blank" rel="noopener noreferrer" class={`text-[#55555B] ${linkClass}`}>
+              Alan
+            </a>
+            <a href={M3_URL} target="_blank" rel="noopener noreferrer" class={`text-[#55555B] ${linkClass}`}>
+              M3
+            </a>
+          </nav>
         </div>
       </div>
     </footer>

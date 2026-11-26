@@ -18,6 +18,7 @@
   --sp-quiet: #86868b;
   --sp-faint: #a1a1a6;
   --sp-accent: #fc7401;
+  --sp-accent-text: #b4531f;
   --sp-warm-from: #f0b267;
   --sp-warm-to: #d2693c;
   --sp-ring: rgba(0, 0, 0, 0.07);
@@ -95,6 +96,126 @@ body {
 .sp-tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* Section eyebrow. #B4531F keeps 5:1 contrast on white and #F5F5F7. */
+.sp-eyebrow {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--sp-accent-text);
+}
+
+.sp-link {
+  color: var(--sp-accent-text);
+  text-underline-offset: 3px;
+}
+
+.sp-link:hover {
+  text-decoration: underline;
+}
+
+/* Darken unselected GlassTabs labels for >= 7:1 contrast on #F2F2F2 / #E9E9EB. */
+[data-glass-host][role='radiogroup'] > [role='radio'][aria-checked='false'] {
+  color: #4a4a50;
+}
+
+[data-glass-host][role='radiogroup'] > [role='radio'][aria-checked='false']:hover {
+  color: #171717;
+}
+
+/* First mention of @alan: dotted term with an explanation on hover or focus. */
+.sp-alan-term {
+  position: relative;
+  border-bottom: 1px dashed #636366;
+  cursor: help;
+  outline: none;
+}
+
+.sp-alan-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  z-index: 30;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #1d1d1f;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 160ms var(--sp-ease-apple),
+    transform 160ms var(--sp-ease-apple);
+}
+
+@media (max-width: 767px) {
+  /* Center tooltip relative to the lead paragraph on narrow viewports so it never overflows. */
+  .sp-alan-term {
+    position: static;
+  }
+}
+
+.sp-alan-term:hover .sp-alan-tip,
+.sp-alan-term:focus-visible .sp-alan-tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.sp-alan-term:focus-visible {
+  border-bottom-style: solid;
+  border-bottom-color: var(--sp-accent-text);
+}
+
+/* ---------- Typography comparison ---------- */
+.sp-cmp-p {
+  margin: 0 0 0.75em;
+}
+
+.sp-cmp-browser {
+  text-align: justify;
+  text-indent: 1.4em;
+  hyphens: manual;
+}
+
+.sp-cmp-line {
+  display: block;
+  white-space: nowrap;
+}
+
+/* Chinese: the browser's loosest wrapping vs the reader's kinsoku settings. */
+.sp-cmp-zh-naive {
+  text-align: justify;
+  text-indent: 2em;
+  line-break: anywhere;
+  text-spacing-trim: space-all;
+  text-autospace: no-autospace;
+}
+
+.sp-cmp-zh-set {
+  text-align: justify;
+  text-indent: 2em;
+  line-break: strict;
+  text-spacing-trim: normal;
+  text-autospace: normal;
+}
+
+.sp-compare-tag {
+  position: absolute;
+  top: 16px;
+  z-index: 2;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
 
 /* Bold Word Starts typography option */
 .sp-bws b {

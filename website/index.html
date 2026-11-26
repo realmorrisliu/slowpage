@@ -4,19 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
+    <title>Slowpage — 读得慢一点，懂得多一点</title>
     <meta
       name="description"
-      content="Slowpage 是为 macOS 打造的极简单页阅读器：纯白书页、精致中英文排印、页边批注与 @alan 行内伴读，直连本地书库。"
+      content="Slowpage 是为 macOS 打造的 EPUB 与 PDF 阅读器：纯白单页、逐段最优断行的中英文排印、页边批注与内置 AI 伴读 @alan，直连本地书库。"
     />
+    <link rel="canonical" href="https://slowpage.app/" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Slowpage — 安静如纸，灵动如玻璃" />
+    <meta property="og:site_name" content="Slowpage" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:url" content="https://slowpage.app/" />
+    <meta property="og:title" content="Slowpage — 读得慢一点，懂得多一点" />
     <meta
       property="og:description"
-      content="为 macOS 打造的极简单页阅读器：纯白书页、精致中英文排印、页边批注与 @alan 行内伴读，直连本地书库。"
+      content="为 macOS 打造的 EPUB 与 PDF 阅读器：纯白单页、精致排印、页边批注与内置 AI 伴读 @alan。"
     />
-    <meta property="og:url" content="https://slowpage.app/" />
-    <link rel="canonical" href="https://slowpage.app/" />
-    <title>Slowpage — 安静如纸，灵动如玻璃</title>
+    <meta property="og:image" content="https://slowpage.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://slowpage.app/og.png" />
+    <meta name="twitter:creator" content="@realmorrisliu" />
     <link rel="icon" href="/favicon.ico?v=3" sizes="any" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=3" />
     <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png?v=3" />
@@ -24,9 +32,42 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..600;1,400..600&family=Noto+Serif+SC:wght@400;500;600&display=swap"
       rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..600;1,400..600&family=Noto+Serif+SC:wght@400;500;600&display=swap"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..600;1,400..600&family=Noto+Serif+SC:wght@400;500;600&display=swap"
+      />
+    </noscript>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Slowpage",
+        "description": "Slowpage 是为 macOS 打造的 EPUB 与 PDF 阅读器：纯白单页、逐段最优断行的中英文排印、页边批注与内置 AI 伴读 @alan，直连本地书库。",
+        "operatingSystem": "macOS 14+",
+        "applicationCategory": "UtilitiesApplication",
+        "inLanguage": "zh-CN",
+        "url": "https://slowpage.app/",
+        "codeRepository": "https://github.com/realmorrisliu/slowpage",
+        "license": "https://opensource.org/licenses/MIT",
+        "image": "https://slowpage.app/og.png",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "Morris Liu",
+          "url": "https://realmorrisliu.com"
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

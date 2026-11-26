@@ -61,14 +61,19 @@ define_class!(
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default()
+                } else if let Some(web) = state.web.as_ref() {
+                    crate::visit::contents_marks(&web.book_title, &web.spine())
+                        .into_iter()
+                        .map(|mark| mark.title)
+                        .collect::<Vec<_>>()
                 } else {
                     state
-                        .web
+                        .pdf
                         .as_ref()
-                        .map(|web| {
-                            crate::visit::contents_marks(&web.book_title, &web.spine())
-                                .into_iter()
-                                .map(|mark| mark.title)
+                        .map(|pdf| {
+                            pdf.outline
+                                .iter()
+                                .map(|mark| mark.title.clone())
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default()
@@ -433,6 +438,7 @@ struct PdfView {
     text: HashMap<usize, PageText>,
     cache: HashMap<(usize, u8), Rgba>,
     frame_ms: Vec<f64>,
+    outline: Vec<crate::visit::ChapterMark>,
 }
 
 struct EpubSelection {
@@ -1017,6 +1023,10 @@ impl State {
                 self.publish();
             }
             "immersive" => self.release_for_ease(),
+            "sidebar" => {
+                self.placed = None;
+                self.place_page();
+            }
             "find" => {
                 let book = args.get("book").and_then(|v| v.as_str()).unwrap_or("");
                 let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
@@ -1551,9 +1561,7 @@ impl State {
             return;
         }
         let Some(web) = self.web.as_ref() else {
-            if tag < 0 {
-                self.return_saved_place();
-            }
+            self.apply_pdf_outline(tag);
             return;
         };
         let spine = web.spine();
@@ -1622,6 +1630,29 @@ impl State {
             self.clear_selection();
         }
         let _ = (moved, go);
+    }
+
+    fn apply_pdf_outline(&mut self, tag: isize) {
+        if tag < 0 {
+            self.return_saved_place();
+            return;
+        }
+        let marks = self
+            .pdf
+            .as_ref()
+            .map(|pdf| pdf.outline.clone())
+            .unwrap_or_default();
+        let here = self.visit_place();
+        let step =
+            crate::visit::chapter_jump(&here, &marks, tag as usize, &[], crate::web::reader_back());
+        let crate::visit::ChapterMove::Page { page } = step.go else {
+            return;
+        };
+        spike_library::column::arm_nav(spike_library::column::NavIntent::Toc);
+        if self.show_pdf_page(page) {
+            crate::web::set_reader_back(step.back);
+            self.publish();
+        }
     }
 
     fn return_saved_place(&mut self) {
@@ -2125,6 +2156,7 @@ impl State {
             return false;
         };
         self.page_total = Some(doc.page_count() as u32);
+        let outline = crate::visit::outline_marks(&doc.outline());
         let count = doc.page_count().min(80);
         let sizes: Vec<_> = (0..count).map(|i| doc.page_size_pt(i)).collect();
         if sizes.is_empty() || sizes.iter().all(|(w, h)| *w < 1.0 || *h < 1.0) {
@@ -2144,6 +2176,7 @@ impl State {
             text: HashMap::new(),
             cache: HashMap::new(),
             frame_ms: Vec::new(),
+            outline,
         });
         true
     }

@@ -130,6 +130,7 @@ pub fn apply_immersive(
     let before = form.get();
     let next = commit_reading_immersive(before, reading, leave_only);
     form.set(next);
+    publish_reading_sidebar(next);
     let notice = (next != before).then_some(matches!(next, Form::Immersive));
     if let Some(on) = notice {
         let margin = match next {
@@ -351,6 +352,35 @@ pub fn publish_immersive(on: bool) {
     IMMERSIVE.store(on, Ordering::Relaxed);
 }
 
+static READING_SIDEBAR: AtomicBool = AtomicBool::new(false);
+
+pub fn reading_sidebar_on() -> bool {
+    READING_SIDEBAR.load(Ordering::Relaxed)
+}
+
+/// The page card's left inset while the reading sidebar is shown.
+/// Entering immersive reading keeps the value so the departing card does not jump.
+pub fn reading_sidebar_width() -> f64 {
+    if reading_sidebar_on() {
+        SIDEBAR_W
+    } else {
+        0.0
+    }
+}
+
+pub fn publish_reading_sidebar(form: Form) {
+    if matches!(form, Form::Immersive) && reading_sidebar_on() {
+        return;
+    }
+    let shown = matches!(form, Form::PageAndPanel { sidebar, .. } if sidebar.shown());
+    READING_SIDEBAR.store(shown, Ordering::Relaxed);
+}
+
+/// Choosing **全部书籍** closes the book. The other rows stay library filters.
+pub fn library_row_leaves_the_book(id: &SelectId) -> bool {
+    matches!(id, SelectId::AllBooks)
+}
+
 /// A shown margin is a column once the window can hold the minimum plus 240.
 pub fn margin_is_column(window_w: f64) -> bool {
     window_w >= crate::tokens::MIN_WINDOW_W + MARGIN_W
@@ -484,18 +514,80 @@ pub fn show_reading(form: &Signal<Form>) {
     } else {
         Presence::Hidden
     };
-    form.set(Form::PageAndPanel {
+    let next = Form::PageAndPanel {
         sidebar: Presence::Hidden,
         margin,
-    });
+    };
+    form.set(next);
+    publish_reading_sidebar(next);
     publish_immersive(false);
     crate::ease::settle(false, margin.shown());
 }
 
 pub fn show_shelf(form: &Signal<Form>) {
-    form.set(launch());
+    let next = launch();
+    form.set(next);
+    publish_reading_sidebar(next);
     publish_immersive(false);
     crate::ease::settle(false, false);
+}
+
+/// Where the reading-window back control and the floating sidebar toggle sit.
+/// The contents control stays the native list button. These two clear it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReadingChromeSeats {
+    pub sidebar_toggle: Option<Rect>,
+    pub back: Rect,
+}
+
+pub fn reading_chrome_seats(
+    chrome: crate::tokens::ChromeIn,
+    sidebar_shown: bool,
+) -> ReadingChromeSeats {
+    let row = crate::tokens::chrome_row(chrome);
+    let y = f64::from(row.toggle_y);
+    let size = f64::from(crate::tokens::TOGGLE_SIZE);
+    let gap = INSET;
+    let back_w = (f64::from(text_width("返回", crate::tokens::BODY_SIZE)) + 16.0).max(size);
+    if sidebar_shown {
+        return ReadingChromeSeats {
+            sidebar_toggle: None,
+            back: Rect {
+                x: SIDEBAR_W + INSET + f64::from(crate::tokens::SIDE_PAD_X),
+                y,
+                w: back_w,
+                h: size,
+            },
+        };
+    }
+    // The contents control is 26 points past the zoom button. `bar` is the
+    // zoom's right edge plus the close button's left edge. On the measured
+    // window that leaves the contents glyph near `bar + 26`. The next control
+    // starts 10 points after that.
+    let toggle_x = reading_toggle_x(chrome);
+    ReadingChromeSeats {
+        sidebar_toggle: Some(Rect {
+            x: toggle_x,
+            y,
+            w: size,
+            h: size,
+        }),
+        back: Rect {
+            x: toggle_x + size + gap,
+            y,
+            w: back_w,
+            h: size,
+        },
+    }
+}
+
+fn reading_toggle_x(chrome: crate::tokens::ChromeIn) -> f64 {
+    let lights = chrome.lights && chrome.bar > 8.0;
+    if lights {
+        f64::from(chrome.bar) + 36.0
+    } else {
+        f64::from(crate::tokens::SIDE_PAD_X)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2179,6 +2271,9 @@ fn paint(
                 menu,
                 query.clone(),
                 on_peer.clone(),
+                None,
+                || {},
+                None,
             ),
         ));
     }
@@ -2213,6 +2308,8 @@ fn paint(
         root = root.child(sidebar_toggle_button(
             crate::tokens::chrome_row(placed.chrome),
             form,
+            None,
+            None,
         ));
     }
     if placed.chat.is_none() && matches!(form.get(), Form::Full { .. }) {
@@ -2253,6 +2350,9 @@ fn sidebar_pane(
     menu: Signal<bool>,
     query: Signal<String>,
     on_peer: impl Fn(Peer) + Clone + 'static,
+    stage: Option<ElementRef>,
+    on_all_books: impl Fn() + Clone + 'static,
+    toggle_x: Option<f64>,
 ) -> AnyElement {
     let mut column = view().w(px(SIDEBAR_W as f32)).h_full().flex().flex_col();
     if let Some(rect) = rect {
@@ -2263,7 +2363,12 @@ fn sidebar_pane(
             .w(px(rect.w as f32))
             .h(px(rect.h as f32));
     }
-    column = column.child(sidebar_top(crate::tokens::chrome_row(placed.chrome), form));
+    column = column.child(sidebar_top(
+        crate::tokens::chrome_row(placed.chrome),
+        form,
+        stage,
+        toggle_x,
+    ));
     column = column.child(
         view()
             .px(px(crate::tokens::SIDE_PAD_X))
@@ -2283,7 +2388,7 @@ fn sidebar_pane(
     for label in &placed.groups {
         groups = groups.child(group_label(label));
         for row in placed.rows.iter().filter(|row| row.group == *label) {
-            groups = groups.child(side_row(row.clone(), selected, menu));
+            groups = groups.child(side_row(row.clone(), selected, menu, on_all_books.clone()));
         }
     }
     column = column.child(groups);
@@ -2292,7 +2397,12 @@ fn sidebar_pane(
             view()
                 .px(px(crate::tokens::SIDE_PAD_X))
                 .pb(px(crate::tokens::SIDE_PAD_BOTTOM))
-                .child(side_row(settings.clone(), selected, menu)),
+                .child(side_row(
+                    settings.clone(),
+                    selected,
+                    menu,
+                    on_all_books.clone(),
+                )),
         );
     }
     if menu.get() {
@@ -2344,18 +2454,28 @@ fn source_menu(menu: Signal<bool>, on_peer: impl Fn(Peer) + Clone + 'static) -> 
     list.into_element()
 }
 
-fn sidebar_top(row: crate::tokens::ChromeRow, form: Signal<Form>) -> AnyElement {
+fn sidebar_top(
+    row: crate::tokens::ChromeRow,
+    form: Signal<Form>,
+    stage: Option<ElementRef>,
+    toggle_x: Option<f64>,
+) -> AnyElement {
     view()
         .h(px(row.height))
         .w_full()
-        .child(sidebar_toggle_button(row, form))
+        .child(sidebar_toggle_button(row, form, stage, toggle_x))
         .into_element()
 }
 
-fn sidebar_toggle_button(row: crate::tokens::ChromeRow, form: Signal<Form>) -> AnyElement {
+fn sidebar_toggle_button(
+    row: crate::tokens::ChromeRow,
+    form: Signal<Form>,
+    stage: Option<ElementRef>,
+    toggle_x: Option<f64>,
+) -> AnyElement {
     let mut button = view()
         .absolute()
-        .left(px(row.toggle_x))
+        .left(px(toggle_x.unwrap_or(f64::from(row.toggle_x)) as f32))
         .top(px(row.toggle_y))
         .w(px(crate::tokens::TOGGLE_SIZE))
         .h(px(crate::tokens::TOGGLE_SIZE))
@@ -2368,6 +2488,10 @@ fn sidebar_toggle_button(row: crate::tokens::ChromeRow, form: Signal<Form>) -> A
         .on_press(move || {
             let next = step(form.get(), Command::ToggleSidebar);
             form.set(next);
+            publish_reading_sidebar(next);
+            if let Some(stage) = stage.clone() {
+                stage.command("sidebar", serde_json::json!(null));
+            }
         });
     if let Some(path) = crate::icons::glyph_ink("sidebar-left", "6E6E73") {
         button = button.child(image(path).size(px(crate::tokens::SIDEBAR_ICON)));
@@ -2615,6 +2739,118 @@ pub fn apply_find_status(
             .max(spike_library::column::nav_epoch()),
     };
     spike_library::column::on_scan_publish(column, &scan, here)
+}
+
+/// Back control and the library sidebar while the library card is unmounted.
+/// The root ignores hits, so page clicks reach the native stage.
+pub fn reading_chrome(
+    form: Signal<Form>,
+    selected: Signal<SelectId>,
+    window: Signal<Window>,
+    chrome: Signal<crate::tokens::ChromeIn>,
+    library: Signal<LibraryIn>,
+    menu: Signal<bool>,
+    query: Signal<String>,
+    on_peer: impl Fn(Peer) + Clone + 'static,
+    on_back: impl Fn() + Clone + 'static,
+    stage: ElementRef,
+) -> impl IntoElement {
+    let form_b = form;
+    let selected_b = selected;
+    let window_b = window;
+    let chrome_b = chrome;
+    let library_b = library;
+    let menu_b = menu;
+    let query_b = query;
+    let on_peer_b = on_peer;
+    let on_back_b = on_back;
+    let stage_b = stage;
+    dynamic(move || {
+        let current = form_b.get();
+        let size = window_b.get();
+        let chrome_now = chrome_b.get();
+        let shown = matches!(current, Form::PageAndPanel { sidebar, .. } if sidebar.shown());
+        let seats = reading_chrome_seats(chrome_now, shown);
+        let searched = crate::shelf::searched(library_b.get(), &query_b.get());
+        let placed = place(
+            &PlaceIn {
+                form: current,
+                window: size,
+                chrome: chrome_now,
+            },
+            &searched,
+        );
+        let mut root = view()
+            .absolute()
+            .inset(px(0.0))
+            .pointer_events(PointerEvents::BoxNone);
+        if shown {
+            let rect = Rect {
+                x: 0.0,
+                y: 0.0,
+                w: SIDEBAR_W,
+                h: size.height,
+            };
+            root = root.child(
+                view()
+                    .absolute()
+                    .left(px(0.0))
+                    .top(px(0.0))
+                    .w(px(SIDEBAR_W as f32))
+                    .h(px(size.height as f32))
+                    .pointer_events(PointerEvents::Auto)
+                    .bg_linear_to_b()
+                    .gradient_from(rgb(crate::tokens::FIELD_TOP).to_hsla())
+                    .gradient_to(rgb(crate::tokens::FIELD_BOTTOM).to_hsla()),
+            );
+            root = root.child(sidebar_pane(
+                Some(rect),
+                &placed,
+                form_b,
+                selected_b,
+                menu_b,
+                query_b,
+                on_peer_b.clone(),
+                Some(stage_b.clone()),
+                on_back_b.clone(),
+                Some(reading_toggle_x(chrome_now)),
+            ));
+        } else if let Some(seat) = seats.sidebar_toggle {
+            root = root.child(sidebar_toggle_button(
+                crate::tokens::chrome_row(chrome_now),
+                form_b,
+                Some(stage_b.clone()),
+                Some(seat.x),
+            ));
+        }
+        root = root.child(reading_back_button(seats.back, on_back_b.clone()));
+        root
+    })
+}
+
+fn reading_back_button(seat: Rect, on_back: impl Fn() + Clone + 'static) -> AnyElement {
+    view()
+        .absolute()
+        .left(px(seat.x as f32))
+        .top(px(seat.y as f32))
+        .w(px(seat.w as f32))
+        .h(px(seat.h as f32))
+        .rounded(px(crate::tokens::TOGGLE_RADIUS))
+        .flex()
+        .items_center()
+        .justify_center()
+        .pointer_events(PointerEvents::Auto)
+        .accessible(true)
+        .label("返回")
+        .on_press(move || on_back())
+        .child(fit_text(
+            "返回".into(),
+            crate::tokens::BODY_SIZE,
+            crate::tokens::BODY_WEIGHT,
+            ink(),
+            crate::tokens::BODY_TRACK_EM,
+        ))
+        .into_element()
 }
 
 pub fn reading_margin(
@@ -4139,7 +4375,12 @@ fn group_label(label: &str) -> AnyElement {
         .into_element()
 }
 
-fn side_row(row: SideRow, selected: Signal<SelectId>, menu: Signal<bool>) -> AnyElement {
+fn side_row(
+    row: SideRow,
+    selected: Signal<SelectId>,
+    menu: Signal<bool>,
+    on_all_books: impl Fn() + Clone + 'static,
+) -> AnyElement {
     let id = row.id.clone();
     let dotted = row.dot.is_some();
     let add = matches!(row.id, SelectId::AddSource);
@@ -4170,6 +4411,9 @@ fn side_row(row: SideRow, selected: Signal<SelectId>, menu: Signal<bool>) -> Any
             }
             menu.set(false);
             selected.set(id.clone());
+            if library_row_leaves_the_book(&id) {
+                on_all_books();
+            }
         });
     if row.selected {
         line = line.bg(wash(crate::tokens::ROW_ON_ALPHA));
@@ -5359,6 +5603,102 @@ mod tests {
             width: 1440.0,
             height: 900.0,
         }
+    }
+
+    struct SidebarOff;
+    impl Drop for SidebarOff {
+        fn drop(&mut self) {
+            publish_reading_sidebar(Form::PageAndPanel {
+                sidebar: Presence::Hidden,
+                margin: Presence::Shown,
+            });
+            crate::shelf_pass::reset();
+            crate::ease::settle(false, true);
+        }
+    }
+
+    #[test]
+    fn the_reading_window_offers_a_back_control_and_all_books() {
+        let _reset = SidebarOff;
+        assert!(library_row_leaves_the_book(&SelectId::AllBooks));
+        for id in [
+            SelectId::Reading,
+            SelectId::Want,
+            SelectId::Done,
+            SelectId::Pdf,
+            SelectId::Notes,
+            SelectId::Settings,
+            SelectId::AddSource,
+        ] {
+            assert!(!library_row_leaves_the_book(&id), "{id:?}");
+        }
+        let dark = crate::tokens::ChromeIn {
+            lights: false,
+            bar: 0.0,
+            top: 0.0,
+        };
+        let lights = crate::tokens::ChromeIn {
+            lights: true,
+            bar: 98.0,
+            top: 0.0,
+        };
+        let hidden = reading_chrome_seats(dark, false);
+        let toggle = hidden.sidebar_toggle.expect("floating toggle");
+        assert!((toggle.x - f64::from(crate::tokens::SIDE_PAD_X)).abs() < 0.01);
+        assert!((hidden.back.x - (toggle.x + toggle.w + INSET)).abs() < 0.01);
+        assert!((hidden.back.w - 42.0).abs() < 0.01);
+        let lit = reading_chrome_seats(lights, false);
+        let lit_toggle = lit
+            .sidebar_toggle
+            .expect("toggle past the contents control");
+        assert!((lit_toggle.x - 134.0).abs() < 0.01);
+        assert!(lit_toggle.x > f64::from(lights.bar) + 26.0);
+        let shown = reading_chrome_seats(lights, true);
+        assert!(shown.sidebar_toggle.is_none());
+        assert!(
+            (shown.back.x - (SIDEBAR_W + INSET + f64::from(crate::tokens::SIDE_PAD_X))).abs()
+                < 0.01
+        );
+        for width in [578.0, 1440.0] {
+            let seat = reading_chrome_seats(lights, false);
+            let button = crate::ease::button_seat(width, 0.0);
+            assert!(
+                seat.back.x + seat.back.w < button.x,
+                "back {:?} immersive {button:?}",
+                seat.back
+            );
+        }
+        crate::shelf_pass::reset();
+        crate::ease::settle(false, true);
+        publish_reading_sidebar(Form::PageAndPanel {
+            sidebar: Presence::Shown,
+            margin: Presence::Shown,
+        });
+        crate::shelf_pass::intend_reading("/tmp/outline.pdf", None);
+        let flying = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        assert!(
+            (flying.page.x - 6.0).abs() < 0.05,
+            "the shelf flight keeps the page frame: {:?}",
+            flying.page
+        );
+        crate::shelf_pass::reset();
+        let wide = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        assert!((wide.card.x - 226.0).abs() < 0.05, "{:?}", wide.card);
+        assert!((wide.card.w - 968.0).abs() < 0.05, "{:?}", wide.card);
+        publish_reading_sidebar(Form::Immersive);
+        assert!(reading_sidebar_on());
+        publish_reading_sidebar(Form::PageAndPanel {
+            sidebar: Presence::Hidden,
+            margin: Presence::Shown,
+        });
+        assert!(!reading_sidebar_on());
+        let restored = crate::ease::present(1440.0, 900.0, 0.0, crate::ease::current());
+        assert!((restored.card.x - 6.0).abs() < 0.05, "{:?}", restored.card);
+        assert!(
+            (restored.card.w - 1188.0).abs() < 0.05,
+            "{:?}",
+            restored.card
+        );
     }
 
     #[test]

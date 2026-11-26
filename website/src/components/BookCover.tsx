@@ -37,8 +37,8 @@ export function BookCover(props: BookCoverProps) {
       <Switch>
         {/* 1. Pride and Prejudice — muted sage with cream frame & leaf ornament */}
         <Match when={props.id === 'pride'}>
-          <div class="flex h-full w-full flex-col items-center justify-between bg-[#6D7C62] p-[8%] text-[#F4F0E6]">
-            <div class="flex h-full w-full flex-col items-center justify-between border border-[#F4F0E6]/35 px-[8%] py-[12%] text-center">
+          <div class="flex h-full w-full flex-col items-center justify-between bg-[#4E5E44] p-[8%] text-[#FAF8F2]">
+            <div class="flex h-full w-full flex-col items-center justify-between border border-[#FAF8F2]/40 px-[8%] py-[12%] text-center">
               <div class={isCompact() ? 'text-[5.5px] leading-tight italic' : 'font-serif text-[12px] leading-[1.15] italic'}>
                 Pride and
                 <br />
@@ -48,7 +48,7 @@ export function BookCover(props: BookCoverProps) {
                 <path d="M8 2.5C5.5 5 5.5 10.5 8 13.5C10.5 10.5 10.5 5 8 2.5Z" />
                 <line x1="8" y1="3" x2="8" y2="13.5" />
               </svg>
-              <div class={isCompact() ? 'text-[4px] tracking-[0.12em] opacity-80' : 'text-[7px] tracking-[0.16em] opacity-80'}>
+              <div class={isCompact() ? 'text-[4px] tracking-[0.12em] opacity-90' : 'text-[7px] tracking-[0.16em] opacity-90'}>
                 JANE AUSTEN
               </div>
             </div>
@@ -131,14 +131,14 @@ export function BookCover(props: BookCoverProps) {
 
         {/* 5. 朝花夕拾 — terracotta vermilion + cream seal + vertical Songti */}
         <Match when={props.id === 'dawn-blossoms'}>
-          <div class="relative flex h-full w-full flex-col justify-between bg-[#B25436] p-[11%] text-[#F9F2E8]">
+          <div class="relative flex h-full w-full flex-col justify-between bg-[#963A1F] p-[11%] text-[#FFF9F2]">
             <div class="flex items-start justify-between">
-              <div class={`mt-[18%] sp-reading-zh leading-none text-[#F9F2E8]/80 [writing-mode:vertical-rl] ${isCompact() ? 'text-[4px]' : 'text-[7px] tracking-[0.2em]'}`}>
+              <div class={`mt-[18%] sp-reading-zh leading-none text-[#FFF9F2]/95 [writing-mode:vertical-rl] ${isCompact() ? 'text-[4px]' : 'text-[7px] tracking-[0.2em]'}`}>
                 鲁迅 著
               </div>
               <div class="flex flex-col items-end gap-[6px]">
                 <span class={`rounded-[1px] bg-[#E8C69A] ${isCompact() ? 'size-1.5' : 'size-3'}`} />
-                <div class={`sp-reading-zh font-medium text-[#F9F2E8] [writing-mode:vertical-rl] ${isCompact() ? 'text-[6.5px]' : 'text-[15px] tracking-[0.16em]'}`}>
+                <div class={`sp-reading-zh font-medium text-[#FFF9F2] [writing-mode:vertical-rl] ${isCompact() ? 'text-[6.5px]' : 'text-[15px] tracking-[0.16em]'}`}>
                   朝花夕拾
                 </div>
               </div>
@@ -148,11 +148,11 @@ export function BookCover(props: BookCoverProps) {
 
         {/* 6. 呐喊 — deep black + vermilion vertical Songti */}
         <Match when={props.id === 'nahan'}>
-          <div class="flex h-full w-full flex-col items-center justify-center bg-[#18181A] px-[10%] text-center text-[#DC4C38]">
-            <div class={`sp-reading-zh font-semibold tracking-[0.16em] text-[#DC4C38] ${isCompact() ? 'text-[7px]' : 'text-[18px]'}`}>
+          <div class="flex h-full w-full flex-col items-center justify-center bg-[#18181A] px-[10%] text-center text-[#E65845]">
+            <div class={`sp-reading-zh font-semibold tracking-[0.16em] text-[#E65845] ${isCompact() ? 'text-[7px]' : 'text-[18px]'}`}>
               呐喊
             </div>
-            <div class={`mt-2 text-[#E5E5EA]/65 ${isCompact() ? 'text-[4px]' : 'text-[7.5px] tracking-[0.15em]'}`}>
+            <div class={`mt-2 text-[#E5E5EA]/70 ${isCompact() ? 'text-[4px]' : 'text-[7.5px] tracking-[0.15em]'}`}>
               鲁迅
             </div>
           </div>
@@ -185,7 +185,7 @@ export function BookCover(props: BookCoverProps) {
           <div class="flex h-full w-full flex-col items-center justify-between bg-[#C69C45] px-[10%] py-[14%] text-center text-[#241C0C]">
             <div class="w-full border-t border-black/30 pt-1 text-[6px] tracking-[0.12em]">GEORGE ELIOT</div>
             <div class={`font-serif font-semibold ${isCompact() ? 'text-[5px]' : 'text-[11px]'}`}>Middlemarch</div>
-            <div class="w-full border-b border-black/30 pb-1 text-[6px] opacity-75">SLOWPAGE</div>
+            <div class="w-full border-b border-black/30 pb-1 text-[6px] opacity-90">SLOWPAGE</div>
           </div>
         </Match>
 
