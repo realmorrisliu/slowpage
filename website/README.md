@@ -38,13 +38,17 @@ pnpm preview    # Preview the built Cloudflare Worker + assets locally
 
 ## Cloudflare Deployment
 
-### Automatic deploy on `main`
+### Automatic deploy on `main` (Cloudflare Workers Builds)
 
-[`.github/workflows/website.yml`](../.github/workflows/website.yml) runs `build` on pull requests and pushes affecting `website/**`, `spikes/justify/vendor/**`, or the workflow file, and runs `deploy` after `build` on `main` (or manual `workflow_dispatch`):
+`slowpage-website` is connected directly to **Cloudflare Workers Builds** for `realmorrisliu/slowpage` on `main` — no GitHub deployment secrets are required:
 
-1. Create a Cloudflare API token with **Workers Scripts: Edit** permission for the account in `cloudflare.config.ts`.
-2. Add the token to GitHub repository secrets as `CLOUDFLARE_API_TOKEN` (Repository **Settings → Secrets and variables → Actions**, or `gh secret set CLOUDFLARE_API_TOKEN`).
-3. Without `CLOUDFLARE_API_TOKEN` set, the `deploy` job logs `"CLOUDFLARE_API_TOKEN is not configured; skipping automatic Cloudflare deploy."` and exits `0` without failing CI.
+- **Root directory**: `/website`
+- **Build command**: `pnpm run build`
+- **Deploy command**: `pnpm exec cf deploy --prebuilt --mode production`
+- **Watched paths (`path_includes`)**: `website/*`, `spikes/justify/vendor/*`
+- **Build environment variables**: `PNPM_VERSION=12.21.0`, `CF_SEND_TELEMETRY=false`
+
+[`.github/workflows/website.yml`](../.github/workflows/website.yml) runs `build` for verification on pull requests, pushes to `main` affecting `website/**`, `spikes/justify/vendor/**`, or the workflow file, and manual `workflow_dispatch`.
 
 ### Manual deploy
 
