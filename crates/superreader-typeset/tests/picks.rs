@@ -564,6 +564,61 @@ fn caret_hit_test_returns_the_glyph_under_the_point() {
     );
 }
 
+#[test]
+fn a_trailing_edge_caret_stays_on_the_line_that_was_hit() {
+    let Some(setter) = fonts() else { return };
+    let body = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen";
+    let layout = lay(
+        &setter,
+        &format!("<html><body><p>{body} {body}</p></body></html>"),
+        "",
+    );
+    let glyphs: Vec<_> = layout
+        .glyph_runs(0)
+        .into_iter()
+        .flat_map(|run| run.glyphs)
+        .filter(|glyph| !glyph.hyphen)
+        .collect();
+    let mut lines: Vec<Vec<superreader_typeset::PlacedGlyph>> = Vec::new();
+    for glyph in glyphs {
+        let new_line = lines
+            .last()
+            .is_none_or(|line| (line[0].baseline_y - glyph.baseline_y).abs() > 0.5);
+        if new_line {
+            lines.push(vec![glyph]);
+        } else {
+            lines.last_mut().unwrap().push(glyph);
+        }
+    }
+    assert!(lines.len() >= 2, "the paragraph has to wrap");
+    let last = lines[0].last().unwrap();
+    let caret = layout
+        .hit_test(
+            0,
+            superreader_typeset::Point {
+                x: last.x + last.advance + 4.0,
+                y: last.baseline_y,
+            },
+        )
+        .unwrap();
+    assert_eq!(caret.node, last.node);
+    assert_eq!(caret.offset, last.offset.saturating_add(last.span));
+    let bar = layout.caret_bar(0, caret).unwrap();
+    let end = last.x + last.advance;
+    assert!(
+        (bar.x - end).abs() < 1.0,
+        "caret bar {} vs line end {}",
+        bar.x,
+        end
+    );
+    let next = &lines[1][0];
+    assert!(
+        (bar.x - next.x).abs() > 8.0,
+        "the bar sat on the next line at {}",
+        bar.x
+    );
+}
+
 fn lay_at(
     setter: &Typesetter,
     xhtml: &str,

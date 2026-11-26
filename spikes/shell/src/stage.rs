@@ -2273,7 +2273,7 @@ impl State {
         {
             schedule_chrome_pump(view, 0.016);
         }
-        let Some(frame) = self.typeset_frame() else {
+        let Some(frame) = self.typeset_raster_frame() else {
             return;
         };
         let fitted = crate::chrome::FittedPage {
@@ -2330,6 +2330,16 @@ impl State {
         })
     }
 
+    /// The paperback raster, letterboxed in the trim's page slot.
+    fn typeset_raster_frame(&self) -> Option<crate::typeset_page::PageFrame> {
+        let outer = self.typeset_frame()?;
+        Some(crate::typeset_page::contained_frame(
+            outer,
+            superreader_typeset::PAPERBACK_WIDTH,
+            superreader_typeset::PAPERBACK_HEIGHT,
+        ))
+    }
+
     fn typeset_preview(
         &self,
         frame: crate::typeset_page::PageFrame,
@@ -2344,7 +2354,7 @@ impl State {
     }
 
     fn typeset_pointer(&mut self, start: (f64, f64), end: (f64, f64)) {
-        let Some(frame) = self.typeset_frame() else {
+        let Some(frame) = self.typeset_raster_frame() else {
             return;
         };
         let click = !crate::visit::click_is_drag(end.0 - start.0, end.1 - start.1);

@@ -349,11 +349,16 @@ impl ChapterLayout {
     }
 
     /// A one-pixel bar at the caret, in the same space as [`Self::selection_rects`].
+    ///
+    /// A caret at the end of a line stays on that line. The next line's first
+    /// glyph often starts at the same text offset, and the bar is the advance
+    /// of the glyph that ends here.
     pub fn caret_bar(&self, page: u32, caret: Caret) -> Option<SelectionRect> {
         let page = self.pages.get(page as usize)?;
         let key = (caret.node, caret.offset);
         let mut last: Option<(&Line, &PlacedGlyph)> = None;
         for line in &page.lines {
+            let mut at_end: Option<f32> = None;
             for glyph in &line.glyphs {
                 if glyph.hyphen {
                     continue;
@@ -361,7 +366,17 @@ impl ChapterLayout {
                 if (glyph.node, glyph.offset) >= key {
                     return Some(caret_bar_at(line, glyph.x));
                 }
+                if glyph.node == caret.node
+                    && glyph.offset.saturating_add(glyph.span) == caret.offset
+                {
+                    at_end = Some(glyph.x + glyph.advance);
+                } else {
+                    at_end = None;
+                }
                 last = Some((line, glyph));
+            }
+            if let Some(x) = at_end {
+                return Some(caret_bar_at(line, x));
             }
         }
         let (line, glyph) = last?;

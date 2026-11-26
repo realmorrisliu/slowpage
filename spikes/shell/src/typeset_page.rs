@@ -41,6 +41,28 @@ pub struct PageFrame {
     pub h: f64,
 }
 
+/// The raster's rectangle inside `outer`, centered, at the raster's own aspect.
+///
+/// The typesetter paints a paperback page. A trim or a declared page with
+/// another aspect letterboxes that raster. It does not stretch the glyphs.
+pub fn contained_frame(outer: PageFrame, raster_w: f32, raster_h: f32) -> PageFrame {
+    if outer.w <= 0.0 || outer.h <= 0.0 || raster_w <= 0.0 || raster_h <= 0.0 {
+        return outer;
+    }
+    let page = f64::from(raster_w) / f64::from(raster_h);
+    let (w, h) = if outer.w / outer.h > page {
+        (outer.h * page, outer.h)
+    } else {
+        (outer.w, outer.w / page)
+    };
+    PageFrame {
+        x: outer.x + (outer.w - w) * 0.5,
+        y: outer.y + (outer.h - h) * 0.5,
+        w,
+        h,
+    }
+}
+
 /// A stage point inside the fitted page, in the layout's top-down space.
 pub fn layout_point(frame: PageFrame, x: f64, y: f64) -> Option<Point> {
     if !crate::visit::point_in_box(x, y, frame.x, frame.y, frame.w, frame.h) {
@@ -469,6 +491,34 @@ mod tests {
         assert!((far.x - PAPERBACK_WIDTH).abs() < 1e-2);
         assert!((far.y - PAPERBACK_HEIGHT).abs() < 1e-2);
         assert!(layout_point(frame, 99.0, 40.0).is_none());
+    }
+
+    #[test]
+    fn a_raster_keeps_its_aspect_inside_a_wider_page() {
+        let outer = PageFrame {
+            x: 10.0,
+            y: 20.0,
+            w: 819.0,
+            h: 819.0,
+        };
+        let fitted = contained_frame(outer, PAPERBACK_WIDTH, PAPERBACK_HEIGHT);
+        let aspect = f64::from(PAPERBACK_WIDTH) / f64::from(PAPERBACK_HEIGHT);
+        assert!((fitted.h - outer.h).abs() < 1e-6);
+        assert!((fitted.w / fitted.h - aspect).abs() < 1e-9);
+        assert!((fitted.x - (outer.x + (outer.w - fitted.w) * 0.5)).abs() < 1e-6);
+        assert!((fitted.y - outer.y).abs() < 1e-6);
+        let same = contained_frame(
+            PageFrame {
+                x: 0.0,
+                y: 0.0,
+                w: f64::from(PAPERBACK_WIDTH),
+                h: f64::from(PAPERBACK_HEIGHT),
+            },
+            PAPERBACK_WIDTH,
+            PAPERBACK_HEIGHT,
+        );
+        assert!((same.w - f64::from(PAPERBACK_WIDTH)).abs() < 1e-6);
+        assert!((same.h - f64::from(PAPERBACK_HEIGHT)).abs() < 1e-6);
     }
 
     #[test]
