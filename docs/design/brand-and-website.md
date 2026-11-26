@@ -32,3 +32,22 @@ Slowpage's visual identity is built on the contrast between **still, opaque read
 - **Behaviors**: Vercel Labs UI SDK (`@ui-sdk/core`, `@ui-sdk/solid`)
 - **Liquid Glass**: `solid-liquid-glass` v2.0 (`github:realmorrisliu/solid-liquid-glass`, MIT, preserving `bilalgursen/liquid-glass` 2.0 WebGL2 refraction/cohesion engine + `prefers-reduced-transparency` fallback)
 - **Styling & Deployment**: Tailwind CSS v4 (`@tailwindcss/vite`), Cloudflare Vite plugin (`@cloudflare/vite-plugin`), Worker entrypoint (`website/worker/index.js`), and `cf` CLI deployment (`website/cloudflare.config.ts`) serving `https://slowpage.app` and `https://www.slowpage.app`.
+
+## Page structure (2026-11-26 refinement)
+
+Approved by Morris on 2026-11-26. The page runs hero, typography, marginalia, library, closing, footer. Backgrounds alternate white and `#F5F5F7` so no two neighbors share a field. The centered template appears only in the hero and the closing; the middle sections are a full-width comparison, a left-aligned two-column header, and a split row.
+
+- **Hero**: headline 「读得慢一点，懂得多一点。」 / "Read slower. Understand more." in one color. The first mention of @alan reads 「内置 AI 伴读 @alan」 with a hover and focus explanation. One primary button (download); the browser trial is a text link.
+- **Typography**: the signature section. The same English or Chinese text is set twice side by side. The English Slowpage column runs the reader's own line breaker: `website/src/typeset/knuthPlass.ts` loads `spikes/justify/vendor/tex-linebreak/layout.js` and the `hyphenated-en-us` patterns with the `BREAKS`, hyphen cost and hyphenation limits of `spikes/justify/justify.js`. When no break set fits the cap, the paragraph falls back to the browser, as the reader does. The Chinese columns compare `line-break: anywhere` with the reader's kinsoku, punctuation trim and mixed-script spacing.
+- **Marginalia**: the interactive reading window, with a "Powered by Alan" link to `https://alanworks.app`.
+- **Library**: source card on the left, copy on the right. The Liquid Glass material card was removed; glass stays on controls only.
+- The three-column highlights band and the bento were removed as SaaS card soup.
+
+Accent text uses `#B4531F` (`--sp-accent-text`), which keeps 5:1 contrast on white and `#F5F5F7`. The brand gradient stays on the icon.
+
+## Locales, analytics and release label
+
+- `/` is Chinese and `/en/` is English. Both HTML entries mount the same app; `website/src/i18n.ts` keys the marketing copy off `<html lang>`. The product demos mirror the Chinese app UI on both.
+- Analytics are anonymous PostHog events shared by name with alanworks.app and M3: `$pageview`, `download_click`, `github_click`, `scroll_75`. `/ph.js` loads after `load` when the main thread is idle, with session recording off and no person profiles. The footer says so.
+- The release label comes from the GitHub latest release at runtime, with the build-time label as the fallback. Download links point at `releases/latest`.
+- Social cards are `website/public/og.png` and `og-en.png`, 1200 × 630.
