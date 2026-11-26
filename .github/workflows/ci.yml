@@ -192,6 +192,7 @@ jobs:
             a_pdf_goto_click_lands_on_the_page_and_keeps_one_return \
             an_outline_choice_lands_on_that_page_and_returns \
             the_reading_window_offers_a_back_control_and_all_books \
+            a_sidebar_reverse_keeps_the_departing_card \
             | tee "$log"
           for name in \
             a_stored_page_does_not_open_the_shelf_launch \
@@ -289,7 +290,8 @@ jobs:
             the_shelf_picture_owns_the_flight \
             a_pdf_goto_click_lands_on_the_page_and_keeps_one_return \
             an_outline_choice_lands_on_that_page_and_returns \
-            the_reading_window_offers_a_back_control_and_all_books
+            the_reading_window_offers_a_back_control_and_all_books \
+            a_sidebar_reverse_keeps_the_departing_card
           do
             grep -E "test .*(::)?${name} \\.\\.\\. ok$" "$log"
           done

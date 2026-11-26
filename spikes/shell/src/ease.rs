@@ -80,6 +80,10 @@ pub struct Trip {
     fit: Option<bool>,
     /// The page rectangle captured for this trip. Resize does not replace it.
     page_hold: Option<Rect>,
+    /// Sidebar inset at the start and end of this leg. A reverse keeps the
+    /// departing inset, then eases toward the frame the form is returning to.
+    side_from: f64,
+    side_to: f64,
 }
 
 impl Trip {
@@ -97,6 +101,8 @@ impl Trip {
             elapsed_ms: 0,
             fit: fit_of(pose),
             page_hold: None,
+            side_from: 0.0,
+            side_to: 0.0,
         }
     }
 
@@ -139,6 +145,14 @@ impl Trip {
         }
         let from = self.pose();
         let distance = from.travel(desired);
+        let painted = reading_side(self);
+        // Entering immersive reading keeps the departing inset. Leaving uses
+        // the sidebar the form just published, which is hidden on the way back.
+        let goal_side = if immersive {
+            painted
+        } else {
+            crate::form::reading_sidebar_width()
+        };
         if distance < 1e-6 {
             self.origin = desired;
             self.goal = desired;
@@ -146,11 +160,15 @@ impl Trip {
             self.elapsed_ms = 0;
             self.fit = fit_of(desired);
             self.page_hold = None;
+            self.side_from = goal_side;
+            self.side_to = goal_side;
             return self;
         }
         self.leg = self.leg.wrapping_add(1);
         self.origin = from;
         self.goal = desired;
+        self.side_from = painted;
+        self.side_to = goal_side;
         self.span_ms = ((distance * f64::from(EASE_MS)).round() as u32).max(1);
         self.elapsed_ms = 0;
         self
@@ -189,6 +207,8 @@ static TRIP: Mutex<Trip> = Mutex::new(Trip {
     elapsed_ms: 0,
     fit: Some(false),
     page_hold: None,
+    side_from: 0.0,
+    side_to: 0.0,
 });
 
 fn lock() -> std::sync::MutexGuard<'static, Trip> {
@@ -351,12 +371,16 @@ pub fn button_seat(width: f64, top: f64) -> Rect {
 }
 
 /// A shown reading sidebar insets the page card. Once immersive reading has
-/// landed, the card is the window, so the inset is gone.
+/// landed, the card is the window, so the inset is gone. A moving leg uses the
+/// inset it started with and the inset it is going to, so clearing the live
+/// flag mid-flight does not move the card.
 fn reading_side(trip: Trip) -> f64 {
     if trip.pose().immersive >= LANDED || crate::shelf_pass::moving() {
         0.0
-    } else {
+    } else if !trip.moving() {
         crate::form::reading_sidebar_width()
+    } else {
+        mix(trip.side_from, trip.side_to, trip.eased())
     }
 }
 
@@ -381,6 +405,10 @@ mod tests {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
+            crate::form::publish_reading_sidebar(crate::form::Form::PageAndPanel {
+                sidebar: crate::form::Presence::Hidden,
+                margin: crate::form::Presence::Shown,
+            });
             settle(false, true);
         }
     }
@@ -734,5 +762,37 @@ mod tests {
         crate::settings::record_progress(&file, book, 6, Some(75), 0, "").unwrap();
         assert_eq!(stored.resume().page, 6);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_sidebar_reverse_keeps_the_departing_card() {
+        let _reset = Reset;
+        settle(false, true);
+        crate::form::publish_reading_sidebar(crate::form::Form::PageAndPanel {
+            sidebar: crate::form::Presence::Shown,
+            margin: crate::form::Presence::Shown,
+        });
+        near(
+            present(1440.0, 900.0, 0.0, current()).card,
+            226.0,
+            6.0,
+            968.0,
+            888.0,
+        );
+        retarget(true, true);
+        let mid = present(1440.0, 900.0, 0.0, advance(80));
+        near(mid.card, 113.0, 3.0, 1204.0, 894.0);
+        crate::form::publish_reading_sidebar(crate::form::Form::PageAndPanel {
+            sidebar: crate::form::Presence::Hidden,
+            margin: crate::form::Presence::Shown,
+        });
+        let turned = retarget(false, true);
+        assert_eq!(turned.span_ms, 80);
+        let at_turn = present(1440.0, 900.0, 0.0, advance(0));
+        near(at_turn.card, 113.0, 3.0, 1204.0, 894.0);
+        let half = present(1440.0, 900.0, 0.0, advance(40));
+        near(half.card, 87.0, 4.5, 1168.5, 891.0);
+        let done = present(1440.0, 900.0, 0.0, advance(40));
+        near(done.card, 6.0, 6.0, 1188.0, 888.0);
     }
 }
