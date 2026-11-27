@@ -105,6 +105,55 @@ body {
   color: var(--sp-accent-text);
 }
 
+/* One section heading and one lead size for every section below the hero. */
+.sp-h2 {
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--sp-ink);
+  text-wrap: balance;
+}
+
+.sp-lead {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #59595e;
+  text-wrap: pretty;
+}
+
+@media (min-width: 640px) {
+  .sp-h2 {
+    font-size: 48px;
+  }
+  .sp-lead {
+    font-size: 18px;
+  }
+}
+
+/* Chinese headings wrap at punctuation (“你的书，/始终在本地。”), never inside a phrase. */
+:lang(zh) .sp-h2 {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* Mode dock under the hero window, reserved while the window chunk loads. */
+.sp-stage-dock-space {
+  height: 110px;
+}
+
+@media (min-width: 640px) {
+  .sp-stage-dock-space {
+    height: 92px;
+  }
+}
+
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--sp-accent-text);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
 .sp-link {
   color: var(--sp-accent-text);
   text-underline-offset: 3px;
@@ -129,6 +178,7 @@ body {
   border-bottom: 1px dashed #636366;
   cursor: help;
   outline: none;
+  white-space: nowrap;
 }
 
 .sp-alan-tip {
@@ -146,6 +196,7 @@ body {
   font-weight: 400;
   line-height: 1.5;
   text-align: left;
+  white-space: normal;
   opacity: 0;
   pointer-events: none;
   transform: translate(-50%, 4px);

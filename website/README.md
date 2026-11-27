@@ -8,7 +8,9 @@ Official landing page and interactive typesetting / marginalia preview for **Slo
 - **UI Primitives**: `@ui-sdk/core` + `@ui-sdk/solid`
 - **Liquid Glass**: [`solid-liquid-glass`](https://github.com/realmorrisliu/solid-liquid-glass) v2.0 (WebGL2 refraction & cohesion with `prefers-reduced-transparency` fallback)
 - **Styling & Build**: Tailwind CSS v4 (`@tailwindcss/vite`) + Vite 8 (single client entry `index.html`)
-- **Static Prerender (SSG)**: `scripts/prerender.mjs` inlines compiled CSS and injects static Navbar + Hero HTML into `.cloudflare/output/v1/workers/default/assets/index.html` (`zh-CN`) and `.cloudflare/output/v1/workers/default/assets/_i18n/en.html` (`en`) at build time
+- **Static Prerender (SSG)**: `scripts/prerender.mjs` inlines compiled CSS and injects static Navbar + Hero HTML (plus a same-size placeholder for the hero window) into `.cloudflare/output/v1/workers/default/assets/index.html` (`zh-CN`) and `.cloudflare/output/v1/workers/default/assets/_i18n/en.html` (`en`) at build time
+- **Lazy hero window**: the interactive product window (`src/sections/HeroStage.tsx`) is its own chunk, loaded when it nears the viewport; `public/_headers` caches hashed `/assets/*` as immutable
+- **Download links**: `src/release.ts` bakes the latest DMG URL/size (keep in sync with `scripts/prerender.mjs`) and refreshes them from the GitHub releases API, so Download buttons fetch the disk image directly
 - **Edge Hosting**: `@cloudflare/vite-plugin`, custom Worker (`worker/index.js`), and the Cloudflare `cf` CLI (`cloudflare.config.ts`)
 
 ## Local Development

@@ -7,11 +7,15 @@ export function Footer() {
     <footer class="bg-[#F5F5F7] px-5 pb-12 sm:px-8">
       <div class="mx-auto max-w-[1120px] border-t border-black/[0.08] pt-6 text-left">
         <div class="flex flex-col gap-4 pb-4 sm:flex-row sm:items-center sm:justify-between">
-          <div class="flex items-center gap-2 text-[12.5px]">
-            <img src="/slowpage-icon.png" alt="" width="18" height="18" class="size-4.5" />
-            <span class="font-semibold text-[#1D1D1F]">Slowpage</span>
-            <span class="text-[#59595E]">· {t.footerTagline} · </span>
-            <a href={ALAN_URL} target="_blank" rel="noopener noreferrer" class={`text-[#59595E] ${linkClass}`}>
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-[#59595E]">
+            <span class="flex items-center gap-2 whitespace-nowrap">
+              <img src="/slowpage-icon.png" alt="" width="18" height="18" class="size-4.5" />
+              <span class="font-semibold text-[#1D1D1F]">Slowpage</span>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span class="whitespace-nowrap">{t.footerTagline}</span>
+            <span aria-hidden="true">·</span>
+            <a href={ALAN_URL} target="_blank" rel="noopener noreferrer" class={`whitespace-nowrap ${linkClass}`}>
               {t.poweredByAlan}
             </a>
           </div>

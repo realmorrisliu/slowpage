@@ -369,11 +369,10 @@ export function MarginaliaSection() {
             <h2
               data-shown={headerShown() ? 'true' : 'false'}
               style={{ '--sp-delay': '60ms' }}
-              class="sp-reveal mt-3 text-[32px] leading-[1.12] font-semibold tracking-[-0.03em] text-[#1D1D1F] [text-wrap:balance] sm:text-[46px]"
+              class="sp-reveal sp-h2 mt-3"
             >
-              {t.marginTitle[0]}
-              <br />
-              {t.marginTitle[1]}
+              <span class="block">{t.marginTitle[0]}</span>
+              <span class="block">{t.marginTitle[1]}</span>
             </h2>
           </div>
           <div
@@ -381,7 +380,7 @@ export function MarginaliaSection() {
             style={{ '--sp-delay': '120ms' }}
             class="sp-reveal"
           >
-            <p class="text-[16px] leading-[1.65] text-[#6E6E73] [text-wrap:pretty] sm:text-[17px]">{t.marginLead}</p>
+            <p class="sp-lead">{t.marginLead}</p>
             <a
               href={ALAN_URL}
               target="_blank"

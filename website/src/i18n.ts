@@ -51,6 +51,8 @@ const zh = {
   navMarginalia: '页边批注',
   navLibrary: '书库',
   navOtherLocale: 'English',
+  navOtherLocaleLabel: 'Switch to English',
+  navOtherLocaleLang: 'en',
   navDownload: '下载',
 
   heroEyebrow: '为 macOS 打造的 EPUB 与 PDF 阅读器',
@@ -61,7 +63,7 @@ const zh = {
   heroLeadAfter: '。像读一本印得很好的纸书，把想法记在页边。',
   heroDownload: '下载 macOS 版',
   heroTry: '在网页里试试',
-  heroFine: (v: string) => `macOS 14+ · Apple Silicon · 免费开源 · ${v}`,
+  heroFine: (v: string, size: string | null) => ['macOS 14+', 'Apple 芯片', '免费开源', v, size],
 
   typeEyebrow: '排印',
   typeTitle: '好排印，看得见差别。',
@@ -94,10 +96,10 @@ const zh = {
   closeLead: (v: string) => `Slowpage 处于公开预览阶段（${v}），免费开源。下载试用，或到 GitHub 告诉我们你期待的阅读体验。`,
   closeDownload: '下载 macOS 版',
   closeGithub: '前往 GitHub',
-  closeFine: 'macOS 14 Sonoma 及以上 · Apple Silicon · EPUB / PDF · MIT / Apache-2.0',
+  closeFine: ['macOS 14 Sonoma 及以上', 'Apple 芯片', 'EPUB / PDF', 'MIT / Apache-2.0'],
 
   footerTagline: '为 macOS 打造的单页阅读器',
-  footerDownload: '下载',
+  footerDownload: '全部版本',
   footerFeedback: '反馈建议',
   footerLicense: '开源许可',
   footerFamily: '同一作者',
@@ -111,6 +113,8 @@ const en: typeof zh = {
   navMarginalia: 'Marginalia',
   navLibrary: 'Library',
   navOtherLocale: '中文',
+  navOtherLocaleLabel: '切换到中文',
+  navOtherLocaleLang: 'zh-CN',
   navDownload: 'Download',
 
   heroEyebrow: 'An EPUB and PDF reader for macOS',
@@ -122,7 +126,7 @@ const en: typeof zh = {
   heroLeadAfter: '. Read it like a well-printed book, and keep your thoughts in the margin.',
   heroDownload: 'Download for macOS',
   heroTry: 'Try it in the browser',
-  heroFine: (v: string) => `macOS 14+ · Apple Silicon · Free and open source · ${v}`,
+  heroFine: (v: string, size: string | null) => ['macOS 14+', 'Apple silicon', 'Free and open source', v, size],
 
   typeEyebrow: 'Typography',
   typeTitle: 'Good typesetting, visibly.',
@@ -159,10 +163,10 @@ const en: typeof zh = {
     `Slowpage is in public preview (${v}) and free and open source. Try it, or tell us on GitHub what reading should feel like.`,
   closeDownload: 'Download for macOS',
   closeGithub: 'View on GitHub',
-  closeFine: 'macOS 14 Sonoma or later · Apple Silicon · EPUB / PDF · MIT / Apache-2.0',
+  closeFine: ['macOS 14 Sonoma or later', 'Apple silicon', 'EPUB / PDF', 'MIT / Apache-2.0'],
 
   footerTagline: 'A single-page reader for macOS',
-  footerDownload: 'Download',
+  footerDownload: 'All releases',
   footerFeedback: 'Feedback',
   footerLicense: 'License',
   footerFamily: 'Also by the author',

@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, onSettled, Show } from 'solid-js'
 import { GlassTabs } from 'solid-liquid-glass'
 
+import { FactLine } from '../components/FactLine'
 import { locale, t } from '../i18n'
 import type { LayoutMetrics, SetLine } from '../typeset/knuthPlass'
 import { useReveal } from '../utils/motion'
@@ -211,13 +212,13 @@ export function TypographySection() {
   const caption = () => {
     const current = activeTrim()
     const label = locale() === 'en' ? current.labelEn : current.labelZh
-    const base = `${label} · ${current.dimensions}`
+    const base = [label, current.dimensions]
     const m = metrics()
     if (lang() !== 'en' || !m) return base
     const ws = formatWordSpacing(m.maxWordSpacing)
     return locale() === 'en'
-      ? `${base} · ${m.lines} lines · max word-spacing ${ws}`
-      : `${base} · ${m.lines} 行 · 最大词距微调 ${ws}`
+      ? [...base, `${m.lines} lines`, `max word-spacing ${ws}`]
+      : [...base, `${m.lines} 行`, `最大词距微调 ${ws}`]
   }
 
   return (
@@ -235,14 +236,14 @@ export function TypographySection() {
           <h2
             data-shown={headerShown() ? 'true' : 'false'}
             style={{ '--sp-delay': '60ms' }}
-            class="sp-reveal mt-3 text-[34px] leading-[1.1] font-semibold tracking-[-0.03em] text-[#1D1D1F] [text-wrap:balance] sm:text-[52px]"
+            class="sp-reveal sp-h2 mt-3"
           >
             {t.typeTitle}
           </h2>
           <p
             data-shown={headerShown() ? 'true' : 'false'}
             style={{ '--sp-delay': '120ms' }}
-            class="sp-reveal mt-4 text-[16px] leading-[1.6] text-[#59595E] [text-wrap:pretty] sm:text-[18px]"
+            class="sp-reveal sp-lead mt-4"
           >
             {t.typeLead}
           </p>
@@ -283,14 +284,14 @@ export function TypographySection() {
           </figure>
         </div>
 
-        <p class="sp-tabular mx-auto mt-3.5 max-w-[1120px] text-center text-[13px] leading-[1.5] text-[#59595E]">
-          {caption()}
+        <p class="sp-tabular mx-auto mt-3.5 max-w-[1120px] text-center text-[13px] leading-[1.5] text-[#59595E] [text-wrap:balance]">
+          <FactLine items={caption()} />
         </p>
 
-        <ul class="mx-auto mt-7 grid max-w-[1120px] gap-4 text-left sm:grid-cols-3 sm:gap-8">
+        <ul class="mx-auto mt-8 grid max-w-[880px] gap-4 text-left sm:grid-cols-3 sm:gap-8 sm:text-center">
           <For each={notes()}>
             {(note) => (
-              <li class="text-[14px] leading-[1.55] text-[#59595E]">
+              <li class="text-[14px] leading-[1.55] text-[#59595E] [text-wrap:balance]">
                 <span class="block font-semibold text-[#1D1D1F]">{note[0]}</span>
                 {note[1]}
               </li>

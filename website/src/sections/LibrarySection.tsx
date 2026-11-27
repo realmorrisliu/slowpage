@@ -191,14 +191,14 @@ export function LibrarySection() {
           <h2
             data-shown={headerShown() ? 'true' : 'false'}
             style={{ '--sp-delay': '60ms' }}
-            class="sp-reveal mt-3 text-[32px] leading-[1.12] font-semibold tracking-[-0.03em] text-[#1D1D1F] [text-wrap:balance] sm:text-[44px]"
+            class="sp-reveal sp-h2 mt-3"
           >
             {t.libTitle}
           </h2>
           <p
             data-shown={headerShown() ? 'true' : 'false'}
             style={{ '--sp-delay': '120ms' }}
-            class="sp-reveal mt-4 text-[16px] leading-[1.65] text-[#59595E] [text-wrap:pretty] sm:text-[17px]"
+            class="sp-reveal sp-lead mt-4"
           >
             {t.libLead}
           </p>

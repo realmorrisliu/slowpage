@@ -1,10 +1,12 @@
 import { GlassButton } from 'solid-liquid-glass'
 
-import { locale, RELEASES_URL, REPO_URL, setLocale, t } from '../i18n'
+import { locale, REPO_URL, setLocale, t } from '../i18n'
+import { useDownloadLink } from '../release'
 import { useScrolled } from '../utils/motion'
 
 export function Navbar() {
   const scrolled = useScrolled(10)
+  const download = useDownloadLink()
 
   return (
     <header
@@ -48,6 +50,8 @@ export function Navbar() {
           <button
             type="button"
             onClick={() => setLocale(locale() === 'en' ? 'zh' : 'en')}
+            lang={t.navOtherLocaleLang}
+            aria-label={t.navOtherLocaleLabel}
             class="cursor-pointer transition-colors duration-150 hover:text-[#1D1D1F]"
           >
             {t.navOtherLocale}
@@ -66,8 +70,8 @@ export function Navbar() {
             material="tinted"
             swell="subtle"
             class="h-7 bg-[#1D1D1F] px-3.5 text-[12px] font-medium text-white"
-            href={RELEASES_URL}
-            target="_blank"
+            href={download.href()}
+            target={download.target()}
             rel="noopener noreferrer"
             data-track="download_click"
           >
