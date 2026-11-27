@@ -1425,7 +1425,39 @@ function harvestCuts(p) {
       native_lines: every.native_lines,
       paragraphs_owned: marks.owned,
       paragraphs_native: marks.native,
-      paragraphs_all: marks.all
+      paragraphs_all: marks.all,
+      face_probe: faceProbe(fontPx)
+    };
+  }
+
+  // The census uses this to check the face the reader actually drew.
+  // It does not change breaks. "acknowledged" at 22px is 138.4px on Iowan.
+  function faceProbe(size) {
+    const px = size > 0 ? size : 22;
+    const body = getComputedStyle(document.body);
+    let acknowledged = null;
+    try {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.font = px + "px " + body.fontFamily;
+        acknowledged = ctx.measureText("acknowledged").width;
+      }
+    } catch (err) {
+      acknowledged = null;
+    }
+    function present(name) {
+      try {
+        return !!(document.fonts && document.fonts.check(px + 'px "' + name + '"'));
+      } catch (err) {
+        return false;
+      }
+    }
+    return {
+      acknowledged: acknowledged,
+      iowan: present("Iowan Old Style"),
+      songti: present("Songti SC"),
+      family: body.fontFamily || ""
     };
   }
 

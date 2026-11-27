@@ -30,6 +30,10 @@ SIDES = {
 }
 SIDE = 52.0
 TOP = 48.0
+CI = "--ci" in sys.argv[1:]
+# DOM measure of "acknowledged" on Iowan Old Style at 22px. Recorded in
+# docs/design/north-star.md. EB Garamond sets the same word at 119.9px.
+IOWAN_ACKNOWLEDGED_22 = 138.4
 
 BASELINE = {
     "column": 343.47,
@@ -46,53 +50,180 @@ BASELINE = {
 }
 
 
+def output_paths() -> tuple[Path, str, dict[str, Path]]:
+    if CI:
+        out = ROOT / "docs" / "design" / "typeset-gate" / "ci"
+        name = "census.json"
+    else:
+        out = ROOT / "docs" / "design" / "typeset-gate"
+        name = "summary.json"
+    sides = {
+        "pride-343": out / "pride-343.png",
+        "pride-383": out / "pride-383.png",
+        "zhaohua-fan": out / "zhaohua-fan.png",
+    }
+    return out, name, sides
+
+
 def main() -> int:
+    global OUT, SIDES
+    OUT, summary_name, SIDES = output_paths()
     if any(arg in ("--font-expand", "--letter-space") for arg in sys.argv[1:]):
         print("phase 1 refuses font expansion and letter-spacing", file=sys.stderr)
         return 1
     if sys.platform != "darwin":
-        print("phase 1 measures the WKWebView reader, so this run needs macOS", file=sys.stderr)
+        reason = "phase 1 measures the WKWebView reader, so this run needs macOS"
+        if CI:
+            write_summary(blocked_summary(reason))
+            return 0
+        print(reason, file=sys.stderr)
         return 2
     host = socket.gethostname()
-    if "morris-mac" in host.lower():
+    if not CI and "morris-mac" in host.lower():
         subprocess.run([str(ROOT / "scripts" / "cleanup-worktrees.sh"), "--apply"], cwd=ROOT, check=False)
     locked = False
     try:
-        locked = take_lock()
-        wait_load()
-        wait_shell()
-        wait_load()
+        if CI:
+            if shell_running():
+                subprocess.run(["pkill", "-x", "spike-shell"], check=False)
+                time.sleep(1)
+            os.environ["SUPERREADER_SUPPORT_DIR"] = str(OUT / "support")
+        else:
+            locked = take_lock()
+            wait_load()
+            wait_shell()
+            wait_load()
+        if CI:
+            iowan = find_font(["Iowan Old Style.ttc", "IowanOldStyle.ttc"])
+            songti = find_font(["Songti.ttc", "Songti SC.ttc", "STSongti.ttc"])
+            if iowan is None or songti is None:
+                write_summary(
+                    blocked_summary(
+                        "this Mac has no Iowan Old Style or Songti file "
+                        f"(iowan={iowan}, songti={songti}). "
+                        "The WKWebView reader cannot be measured on those faces.",
+                        host,
+                        load_average(),
+                    )
+                )
+                return 0
         build()
-        load_start = wait_load()
-        faces = resolve_faces()
+        load_start = load_average() if CI else wait_load()
+        try:
+            faces = resolve_faces()
+        except SystemExit as err:
+            reason = err.code if isinstance(err.code, str) else "could not resolve Iowan Old Style and Songti SC"
+            if CI:
+                write_summary(blocked_summary(reason, host, load_start))
+                return 0
+            print(reason, file=sys.stderr)
+            return 2
         OUT.mkdir(parents=True, exist_ok=True)
         run_dir = OUT / "run"
         run_dir.mkdir(parents=True, exist_ok=True)
+        faces["nsfont"] = probe_nsfonts(run_dir)
         window_tool = compile_window_id(run_dir)
         cases = [
             measure_pride(faces, window_tool, run_dir, 343.47, "pride-343"),
             measure_pride(faces, window_tool, run_dir, 383.78, "pride-383"),
             measure_zhaohua(faces, window_tool, run_dir),
         ]
+        blocked = face_blocker(faces)
+        passed = all(case.get("ok") for case in cases) and blocked is None
         summary = {
             "phase": 1,
+            "ci": CI,
+            "runner": "github-hosted-macos" if os.environ.get("GITHUB_ACTIONS") == "true" else host,
             "head": git_head(),
+            "github_sha": os.environ.get("GITHUB_SHA") or None,
+            "github_run_id": os.environ.get("GITHUB_RUN_ID") or None,
+            "github_run_url": github_run_url(),
+            "sw_vers": sw_vers(),
+            "arch": os.uname().machine,
             "hostname": host,
             "load": load_start,
             "load_end": load_average(),
             "baseline": BASELINE,
             "faces": faces["record"],
+            "nsfont": faces["nsfont"],
             "cases": cases,
-            "screenshot": "docs/design/typeset-gate/pride-343.png",
-            "screenshots": [f"docs/design/typeset-gate/{path.name}" for path in SIDES.values()],
-            "ok": all(case.get("ok") for case in cases),
+            "screenshot": str(SIDES["pride-343"].relative_to(ROOT)),
+            "screenshots": [str(path.relative_to(ROOT)) for path in SIDES.values()],
+            "blocked": blocked,
+            "phase1_pass": passed,
+            "ok": passed,
+            "note": (
+                "Phase 1 pass on this build, fonts, and widths."
+                if passed
+                else "Not a Phase 1 pass. The 2026-11-10 Iowan baseline is a historical record only. The EPUB default stays WKWebView."
+            ),
         }
-        (OUT / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-        print(json.dumps(summary, indent=2))
-        return 0 if summary["ok"] else 1
+        write_summary(summary, summary_name)
+        return 0 if CI or passed else 1
     finally:
         if locked:
             release_lock()
+
+
+def write_summary(summary: dict, name: str | None = None) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / (name or ("census.json" if CI else "summary.json"))
+    text = json.dumps(summary, indent=2) + "\n"
+    path.write_text(text)
+    print(text)
+
+
+def blocked_summary(reason: str, host: str | None = None, load: float | None = None) -> dict:
+    return {
+        "phase": 1,
+        "ci": CI,
+        "runner": "github-hosted-macos" if os.environ.get("GITHUB_ACTIONS") == "true" else (host or socket.gethostname()),
+        "head": git_head(),
+        "github_sha": os.environ.get("GITHUB_SHA") or None,
+        "github_run_id": os.environ.get("GITHUB_RUN_ID") or None,
+        "github_run_url": github_run_url(),
+        "sw_vers": sw_vers() if sys.platform == "darwin" else None,
+        "arch": os.uname().machine,
+        "hostname": host or socket.gethostname(),
+        "load": load,
+        "blocked": reason,
+        "cases": [],
+        "phase1_pass": False,
+        "ok": False,
+        "note": "WKWebView census did not run. This is not a Phase 1 pass. The EPUB default stays WKWebView.",
+    }
+
+
+def github_run_url() -> str | None:
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not repo or not run_id:
+        return None
+    return f"https://github.com/{repo}/actions/runs/{run_id}"
+
+
+def sw_vers() -> str | None:
+    proc = subprocess.run(["sw_vers", "-productVersion"], capture_output=True, text=True)
+    text = proc.stdout.strip()
+    return text or None
+
+
+def face_blocker(faces: dict) -> str | None:
+    nsfont = faces.get("nsfont") or {}
+    if nsfont.get("error"):
+        return None
+    missing = []
+    for name in ("Iowan Old Style", "Songti SC"):
+        row = nsfont.get(name) or {}
+        family = str(row.get("family") or "")
+        face = str(row.get("font") or "")
+        if name == "Iowan Old Style" and "Iowan" not in family and "Iowan" not in face:
+            missing.append(name)
+        if name == "Songti SC" and "Songti" not in family and "Songti" not in face and "STSong" not in face and "宋" not in family:
+            missing.append(name)
+    if not missing:
+        return None
+    return "NSFont did not resolve " + " and ".join(missing) + " on this Mac"
 
 
 def shell_running() -> bool:
@@ -313,7 +444,7 @@ def measure_zhaohua(faces: dict, window_tool: Path, run_dir: Path) -> dict:
         {"SPIKE_MODE": "webkit", "SPIKE_BOOK": "zhaohua"},
         ZHAOHUA,
         "25271-0-1.txt.html",
-        None,
+        372.06,
         20.0,
         faces["iowan"],
         faces["roman"][0],
@@ -321,7 +452,7 @@ def measure_zhaohua(faces: dict, window_tool: Path, run_dir: Path) -> dict:
         faces["italic"][0],
         faces["songti"],
         faces["song"][0],
-        require_font=None,
+        require_font=20.0,
     )
 
 
@@ -344,20 +475,33 @@ def measure(
     require_font,
 ) -> dict:
     state = None
+    log_path = run_dir / f"{case_id}-shell.log"
     try:
         env = dict(env_extra)
         body = None
         previous_frame = None
+        settle_timeout = 45 if CI else 25
+        layout_timeout = 90 if CI else 40
         for _ in range(4):
             CHROME_JSON.unlink(missing_ok=True)
             WEBKIT_JSON.unlink(missing_ok=True)
             started = time.time()
-            state = launch(env)
-            if not wait_settled(started, env.get("SPIKE_WINDOW")):
-                return fail(case_id, "reader window did not settle")
-            body = wait_layout(state, 40, lambda item: layout_ready(item))
+            state = launch(env, log_path)
+            if not wait_settled(started, env.get("SPIKE_WINDOW"), settle_timeout):
+                keep_reader_files(run_dir, case_id)
+                stop(state)
+                state = None
+                return fail(case_id, "reader window did not settle" + log_tail(log_path))
+            body = wait_layout(state, layout_timeout, lambda item: layout_ready(item))
             if body is None:
-                return fail(case_id, "reader layout did not settle")
+                keep_reader_files(run_dir, case_id)
+                alive = state["proc"].poll()
+                stop(state)
+                state = None
+                detail = "reader layout did not settle"
+                if alive is not None:
+                    detail += f" (spike-shell exited {alive})"
+                return fail(case_id, detail + log_tail(log_path))
             if target is None:
                 break
             column_now = (body.get("layout") or {}).get("column")
@@ -369,7 +513,7 @@ def measure(
             if label is None or label == previous_frame:
                 return fail(case_id, f"reader column {column_now} did not reach {target}")
             previous_frame = label
-            stop(state["proc"])
+            stop(state)
             state = None
             env = dict(env_extra)
             env["SPIKE_WINDOW"] = label
@@ -404,8 +548,15 @@ def measure(
             "owned_gap_p95": layout.get("gap_p95"),
             "owned_gap_max": layout.get("gap_ratio"),
         }
+        probe = layout.get("face_probe") or {}
+        reader["acknowledged"] = probe.get("acknowledged")
+        reader["iowan"] = probe.get("iowan")
+        reader["songti"] = probe.get("songti")
+        reader["family"] = probe.get("family")
+        reader["tofu"] = body.get("tofu")
         reader_path = run_dir / f"{case_id}-reader.json"
         reader_path.write_text(json.dumps(reader, indent=2) + "\n")
+        keep_reader_files(run_dir, case_id)
         case_path = run_dir / f"{case_id}.json"
         png = run_dir / f"{case_id}-crate.png"
         side = SIDES.get(case_id)
@@ -438,10 +589,18 @@ def measure(
             extra = case.get("extra") or []
             extra.append(f"target {target}")
             case["extra"] = extra
+        for item in face_extras(case_id, layout.get("face_probe") or {}, font_size, body.get("tofu"), faces):
+            case["ok"] = False
+            extra = case.get("extra") or []
+            extra.append(item)
+            case["extra"] = extra
+        case["acknowledged_px"] = (layout.get("face_probe") or {}).get("acknowledged")
+        case["tofu"] = body.get("tofu")
+        case["reader_family"] = (layout.get("face_probe") or {}).get("family")
         return case
     finally:
         if state is not None:
-            stop(state["proc"])
+            stop(state)
 
 
 def fail(case_id: str, message: str) -> dict:
@@ -522,20 +681,31 @@ def window_for_column(body: dict, target: float):
     return (round(width), round(height))
 
 
-def launch(extra: dict) -> dict:
+def launch(extra: dict, log_path: Path | None = None) -> dict:
     env = os.environ.copy()
     for key in list(env):
         if key.startswith("SPIKE_"):
             env.pop(key, None)
     env.update(extra)
+    log = open(log_path, "a") if log_path is not None else subprocess.DEVNULL
     proc = subprocess.Popen(
         [str(SHELL_BIN)],
         env=env,
         cwd=SPIKES,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT if log_path is not None else log,
     )
-    return {"pid": proc.pid, "proc": proc}
+    if log_path is not None:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                f'tell application "System Events" to set frontmost of first process whose unix id is {proc.pid} to true',
+            ],
+            capture_output=True,
+            text=True,
+        )
+    return {"pid": proc.pid, "proc": proc, "log": None if log_path is None else log}
 
 
 def wait_layout(state, timeout, ready):
@@ -567,15 +737,87 @@ def read_json(path: Path):
         return None
 
 
-def stop(proc) -> None:
-    if proc.poll() is not None:
-        return
-    proc.terminate()
+def stop(state) -> None:
+    proc = state["proc"] if isinstance(state, dict) else state
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+    log = state.get("log") if isinstance(state, dict) else None
+    if log is not None:
+        log.close()
+
+
+def face_extras(case_id: str, probe: dict, font_size, tofu, faces: dict) -> list[str]:
+    extras = []
+    if case_id.startswith("pride"):
+        width = probe.get("acknowledged")
+        if not isinstance(width, (int, float)):
+            extras.append("reader did not report the Iowan word width")
+        else:
+            expected = IOWAN_ACKNOWLEDGED_22 * (float(font_size) / 22.0)
+            if abs(float(width) - expected) > 6.0:
+                extras.append(
+                    f"acknowledged {float(width):.1f}px, Iowan at {float(font_size):.0f}px is {expected:.1f}px"
+                )
+    if case_id == "zhaohua-fan" and isinstance(tofu, (int, float)) and int(tofu) > 0:
+        extras.append(f"tofu {int(tofu)}")
+    return extras
+
+
+def keep_reader_files(run_dir: Path, case_id: str) -> None:
+    for source, name in ((WEBKIT_JSON, "webkit"), (CHROME_JSON, "chrome")):
+        if source.is_file():
+            shutil.copy(source, run_dir / f"{case_id}-{name}.json")
+
+
+def log_tail(path: Path) -> str:
     try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=3)
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    tail = [line for line in lines[-12:] if line.strip()]
+    if not tail:
+        return ""
+    return " | " + " | ".join(tail)
+
+
+def probe_nsfonts(out: Path) -> dict:
+    source = out / "nsfont.swift"
+    source.write_text(
+        """
+import AppKit
+let names = ["Iowan Old Style", "Songti SC"]
+for name in names {
+  if let font = NSFont(name: name, size: 22) {
+    print("\\(name)\\t\\(font.familyName ?? "")\\t\\(font.fontName ?? "")")
+  } else {
+    print("\\(name)\\t\\t")
+  }
+}
+"""
+    )
+    binary = out / "nsfont"
+    proc = subprocess.run(swiftc_cmd() + ["-O", "-o", str(binary), str(source)], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return {"error": (proc.stderr or "swiftc failed").strip()}
+    ran = subprocess.run([str(binary)], capture_output=True, text=True)
+    if ran.returncode != 0:
+        return {"error": (ran.stderr or "nsfont probe failed").strip()}
+    found = {}
+    for line in ran.stdout.splitlines():
+        name, family, face = (line.split("\t") + ["", ""])[:3]
+        found[name] = {"family": family, "font": face}
+    return found
+
+
+def swiftc_cmd() -> list[str]:
+    if shutil.which("swiftc"):
+        return ["swiftc"]
+    return ["xcrun", "--sdk", "macosx", "swiftc"]
 
 
 def compile_window_id(out: Path) -> Path:
@@ -605,7 +847,7 @@ print(best)
 """
     )
     binary = out / "window-id"
-    proc = subprocess.run(["swiftc", "-O", "-o", str(binary), str(source)], capture_output=True, text=True)
+    proc = subprocess.run(swiftc_cmd() + ["-O", "-o", str(binary), str(source)], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr or "swiftc failed")
     return binary

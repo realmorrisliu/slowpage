@@ -64,6 +64,7 @@ GitHub Actions uses **`working-directory: spikes`** (deny runs from repo root wi
 | `deny` | Full `spikes/Cargo.lock` (licenses, advisories, bans, sources) |
 | `no-fast-models` | `scripts/lint-no-fast-models.sh` on tracked `.cursor/`, `AGENTS.md`, and `docs/agents` |
 | `bold-word-starts-ip` | `scripts/lint-bold-word-starts.sh` |
+| `macos` | Phase 1 typography census: release `spike-shell` WKWebView reader and `typeset-gate` on the same GitHub-hosted macOS runner, Iowan Old Style and Songti SC. `scripts/typeset-census.sh`. A failed gate is recorded and does not by itself fail the job. A missing report does. |
 
 **Excluded from clippy / fmt sweep (Phase 1)**
 
