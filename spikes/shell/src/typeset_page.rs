@@ -7,8 +7,9 @@
 //!
 //! Page turns, the finger-following swipe, the stored sentence, contents,
 //! links, footnotes, notes, bookmarks, find, live reflow, and Bold Word
-//! Starts stay on this view. A note's start and end are stored as WKWebView
-//! body offsets. The default reader is still WKWebView.
+//! Starts stay on this view. The stored sentence and a selection anchor
+//! stay WKWebView UTF-16 body offsets. A margin note stores body Unicode
+//! scalars. The default reader is still WKWebView.
 
 use std::path::Path;
 
@@ -234,14 +235,20 @@ impl Session {
         self.layout.from_web(shared)
     }
 
-    /// A note's start and end, stored as WKWebView body offsets.
-    pub fn shared_span(&self, start: u32, end: u32) -> (u32, u32) {
+    /// A selection anchor in WKWebView UTF-16 units. A margin note uses
+    /// [`Self::shared_span`].
+    pub fn web_span(&self, start: u32, end: u32) -> (u32, u32) {
         self.layout.to_web_span(start, end)
+    }
+
+    /// A note's start and end, stored as body Unicode scalars.
+    pub fn shared_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.layout.to_note_span(start, end)
     }
 
     /// A stored note range in the scalars `note_rects` paints.
     pub fn local_span(&self, start: u32, end: u32) -> (u32, u32) {
-        self.layout.from_web_span(start, end)
+        self.layout.from_note_span(start, end)
     }
 
     /// The scalar of `id` in `href`, or none when that target is not in the chapter.

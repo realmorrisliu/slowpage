@@ -2812,6 +2812,11 @@ impl State {
                 .as_ref()
                 .map(|session| session.generation())
                 .unwrap_or(0);
+            let (anchor_start, anchor_end) = self
+                .typeset
+                .as_ref()
+                .map(|session| session.web_span(mark.start, mark.end))
+                .unwrap_or((mark.start, mark.end));
             let (start, end) = self
                 .typeset
                 .as_ref()
@@ -2819,8 +2824,8 @@ impl State {
                 .unwrap_or((mark.start, mark.end));
             self.anchor = Some(Anchor::Epub {
                 spine_href: href.clone(),
-                start,
-                end,
+                start: anchor_start,
+                end: anchor_end,
                 text: mark.text.clone(),
             });
             self.note = spike_library::margin::passage_from(spike_library::margin::Selection {

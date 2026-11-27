@@ -4,8 +4,11 @@
 //! chapter text, in document order. It does not move when the window reflows.
 //! The history file and the WKWebView reader store a different number: the
 //! UTF-16 length of `body` text, including whitespace this parser drops.
-//! `to_web` and `from_web` translate at that boundary. A blocked page turn
-//! reports offset 0 so the stored sentence stays.
+//! `to_web` and `from_web` translate a sentence at that boundary. A margin
+//! note stores Unicode scalars in the same body stream, the numbers
+//! `scalar_start` and `measureScalars` already use. `to_note_span` and
+//! `from_note_span` translate that range. A blocked page turn reports
+//! offset 0 so the stored sentence stays.
 
 use crate::parse::{Block, Chunk};
 
@@ -58,15 +61,24 @@ pub struct ChapterText {
     links: Vec<LinkSpan>,
     /// UTF-16 index, in the WKWebView body stream, of each kept scalar.
     at: Vec<u32>,
+    /// Unicode-scalar index, in that same body stream, of each kept scalar.
+    scalars: Vec<u32>,
     web_units: u32,
+    web_scalars: u32,
 }
 
-pub fn index_blocks(blocks: &[Block], trailing: &[String], web_units: u32) -> ChapterText {
+pub fn index_blocks(
+    blocks: &[Block],
+    trailing: &[String],
+    web_units: u32,
+    web_scalars: u32,
+) -> ChapterText {
     let mut plain = String::new();
     let mut nodes = Vec::new();
     let mut anchors = Vec::new();
     let mut links: Vec<LinkSpan> = Vec::new();
     let mut at = Vec::new();
+    let mut scalars = Vec::new();
     let mut chars = 0u32;
     for block in blocks {
         for chunk in &block.chunks {
@@ -108,9 +120,12 @@ pub fn index_blocks(blocks: &[Block], trailing: &[String], web_units: u32) -> Ch
                     }
                 }
                 let mut web = piece.web_at;
+                let mut scalar = piece.scalar_at;
                 for ch in piece.text.chars() {
                     at.push(web);
+                    scalars.push(scalar);
                     web = web.saturating_add(ch.len_utf16() as u32);
+                    scalar = scalar.saturating_add(1);
                 }
                 plain.push_str(&piece.text);
                 chars += count;
@@ -128,13 +143,20 @@ pub fn index_blocks(blocks: &[Block], trailing: &[String], web_units: u32) -> Ch
         anchors,
         links,
         at,
+        scalars,
         web_units,
+        web_scalars,
     }
 }
 
 pub fn chapter_text(xhtml: &str) -> ChapterText {
     let parsed = crate::parse::parse_chapter(xhtml, "", crate::parse::cjk_book(xhtml), None);
-    index_blocks(&parsed.blocks, &parsed.trailing_anchors, parsed.web_units)
+    index_blocks(
+        &parsed.blocks,
+        &parsed.trailing_anchors,
+        parsed.web_units,
+        parsed.web_scalars,
+    )
 }
 
 pub fn chapter_plain(xhtml: &str) -> String {
@@ -223,20 +245,39 @@ impl ChapterText {
         lo.saturating_sub(1) as u32
     }
 
-    /// The first kept scalar at or after a WKWebView offset.
+    /// A selection anchor in WKWebView UTF-16 units. `end` is exclusive.
+    /// A margin note uses [`Self::to_note_span`], not this.
+    pub fn to_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+        let (start, end) = ordered(start, end);
+        (self.to_web(start), self.to_web(end))
+    }
+
+    /// The body Unicode-scalar index of a kept scalar. Past the end, the
+    /// length of the body stream, including text this parser dropped.
+    pub fn to_note(&self, sentence: u32) -> u32 {
+        let index = sentence as usize;
+        if index >= self.scalars.len() {
+            return self.web_scalars;
+        }
+        self.scalars[index]
+    }
+
+    /// The first kept scalar at or after a body-scalar offset.
     ///
-    /// A note's end is exclusive. `from_web` would stop on the scalar before
-    /// a dropped newline and drop the last kept character of the note.
-    pub fn from_web_end(&self, utf16: u32) -> u32 {
-        let count = self.at.len();
-        if count == 0 || utf16 >= self.web_units {
+    /// Both edges of a note use this. `from_web` rounds backward, which
+    /// pulls the previous paragraph's last character into a note that
+    /// starts on dropped whitespace. An exclusive end that falls in that
+    /// gap still includes the last kept character before it.
+    pub fn note_boundary(&self, scalar: u32) -> u32 {
+        let count = self.scalars.len();
+        if count == 0 || scalar >= self.web_scalars {
             return count as u32;
         }
         let mut lo = 0usize;
         let mut hi = count;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            if self.at[mid] < utf16 {
+            if self.scalars[mid] < scalar {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -245,22 +286,21 @@ impl ChapterText {
         lo as u32
     }
 
-    /// A note range in WKWebView UTF-16 units. `end` is exclusive.
-    pub fn to_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+    /// A note range in body Unicode scalars. `end` is exclusive.
+    pub fn to_note_span(&self, start: u32, end: u32) -> (u32, u32) {
         let (start, end) = ordered(start, end);
-        (self.to_web(start), self.to_web(end))
+        (self.to_note(start), self.to_note(end))
     }
 
-    /// A stored note range back in typesetter scalars. A zero-width web
-    /// range stays zero-width. A web end that falls in dropped whitespace
-    /// still includes the last kept scalar before that gap.
-    pub fn from_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+    /// A stored note range in the scalars this chapter paints. A zero-width
+    /// range stays zero-width.
+    pub fn from_note_span(&self, start: u32, end: u32) -> (u32, u32) {
         let (start, end) = ordered(start, end);
         if start == end {
-            let at = self.from_web(start);
+            let at = self.note_boundary(start);
             return (at, at);
         }
-        (self.from_web(start), self.from_web_end(end))
+        (self.note_boundary(start), self.note_boundary(end))
     }
 }
 
@@ -294,7 +334,12 @@ mod tests {
         let xhtml =
             r#"<p>See <a href="next.xhtml#there">this</a> now.</p><h2 id="there">There</h2>"#;
         let parsed = crate::parse::parse_chapter(xhtml, "", false, None);
-        let text = index_blocks(&parsed.blocks, &parsed.trailing_anchors, parsed.web_units);
+        let text = index_blocks(
+            &parsed.blocks,
+            &parsed.trailing_anchors,
+            parsed.web_units,
+            parsed.web_scalars,
+        );
         let plain = text.plain();
         let this_at = plain.find("this").unwrap() as u32;
         assert_eq!(text.link_at(this_at), Some("next.xhtml#there"));
@@ -345,6 +390,9 @@ mod tests {
             chapter_text(r#"<body><div class="pg-boilerplate">Header</div><p>Body</p></body>"#);
         assert_eq!(hidden.plain(), "Body");
         assert_eq!(hidden.to_web(0), 6);
+        assert_eq!(hidden.to_note(0), 6);
+        let (start, end) = hidden.from_note_span(6, 10);
+        assert_eq!(hidden.slice(start, end), "Body");
         assert_eq!(hidden.from_web(6), 0);
 
         let titled =
@@ -387,23 +435,32 @@ mod tests {
     }
 
     #[test]
-    fn a_note_span_round_trips_across_dropped_whitespace() {
-        let text = chapter_text("<body>\n<p>First</p>\n<p>Second</p>\n</body>");
+    fn a_note_span_uses_body_scalars_and_skips_a_dropped_start() {
+        let text = chapter_text("<p>First</p>\n<p>Second</p>");
         let second = text.plain().find("Second").unwrap() as u32;
-        assert_eq!(text.to_web_span(0, second), (text.to_web(0), 7));
-        assert_eq!(text.from_web_span(text.to_web(0), 7), (0, second));
-        let (start, end) = text.from_web_span(0, 6);
+        assert_eq!(text.to_web(second), 6);
+        assert_eq!(text.to_note(second), 6);
+        let (start, end) = text.from_note_span(5, 12);
+        assert_eq!(text.slice(start, end), "Second");
+        let (start, end) = text.from_note_span(0, 5);
         assert_eq!(text.slice(start, end), "First");
+        assert_eq!(text.from_note_span(6, 6).0, text.from_note_span(6, 6).1);
         assert_eq!(
-            text.from_web_span(6, 6),
-            (text.from_web(6), text.from_web(6))
+            text.to_note_span(0, second),
+            (text.to_note(0), text.to_note(second))
         );
-        assert_eq!(text.to_web_span(second, 0).1, 7);
+        assert_eq!(
+            text.from_note_span(text.to_note(0), text.to_note(second)),
+            (0, second)
+        );
 
-        let emoji = chapter_text("<p>A😀B</p>");
-        let (start, end) = emoji.from_web_span(1, 2);
+        let emoji = chapter_text("<p>A😀BC</p>");
+        let b = emoji.plain().chars().position(|ch| ch == 'B').unwrap() as u32;
+        assert_eq!(emoji.to_web_span(b, b + 1), (3, 4));
+        assert_eq!(emoji.to_note_span(b, b + 1), (2, 3));
+        let (start, end) = emoji.from_note_span(2, 3);
+        assert_eq!(emoji.slice(start, end), "B");
+        let (start, end) = emoji.from_note_span(1, 2);
         assert_eq!(emoji.slice(start, end), "😀");
-        let (web_start, web_end) = emoji.to_web_span(1, 2);
-        assert_eq!(emoji.from_web_span(web_start, web_end), (1, 2));
     }
 }
