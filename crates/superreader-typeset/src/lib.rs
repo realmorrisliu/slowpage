@@ -1,8 +1,8 @@
 //! Headless chapter typesetter for the owned EPUB engine.
 //!
-//! The shell paints those runs when `SPIKE_TYPESET=1`.
-//! WKWebView remains the default reader. The 2026-11-27 crate run used
-//! the fixture faces and did not include the WKWebView census.
+//! The shell paints those runs for an EPUB. `SPIKE_TYPESET=1` is the same
+//! request. `SPIKE_TYPESET=0` stays on WKWebView. A chapter the crate cannot
+//! open stays on WKWebView.
 //! icu_segmenter is Unicode-3.0. rbook is Apache-2.0. harfrust is MIT.
 //! skrifa is MIT OR Apache-2.0. tiny-skia is BSD-3-Clause.
 
