@@ -2239,6 +2239,53 @@ fn spike_window() -> Option<(f64, f64)> {
     parse_spike_window(&std::env::var("SPIKE_WINDOW").ok()?)
 }
 
+/// The Phase 1 census sets `SPIKE_DISPLAY=1`. The runner's default display is
+/// 1024×768, and the paperback page keeps a 129:198 frame, so the documented
+/// columns need a taller mode. Other product launches leave the display alone.
+pub fn raise_census_display() {
+    if std::env::var("SPIKE_DISPLAY").ok().as_deref() != Some("1") {
+        return;
+    }
+    unsafe {
+        use objc2_core_foundation::CFRetained;
+        use objc2_core_graphics::{
+            CGDisplayCopyAllDisplayModes, CGDisplayMode, CGDisplayModeGetHeight,
+            CGDisplayModeGetWidth, CGDisplaySetDisplayMode, CGMainDisplayID,
+        };
+        let display = CGMainDisplayID();
+        let Some(owned) = CGDisplayCopyAllDisplayModes(display, None) else {
+            eprintln!("census display: no modes");
+            return;
+        };
+        let modes = owned.cast_unchecked::<CGDisplayMode>();
+        let mut best: Option<CFRetained<CGDisplayMode>> = None;
+        let mut best_score = 0usize;
+        for index in 0..modes.len() {
+            let Some(mode) = modes.get(index) else {
+                continue;
+            };
+            let width = CGDisplayModeGetWidth(Some(&mode));
+            let height = CGDisplayModeGetHeight(Some(&mode));
+            if height >= 1080 && width >= 1440 {
+                let score = height * 10000 + width;
+                if score > best_score {
+                    best_score = score;
+                    best = Some(mode);
+                }
+            }
+        }
+        let Some(mode) = best else {
+            eprintln!("census display: no mode at least 1440x1080");
+            return;
+        };
+        let width = CGDisplayModeGetWidth(Some(&mode));
+        let height = CGDisplayModeGetHeight(Some(&mode));
+        let err = CGDisplaySetDisplayMode(display, Some(&mode), None);
+        eprintln!("census display: set {width}x{height} status {}", err.0);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 fn parse_spike_window(raw: &str) -> Option<(f64, f64)> {
     let (width, height) = raw.split_once('x')?;
     let width: f64 = width.trim().parse().ok()?;

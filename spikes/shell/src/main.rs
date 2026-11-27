@@ -16,6 +16,10 @@ fn root() -> Root {
 fn main() {
     spike_shell::publish_launch_file();
     spike_shell::mark_process_start();
+    // The census sets this. A GitHub-hosted runner's default 1024×768 frame
+    // cannot host the documented columns, and a mode set by another process
+    // did not reach this one.
+    spike_shell::raise_census_display();
     let mut options = AppOptions {
         title: "Slowpage".into(),
         size: (1100, 1400),

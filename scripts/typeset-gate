@@ -31,6 +31,8 @@ SIDES = {
 SIDE = 52.0
 TOP = 48.0
 CI = "--ci" in sys.argv[1:]
+DISPLAY_PROC: subprocess.Popen | None = None
+DISPLAY_DONE: Path | None = None
 # DOM measure of "acknowledged" on Iowan Old Style at 22px. Recorded in
 # docs/design/north-star.md. EB Garamond sets the same word at 119.9px.
 IOWAN_ACKNOWLEDGED_22 = 138.4
@@ -163,6 +165,7 @@ def main() -> int:
         write_summary(summary, summary_name)
         return 0 if CI or passed else 1
     finally:
+        release_display()
         if locked:
             release_lock()
 
@@ -681,17 +684,21 @@ def parse_window(raw: str | None):
 def width_miss_message(column_now, target, body) -> str:
     chrome = read_json(CHROME_JSON) or {}
     page = None if body is None else body.get("page_w")
-    visible_h = chrome.get("visible_h")
+    visible = ""
+    if isinstance(chrome.get("visible_w"), (int, float)) and isinstance(chrome.get("visible_h"), (int, float)):
+        visible = f" visible {chrome.get('visible_w')}x{chrome.get('visible_h')}"
+    limit = chrome.get("visible_h")
+    if not isinstance(limit, (int, float)):
+        limit = chrome.get("window_h")
     short = ""
-    if isinstance(visible_h, (int, float)) and float(visible_h) < 860:
+    if isinstance(limit, (int, float)) and float(limit) < 860:
         short = (
             f"; the documented column needs a window about 870pt tall"
-            f" and this visible frame is {float(visible_h):.0f}pt"
+            f" and this frame is {float(limit):.0f}pt"
         )
     return (
         f"reader column {column_now} did not reach {target}; "
-        f"window {chrome.get('window_w')}x{chrome.get('window_h')} "
-        f"visible {chrome.get('visible_w')}x{chrome.get('visible_h')} "
+        f"window {chrome.get('window_w')}x{chrome.get('window_h')}{visible} "
         f"page {page}{short}"
     )
 
@@ -737,12 +744,52 @@ def prepare_display(run_dir: Path) -> dict | None:
         note = (built.stderr or "swiftc failed").strip()
         print(note, file=sys.stderr)
         return {"error": note}
-    ran = subprocess.run([str(binary), str(out)], capture_output=True, text=True)
-    if ran.stdout:
-        print(ran.stdout, file=sys.stderr)
-    if ran.stderr:
-        print(ran.stderr, file=sys.stderr)
-    return read_json(out) or {"error": (ran.stderr or "display probe wrote no json").strip(), "status": ran.returncode}
+    # The mode set by a process that then exits did not reach spike-shell.
+    # Hold this process open for the census. The shell also sets the mode itself.
+    global DISPLAY_PROC, DISPLAY_DONE
+    done = run_dir / "display.json.done"
+    done.unlink(missing_ok=True)
+    DISPLAY_DONE = done
+    proc = subprocess.Popen([str(binary), str(out)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    DISPLAY_PROC = proc
+    deadline = time.time() + 20
+    while time.time() < deadline and not (out.is_file() and out.stat().st_size > 0):
+        if proc.poll() is not None:
+            break
+        time.sleep(0.2)
+    err = ""
+    if proc.poll() is not None:
+        err = (proc.stderr.read() if proc.stderr is not None else "") or ""
+        out_text = proc.stdout.read() if proc.stdout is not None else ""
+        if out_text:
+            print(out_text, file=sys.stderr)
+        if err:
+            print(err, file=sys.stderr)
+    data = read_json(out)
+    if data is None:
+        return {"error": err.strip() or "display probe wrote no json", "status": proc.poll()}
+    return data
+
+
+def release_display() -> None:
+    global DISPLAY_PROC, DISPLAY_DONE
+    if DISPLAY_DONE is not None:
+        try:
+            DISPLAY_DONE.write_text("done\n")
+        except OSError:
+            pass
+    proc = DISPLAY_PROC
+    DISPLAY_PROC = None
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 DISPLAY_SWIFT = r"""
@@ -828,6 +875,14 @@ do {
   fputs("display json failed \(error)\n", stderr)
   exit(1)
 }
+let done = URL(fileURLWithPath: outPath + ".done")
+let deadline = Date().addingTimeInterval(40 * 60)
+while Date() < deadline {
+  if FileManager.default.fileExists(atPath: done.path) {
+    break
+  }
+  Thread.sleep(forTimeInterval: 0.5)
+}
 """
 
 
@@ -865,6 +920,8 @@ def launch(extra: dict, log_path: Path | None = None) -> dict:
         if key.startswith("SPIKE_"):
             env.pop(key, None)
     env.update(extra)
+    if CI and sys.platform == "darwin":
+        env["SPIKE_DISPLAY"] = "1"
     log = open(log_path, "a") if log_path is not None else subprocess.DEVNULL
     proc = subprocess.Popen(
         [str(SHELL_BIN)],
