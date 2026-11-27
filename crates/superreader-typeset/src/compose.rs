@@ -324,6 +324,7 @@ impl Typesetter {
                 &prepared.blocks,
                 &prepared.trailing_anchors,
                 prepared.web_units,
+                prepared.web_scalars,
             ),
             report: LayoutReport {
                 page_count: pages.len() as u32,
@@ -390,6 +391,18 @@ impl ChapterLayout {
 
     pub fn from_web(&self, shared: u32) -> u32 {
         self.text.from_web(shared)
+    }
+
+    pub fn to_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.text.to_web_span(start, end)
+    }
+
+    pub fn to_note_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.text.to_note_span(start, end)
+    }
+
+    pub fn from_note_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.text.from_note_span(start, end)
     }
 
     pub fn sentence_of(&self, caret: Caret) -> u32 {
@@ -653,6 +666,7 @@ struct Prepared {
     cjk: bool,
     trailing_anchors: Vec<String>,
     web_units: u32,
+    web_scalars: u32,
 }
 
 fn prepare(xhtml: &str, stylesheet: &str, font_size: Option<f32>) -> Prepared {
@@ -663,6 +677,7 @@ fn prepare(xhtml: &str, stylesheet: &str, font_size: Option<f32>) -> Prepared {
         cjk,
         trailing_anchors: parsed.trailing_anchors,
         web_units: parsed.web_units,
+        web_scalars: parsed.web_scalars,
     }
 }
 

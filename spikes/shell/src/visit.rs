@@ -3260,6 +3260,128 @@ pub struct FingerGlide {
     pub token: u64,
 }
 
+/// What one wheel effect does to the glyph-run page. Follow does not write.
+/// A commit glide queues one later page. A key slide does not take a finger.
+/// A lift that asks to leave the end, with the page still at rest, is the
+/// blocked ease. PDF does not use this path.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TypesetWheel {
+    Pass,
+    Follow {
+        shift: f64,
+    },
+    Begin(FingerGlide),
+    Busy {
+        queued: i32,
+    },
+    Ease {
+        forward: bool,
+    },
+    /// The lift belonged to a key slide. Retire its token. Do not queue.
+    Refuse,
+    Drop,
+}
+
+pub fn typeset_wheel(
+    effect: WheelMove,
+    token: u64,
+    book: u64,
+    page: u32,
+    pages: u32,
+    width: f64,
+    held: f64,
+    gliding: bool,
+    key_slide: bool,
+) -> TypesetWheel {
+    match effect {
+        WheelMove::Pass | WheelMove::Swallow | WheelMove::Hold => TypesetWheel::Pass,
+        WheelMove::Follow(offset) => {
+            if gliding || key_slide {
+                TypesetWheel::Pass
+            } else {
+                TypesetWheel::Follow {
+                    shift: finger_shift(offset, width),
+                }
+            }
+        }
+        WheelMove::Commit(delta) => {
+            let queued = one_page(delta);
+            if gliding {
+                return TypesetWheel::Busy { queued };
+            }
+            if key_slide {
+                return TypesetWheel::Refuse;
+            }
+            let index = page_index(page, pages);
+            let next = step_index(index, pages as usize, i64::from(queued));
+            if queued == 0 || next == index {
+                return TypesetWheel::Drop;
+            }
+            let to = if queued > 0 {
+                width.max(0.0)
+            } else {
+                -width.max(0.0)
+            };
+            TypesetWheel::Begin(FingerGlide {
+                book,
+                page: index,
+                from: held,
+                to,
+                incoming: Some(next),
+                write: Some(next),
+                queued: 0,
+                token,
+            })
+        }
+        WheelMove::Ease(delta) => {
+            if gliding {
+                return TypesetWheel::Busy {
+                    queued: one_page(delta),
+                };
+            }
+            if key_slide {
+                return TypesetWheel::Pass;
+            }
+            if held == 0.0 {
+                if delta == 0 {
+                    TypesetWheel::Drop
+                } else {
+                    TypesetWheel::Ease { forward: delta > 0 }
+                }
+            } else {
+                let index = page_index(page, pages);
+                TypesetWheel::Begin(FingerGlide {
+                    book,
+                    page: index,
+                    from: held,
+                    to: 0.0,
+                    incoming: finger_neighbor(page, pages, held),
+                    write: None,
+                    queued: 0,
+                    token: 0,
+                })
+            }
+        }
+        WheelMove::Cancel => {
+            if gliding || key_slide || held == 0.0 {
+                TypesetWheel::Drop
+            } else {
+                let index = page_index(page, pages);
+                TypesetWheel::Begin(FingerGlide {
+                    book,
+                    page: index,
+                    from: held,
+                    to: 0.0,
+                    incoming: finger_neighbor(page, pages, held),
+                    write: None,
+                    queued: 0,
+                    token: 0,
+                })
+            }
+        }
+    }
+}
+
 /// What one wheel effect does to the PDF picture. Follow does not write.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PdfWheel {
@@ -4929,6 +5051,121 @@ mod tests {
         assert_eq!(returned.card, hidden.card);
         assert!(returned.covers);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_typeset_finger_follows_the_webview_lift() {
+        let width = 400.0;
+        let down = |dx: f64| WheelTick {
+            finger: Finger::Down,
+            momentum: false,
+            dx,
+            dy: 0.0,
+        };
+        let up = WheelTick {
+            finger: Finger::Up,
+            momentum: false,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        let mut swipe = Swipe::default();
+        let follow = swipe.offer(down(30.0), 2, 5);
+        let TypesetWheel::Follow { shift } =
+            typeset_wheel(follow, 0, 1, 2, 5, width, 0.0, false, false)
+        else {
+            panic!("the finger did not move the page");
+        };
+        assert!((shift - 30.0).abs() < 1e-6);
+        let cancel = swipe.offer(up, 2, 5);
+        let TypesetWheel::Begin(glide) =
+            typeset_wheel(cancel, 0, 1, 2, 5, width, shift, false, false)
+        else {
+            panic!("a short lift should glide back, got {cancel:?}");
+        };
+        assert_eq!(glide.write, None);
+        assert_eq!(glide.to, 0.0);
+        assert!((glide.from - 30.0).abs() < 1e-6);
+
+        let mut swipe = Swipe::default();
+        let follow = swipe.offer(down(80.0), 2, 5);
+        let TypesetWheel::Follow { shift } =
+            typeset_wheel(follow, 0, 1, 2, 5, width, 0.0, false, false)
+        else {
+            panic!("follow");
+        };
+        let commit = swipe.offer(up, 2, 5);
+        let token = swipe.commit_token().unwrap();
+        let TypesetWheel::Begin(glide) =
+            typeset_wheel(commit, token, 1, 2, 5, width, shift, false, false)
+        else {
+            panic!("a long lift should commit, got {commit:?}");
+        };
+        assert_eq!(glide.write, Some(2));
+        assert!((glide.to - width).abs() < 1e-6);
+        assert_eq!(glide.token, token);
+
+        let again = swipe.offer(down(80.0), 2, 5);
+        assert!(matches!(
+            typeset_wheel(again, 0, 1, 2, 5, width, 0.0, true, false),
+            TypesetWheel::Pass
+        ));
+        let queued_lift = swipe.offer(up, 2, 5);
+        let queued_token = swipe.commit_token().unwrap();
+        assert!(matches!(
+            typeset_wheel(queued_lift, queued_token, 1, 2, 5, width, 0.0, true, false),
+            TypesetWheel::Busy { queued: 1 }
+        ));
+
+        let mut keyed = Swipe::default();
+        let during = keyed.offer(down(80.0), 2, 5);
+        assert!(matches!(
+            typeset_wheel(during, 0, 1, 2, 5, width, 0.0, false, true),
+            TypesetWheel::Pass
+        ));
+        let lift = keyed.offer(up, 2, 5);
+        let refused = keyed.commit_token().unwrap();
+        assert!(matches!(
+            typeset_wheel(lift, refused, 1, 2, 5, width, 0.0, false, true),
+            TypesetWheel::Refuse
+        ));
+
+        let mut blocked = Swipe::default();
+        let held = blocked.offer(down(-80.0), 1, 5);
+        let TypesetWheel::Follow { shift } =
+            typeset_wheel(held, 0, 1, 1, 5, width, 0.0, false, false)
+        else {
+            panic!("blocked follow");
+        };
+        assert_eq!(shift, 0.0);
+        let ease = blocked.offer(up, 1, 5);
+        assert!(matches!(
+            typeset_wheel(ease, 0, 1, 1, 5, width, 0.0, false, false),
+            TypesetWheel::Ease { forward: false }
+        ));
+
+        let back = typeset_wheel(WheelMove::Ease(1), 0, 1, 5, 5, width, 40.0, false, false);
+        let TypesetWheel::Begin(glide) = back else {
+            panic!("a blocked lift that had already moved glides back, got {back:?}");
+        };
+        assert_eq!(glide.write, None);
+        assert_eq!(glide.from, 40.0);
+        assert_eq!(glide.to, 0.0);
+
+        let mut resting = Swipe::default();
+        let coast = resting.offer(
+            WheelTick {
+                finger: Finger::None,
+                momentum: true,
+                dx: 100.0,
+                dy: 0.0,
+            },
+            2,
+            5,
+        );
+        assert!(matches!(
+            typeset_wheel(coast, 0, 1, 2, 5, width, 0.0, false, false),
+            TypesetWheel::Pass
+        ));
     }
 
     #[test]
