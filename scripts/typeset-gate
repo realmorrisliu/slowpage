@@ -121,6 +121,7 @@ def main() -> int:
         OUT.mkdir(parents=True, exist_ok=True)
         run_dir = OUT / "run"
         run_dir.mkdir(parents=True, exist_ok=True)
+        display = prepare_display(run_dir)
         faces["nsfont"] = probe_nsfonts(run_dir)
         window_tool = compile_window_id(run_dir)
         cases = [
@@ -146,6 +147,7 @@ def main() -> int:
             "baseline": BASELINE,
             "faces": faces["record"],
             "nsfont": faces["nsfont"],
+            "display": display,
             "cases": cases,
             "screenshot": str(SIDES["pride-343"].relative_to(ROOT)),
             "screenshots": [str(path.relative_to(ROOT)) for path in SIDES.values()],
@@ -479,7 +481,9 @@ def measure(
     try:
         env = dict(env_extra)
         body = None
-        previous_frame = None
+        width_note = None
+        maximized = False
+        asked: set[str] = set()
         settle_timeout = 45 if CI else 25
         layout_timeout = 90 if CI else 40
         for _ in range(4):
@@ -510,16 +514,32 @@ def measure(
             frame = window_for_column(body, target)
             label = None if frame is None else f"{frame[0]:.1f}x{frame[1]:.1f}"
             print(f"{case_id} column {column_now} page {body.get('page_w')} -> window {label}", file=sys.stderr)
-            if label is None or label == previous_frame:
-                return fail(case_id, f"reader column {column_now} did not reach {target}")
-            previous_frame = label
-            stop(state)
-            state = None
-            env = dict(env_extra)
-            env["SPIKE_WINDOW"] = label
+            if label is not None and label not in asked:
+                asked.add(label)
+                stop(state)
+                state = None
+                env = dict(env_extra)
+                env["SPIKE_WINDOW"] = label
+                continue
+            grown = maximize_window() if not maximized else None
+            if grown is not None and grown not in asked:
+                maximized = True
+                asked.add(grown)
+                stop(state)
+                state = None
+                env = dict(env_extra)
+                env["SPIKE_WINDOW"] = grown
+                print(f"{case_id} maximize window {grown}", file=sys.stderr)
+                continue
+            width_note = width_miss_message(column_now, target, body)
+            print(width_note, file=sys.stderr)
+            break
         else:
             column_now = (body.get("layout") or {}).get("column") if body else None
-            return fail(case_id, f"reader column {column_now} did not reach {target}")
+            width_note = width_miss_message(column_now, target, body)
+            print(width_note, file=sys.stderr)
+        if state is None or body is None:
+            return fail(case_id, width_note or "reader column was not measured")
         layout = body.get("layout") or {}
         column = layout.get("column")
         font_size = layout.get("font_size") or fallback_size
@@ -584,6 +604,11 @@ def measure(
         case["id"] = case_id
         case["target"] = target
         case["reader_href"] = href_now
+        if width_note:
+            case["ok"] = False
+            failures = list(case.get("failures") or [])
+            failures.append(width_note)
+            case["failures"] = failures
         if target is not None and abs(float(column) - target) > 0.5:
             case["ok"] = False
             extra = case.get("extra") or []
@@ -651,6 +676,159 @@ def parse_window(raw: str | None):
         return (float(width), float(height))
     except ValueError:
         return None
+
+
+def width_miss_message(column_now, target, body) -> str:
+    chrome = read_json(CHROME_JSON) or {}
+    page = None if body is None else body.get("page_w")
+    visible_h = chrome.get("visible_h")
+    short = ""
+    if isinstance(visible_h, (int, float)) and float(visible_h) < 860:
+        short = (
+            f"; the documented column needs a window about 870pt tall"
+            f" and this visible frame is {float(visible_h):.0f}pt"
+        )
+    return (
+        f"reader column {column_now} did not reach {target}; "
+        f"window {chrome.get('window_w')}x{chrome.get('window_h')} "
+        f"visible {chrome.get('visible_w')}x{chrome.get('visible_h')} "
+        f"page {page}{short}"
+    )
+
+
+def maximize_window() -> str | None:
+    chrome = read_json(CHROME_JSON) or {}
+    width = chrome.get("visible_w")
+    height = chrome.get("visible_h")
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return None
+    if float(width) < 200 or float(height) < 200:
+        return None
+    return f"{float(width):.1f}x{float(height):.1f}"
+
+
+def prepare_display(run_dir: Path) -> dict | None:
+    """Ask the GitHub-hosted Mac for a display tall enough for the documented columns.
+
+    The paperback page keeps its aspect, so a short visible frame caps the
+    column. 343.47 / 383.78 / 372.06 need a window about 870pt tall. This does
+    not change the reader. If no taller mode exists, the census still measures
+    the column the reader actually reached and does not call that a pass.
+    """
+    if not CI or sys.platform != "darwin":
+        return None
+    subprocess.run(["defaults", "write", "com.apple.dock", "autohide", "-bool", "true"], check=False)
+    subprocess.run(["killall", "Dock"], check=False)
+    time.sleep(1)
+    vmware = Path("/Library/Application Support/VMware Tools/vmware-resolutionSet")
+    if vmware.is_file():
+        subprocess.run(["sudo", "-n", str(vmware), "1920", "1200"], check=False)
+        time.sleep(2)
+    anka = Path("/Library/Application Support/Veertu/Anka/addons/change_res")
+    if anka.is_file():
+        subprocess.run([str(anka), "1920x1200x32"], check=False)
+        time.sleep(2)
+    source = run_dir / "display.swift"
+    source.write_text(DISPLAY_SWIFT)
+    binary = run_dir / "display"
+    out = run_dir / "display.json"
+    built = subprocess.run(swiftc_cmd() + ["-O", "-o", str(binary), str(source)], capture_output=True, text=True)
+    if built.returncode != 0:
+        note = (built.stderr or "swiftc failed").strip()
+        print(note, file=sys.stderr)
+        return {"error": note}
+    ran = subprocess.run([str(binary), str(out)], capture_output=True, text=True)
+    if ran.stdout:
+        print(ran.stdout, file=sys.stderr)
+    if ran.stderr:
+        print(ran.stderr, file=sys.stderr)
+    return read_json(out) or {"error": (ran.stderr or "display probe wrote no json").strip(), "status": ran.returncode}
+
+
+DISPLAY_SWIFT = r"""
+import AppKit
+import CoreGraphics
+import Foundation
+
+func shot() -> [String: Any] {
+  let screen = NSScreen.main
+  let frame = screen?.frame ?? .zero
+  let visible = screen?.visibleFrame ?? .zero
+  let mode = CGDisplayCopyDisplayMode(CGMainDisplayID())
+  return [
+    "points_w": Int(frame.width.rounded()),
+    "points_h": Int(frame.height.rounded()),
+    "visible_w": Int(visible.width.rounded()),
+    "visible_h": Int(visible.height.rounded()),
+    "scale": screen?.backingScaleFactor ?? 0,
+    "mode_w": mode?.width ?? 0,
+    "mode_h": mode?.height ?? 0,
+    "pixel_w": mode?.pixelWidth ?? 0,
+    "pixel_h": mode?.pixelHeight ?? 0,
+  ]
+}
+
+let outPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "display.json"
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let display = CGMainDisplayID()
+let before = shot()
+let raw = CGDisplayCopyAllDisplayModes(display, nil) as? [CGDisplayMode] ?? []
+var modes: [[String: Int]] = []
+var best: CGDisplayMode?
+var bestScore = 0
+for mode in raw {
+  modes.append([
+    "w": mode.width,
+    "h": mode.height,
+    "pixel_w": mode.pixelWidth,
+    "pixel_h": mode.pixelHeight,
+  ])
+  if mode.height >= 1080 && mode.width >= 1440 {
+    let score = mode.height * 10000 + mode.width
+    if score > bestScore {
+      best = mode
+      bestScore = score
+    }
+  }
+}
+if best == nil {
+  let current = Int((NSScreen.main?.frame.height ?? 0).rounded())
+  for mode in raw where mode.height > current && mode.width >= 1280 {
+    let score = mode.height * 10000 + mode.width
+    if score > bestScore {
+      best = mode
+      bestScore = score
+    }
+  }
+}
+var status = 0
+var setLabel: String? = nil
+if let best {
+  status = Int(CGDisplaySetDisplayMode(display, best, nil).rawValue)
+  setLabel = "\(best.width)x\(best.height)"
+  Thread.sleep(forTimeInterval: 2)
+}
+var payload: [String: Any] = [
+  "before": before,
+  "after": shot(),
+  "modes": modes,
+  "status": status,
+]
+if let setLabel {
+  payload["set"] = setLabel
+}
+do {
+  let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+  try data.write(to: URL(fileURLWithPath: outPath))
+  if let text = String(data: data, encoding: .utf8) {
+    print(text)
+  }
+} catch {
+  fputs("display json failed \(error)\n", stderr)
+  exit(1)
+}
+"""
 
 
 def window_for_column(body: dict, target: float):
