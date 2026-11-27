@@ -283,6 +283,13 @@ define_class!(
                     crate::visit::wheel_points(precise, scroll_x, line_x),
                     crate::visit::wheel_points(precise, scroll_y, line_y),
                 );
+            } else if state.mode == Mode::Typeset {
+                state.wheel_typeset(
+                    phase,
+                    momentum,
+                    crate::visit::wheel_points(precise, scroll_x, line_x),
+                    crate::visit::wheel_points(precise, scroll_y, line_y),
+                );
             } else {
                 state.scroll(scroll_y);
             }
@@ -406,6 +413,15 @@ struct TypesetMotion {
     slide: crate::visit::Slide,
     started: Instant,
     ease: bool,
+    /// Zero is a key, Space, or an edge. A finger token is taken when the
+    /// slide lands, and a retired token does not write.
+    token: u64,
+}
+
+#[derive(Clone, Copy)]
+struct TypesetGlide {
+    glide: crate::visit::FingerGlide,
+    started: Instant,
 }
 
 enum TypesetPaint {
@@ -486,6 +502,10 @@ struct State {
     web: Option<crate::web::WebChapter>,
     typeset: Option<crate::typeset_page::Session>,
     typeset_motion: Option<TypesetMotion>,
+    typeset_drag: f64,
+    typeset_glide: Option<TypesetGlide>,
+    typeset_swipe: crate::visit::Swipe,
+    typeset_card: (f64, f64),
     typeset_fragment: String,
     web_pages: usize,
     trim_id: String,
@@ -753,6 +773,131 @@ impl State {
             self.offset = (self.offset - dy).max(0.0);
             self.note_page();
             self.publish();
+        }
+    }
+
+    fn wheel_typeset(&mut self, phase: u64, momentum: u64, dx: f64, dy: f64) {
+        let Some(session) = self.typeset.as_ref() else {
+            return;
+        };
+        let pages = session.page_count();
+        if pages == 0 {
+            return;
+        }
+        let page = session.page().saturating_add(1);
+        let width = self
+            .typeset_raster_frame()
+            .map(|frame| frame.w)
+            .unwrap_or(0.0);
+        let effect = crate::visit::offer_while_reading(
+            &mut self.typeset_swipe,
+            crate::visit::WheelTick {
+                finger: crate::visit::finger_bits(phase),
+                momentum: momentum != 0,
+                dx,
+                dy,
+            },
+            page,
+            pages,
+            crate::ease::current(),
+        );
+        let token = self.typeset_swipe.commit_token().unwrap_or(0);
+        let committing = self
+            .typeset_glide
+            .as_ref()
+            .is_some_and(|glide| glide.glide.write.is_some());
+        let key_slide = self
+            .typeset_motion
+            .as_ref()
+            .is_some_and(|motion| !motion.ease);
+        let decision = crate::visit::typeset_wheel(
+            effect,
+            token,
+            self.book_gen,
+            page,
+            pages,
+            width,
+            self.typeset_drag,
+            committing,
+            key_slide,
+        );
+        self.apply_typeset_wheel(decision);
+    }
+
+    fn apply_typeset_wheel(&mut self, decision: crate::visit::TypesetWheel) {
+        if !matches!(
+            decision,
+            crate::visit::TypesetWheel::Pass | crate::visit::TypesetWheel::Refuse
+        ) {
+            spike_library::column::arm_nav(spike_library::column::NavIntent::Trackpad);
+        }
+        match decision {
+            crate::visit::TypesetWheel::Pass => {}
+            crate::visit::TypesetWheel::Follow { shift } => {
+                self.typeset_drag = shift;
+                if self
+                    .typeset_glide
+                    .as_ref()
+                    .is_some_and(|glide| glide.glide.write.is_none())
+                {
+                    self.typeset_glide = None;
+                }
+                if self
+                    .typeset_motion
+                    .as_ref()
+                    .is_some_and(|motion| motion.ease)
+                {
+                    self.typeset_motion = None;
+                }
+            }
+            crate::visit::TypesetWheel::Begin(glide) => {
+                self.typeset_drag = 0.0;
+                self.typeset_motion = None;
+                if glide.token != 0 {
+                    self.typeset_swipe.note_answer(glide.token, "glide");
+                }
+                self.typeset_glide = Some(TypesetGlide {
+                    glide,
+                    started: Instant::now(),
+                });
+            }
+            crate::visit::TypesetWheel::Busy { queued } => {
+                if queued == 0 {
+                    return;
+                }
+                if let Some(glide) = self.typeset_glide.as_mut() {
+                    glide.glide.queued = queued;
+                }
+                if let Some(token) = self.typeset_swipe.commit_token() {
+                    self.typeset_swipe.note_answer(token, "queued");
+                }
+            }
+            crate::visit::TypesetWheel::Ease { forward } => {
+                self.typeset_drag = 0.0;
+                let page = self
+                    .typeset
+                    .as_ref()
+                    .map(|session| session.page())
+                    .unwrap_or(0) as usize;
+                self.typeset_motion = Some(TypesetMotion {
+                    slide: crate::visit::Slide {
+                        book: self.book_gen,
+                        from: page,
+                        to: page,
+                        queued: 0,
+                        forward,
+                    },
+                    started: Instant::now(),
+                    ease: true,
+                    token: 0,
+                });
+            }
+            crate::visit::TypesetWheel::Refuse => {
+                if let Some(token) = self.typeset_swipe.commit_token() {
+                    self.typeset_swipe.note_answer(token, "no");
+                }
+            }
+            crate::visit::TypesetWheel::Drop => self.typeset_drag = 0.0,
         }
     }
 
@@ -1837,6 +1982,7 @@ impl State {
         self.pdf_glide = None;
         self.pdf_motion = None;
         let _ = crate::visit::stop_for_ease(&mut self.pdf_swipe);
+        self.drop_typeset_gesture();
         crate::web::cancel_swipe();
         self.mark_ease(crate::ease::current().moving());
     }
@@ -2224,7 +2370,7 @@ impl State {
         self.book_gen = self.book_gen.wrapping_add(1);
         crate::web::set_reader_back(None);
         self.pdf_motion = None;
-        self.typeset_motion = None;
+        self.drop_typeset_gesture();
         self.typeset_fragment.clear();
         self.pdf_drag = 0.0;
         self.pdf_glide = None;
@@ -2374,7 +2520,7 @@ impl State {
             web.dismiss();
         }
         self.typeset = None;
-        self.typeset_motion = None;
+        self.drop_typeset_gesture();
         self.typeset_fragment.clear();
     }
 
@@ -2393,6 +2539,9 @@ impl State {
             .unwrap_or(true)
         {
             schedule_chrome_pump(view, 0.016);
+        }
+        if let Some(frame) = self.typeset_raster_frame() {
+            self.note_typeset_card(frame.w, frame.h);
         }
         self.reflow_typeset();
         let Some(frame) = self.typeset_raster_frame() else {
@@ -2484,7 +2633,7 @@ impl State {
                 }
             }
         }
-        if self.typeset_motion.is_some() {
+        if self.typeset_motion.is_some() || self.typeset_glide.is_some() {
             schedule_chrome_pump(view, 0.016);
         }
     }
@@ -2663,10 +2812,15 @@ impl State {
                 .as_ref()
                 .map(|session| session.generation())
                 .unwrap_or(0);
+            let (start, end) = self
+                .typeset
+                .as_ref()
+                .map(|session| session.shared_span(mark.start, mark.end))
+                .unwrap_or((mark.start, mark.end));
             self.anchor = Some(Anchor::Epub {
                 spine_href: href.clone(),
-                start: mark.start,
-                end: mark.end,
+                start,
+                end,
                 text: mark.text.clone(),
             });
             self.note = spike_library::margin::passage_from(spike_library::margin::Selection {
@@ -2674,8 +2828,8 @@ impl State {
                 gen: self.book_gen,
                 page,
                 spine: href,
-                start: mark.start,
-                end: mark.end,
+                start,
+                end,
                 text: mark.text,
                 quads: spike_library::margin::measured_quads(&rects),
                 text_right: f64::from(mark.text_right),
@@ -3578,7 +3732,9 @@ impl State {
                     book,
                     spine,
                     page,
-                    self.typeset_motion.is_some(),
+                    self.typeset_motion.is_some()
+                        || self.typeset_drag != 0.0
+                        || self.typeset_glide.is_some(),
                     f64::from(width),
                     f64::from(height),
                 )
@@ -3616,18 +3772,56 @@ impl State {
         self.page_total = Some(session.page_count());
     }
 
+    fn drop_typeset_gesture(&mut self) {
+        self.typeset_drag = 0.0;
+        self.typeset_glide = None;
+        self.typeset_motion = None;
+        let _ = self.typeset_swipe.cancel_release();
+    }
+
+    fn note_typeset_card(&mut self, width: f64, height: f64) {
+        let (old_w, old_h) = self.typeset_card;
+        let active = self.typeset_drag != 0.0
+            || self.typeset_glide.is_some()
+            || self.typeset_motion.is_some();
+        if old_w > 1.0 && active && !crate::visit::card_keeps_finger(old_w, old_h, width, height) {
+            self.drop_typeset_gesture();
+        }
+        self.typeset_card = (width, height);
+    }
+
     fn typeset_turn(&mut self, delta: i32) {
-        let Some(session) = self.typeset.as_ref() else {
-            return;
-        };
-        let page = session.page();
-        let count = session.page_count();
+        if let Some(glide) = self.typeset_glide.as_mut() {
+            if glide.glide.write.is_some() && glide.glide.book == self.book_gen {
+                glide.glide.queued = if delta < 0 { -1 } else { 1 };
+                if let Some(token) = self.typeset_swipe.commit_token() {
+                    if token != glide.glide.token {
+                        self.typeset_swipe.retire(token);
+                    }
+                }
+                return;
+            }
+        }
+        let _ = self.typeset_swipe.abandon();
+        self.typeset_drag = 0.0;
+        self.typeset_glide = None;
         if let Some(motion) = self.typeset_motion.as_mut() {
             if !motion.ease {
                 crate::visit::queue_slide(&mut motion.slide, delta);
             }
             return;
         }
+        self.begin_typeset_slide(delta, 0);
+    }
+
+    fn begin_typeset_slide(&mut self, delta: i32, token: u64) {
+        let Some(session) = self.typeset.as_ref() else {
+            return;
+        };
+        let page = session.page();
+        let count = session.page_count();
+        self.typeset_drag = 0.0;
+        self.typeset_glide = None;
         if let Some(slide) =
             crate::visit::begin_slide(self.book_gen, count as usize, page as usize, delta)
         {
@@ -3635,8 +3829,15 @@ impl State {
                 slide,
                 started: Instant::now(),
                 ease: false,
+                token,
             });
+            if token != 0 {
+                self.typeset_swipe.note_answer(token, "glide");
+            }
         } else if delta != 0 && count > 0 {
+            if token != 0 {
+                self.typeset_swipe.note_answer(token, "no");
+            }
             self.typeset_motion = Some(TypesetMotion {
                 slide: crate::visit::Slide {
                     book: self.book_gen,
@@ -3647,11 +3848,72 @@ impl State {
                 },
                 started: Instant::now(),
                 ease: true,
+                token: 0,
             });
         }
     }
 
     fn pump_typeset_motion(&mut self, width: f64) -> TypesetPaint {
+        if let Some(glide) = self.typeset_glide.clone() {
+            let elapsed = glide
+                .started
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u32::MAX)) as u32;
+            match crate::visit::glide_at(&glide.glide, elapsed, self.book_gen) {
+                crate::visit::GlideAt::Moving {
+                    page,
+                    shift,
+                    incoming,
+                } => {
+                    let to = incoming.unwrap_or(page);
+                    return TypesetPaint::Slide {
+                        from: page,
+                        to,
+                        shift,
+                        forward: shift > 0.0 || (shift == 0.0 && glide.glide.to > 0.0),
+                    };
+                }
+                crate::visit::GlideAt::Landed {
+                    page,
+                    write,
+                    queued,
+                    token,
+                } => {
+                    self.typeset_glide = None;
+                    if write.is_some()
+                        && crate::visit::accept_landed(&mut self.typeset_swipe, token)
+                    {
+                        self.commit_typeset_page(page as u32);
+                    }
+                    if queued != 0 {
+                        let next = self.typeset_swipe.commit_token().unwrap_or(0);
+                        self.begin_typeset_slide(queued, next);
+                    }
+                    return TypesetPaint::Rest;
+                }
+                crate::visit::GlideAt::Dropped => {
+                    self.typeset_glide = None;
+                }
+            }
+        }
+        if self.typeset_drag != 0.0 {
+            let (page, pages) = self
+                .typeset
+                .as_ref()
+                .map(|session| (session.page(), session.page_count()))
+                .unwrap_or((0, 0));
+            if let Some(to) =
+                crate::visit::finger_neighbor(page.saturating_add(1), pages, self.typeset_drag)
+            {
+                return TypesetPaint::Slide {
+                    from: page as usize,
+                    to,
+                    shift: self.typeset_drag,
+                    forward: self.typeset_drag > 0.0,
+                };
+            }
+        }
         let Some(motion) = &self.typeset_motion else {
             return TypesetPaint::Rest;
         };
@@ -3669,6 +3931,7 @@ impl State {
             return TypesetPaint::Ease(superreader_typeset::blocked_ease(elapsed, width, forward));
         }
         let slide = motion.slide;
+        let token = motion.token;
         match crate::visit::slide_at(&slide, elapsed, self.book_gen, width) {
             crate::visit::SlideAt::Moving { page, shift } => TypesetPaint::Slide {
                 from: page,
@@ -3678,9 +3941,12 @@ impl State {
             },
             crate::visit::SlideAt::Landed { page, queued } => {
                 self.typeset_motion = None;
-                self.commit_typeset_page(page as u32);
+                if crate::visit::accept_landed(&mut self.typeset_swipe, token) {
+                    self.commit_typeset_page(page as u32);
+                }
                 if queued != 0 {
-                    self.typeset_turn(queued);
+                    let next = self.typeset_swipe.commit_token().unwrap_or(0);
+                    self.begin_typeset_slide(queued, next);
                 }
                 TypesetPaint::Rest
             }
@@ -3711,7 +3977,8 @@ impl State {
     }
 
     fn reflow_typeset(&mut self) {
-        if self.typeset_motion.is_some() {
+        if self.typeset_motion.is_some() || self.typeset_drag != 0.0 || self.typeset_glide.is_some()
+        {
             return;
         }
         let Some(frame) = self.typeset_frame() else {
@@ -3776,7 +4043,7 @@ impl State {
     }
 
     fn typeset_reveal(&mut self, offset: u32) {
-        self.typeset_motion = None;
+        self.drop_typeset_gesture();
         let (page, held, href) = {
             let Some(session) = self.typeset.as_mut() else {
                 return;
@@ -3796,7 +4063,7 @@ impl State {
     }
 
     fn typeset_chapter(&mut self, index: usize, offset: u32) {
-        self.typeset_motion = None;
+        self.drop_typeset_gesture();
         let fragment = std::mem::take(&mut self.typeset_fragment);
         let href = self
             .typeset
@@ -3863,7 +4130,7 @@ impl State {
             .unwrap_or_default();
         let step = crate::visit::place_jump(&here, &dest, &spine, crate::web::reader_back());
         crate::web::set_reader_back(step.back);
-        self.typeset_motion = None;
+        self.drop_typeset_gesture();
         match step.go {
             crate::visit::ChapterMove::Reveal { offset } => self.typeset_reveal(offset),
             crate::visit::ChapterMove::Chapter { index, offset } => {
@@ -3885,19 +4152,25 @@ impl State {
         };
         let sentence = if dest.fragment.is_empty() {
             0
-        } else if dest.same {
-            let Some(shared) = self.typeset.as_ref().and_then(|session| {
-                let at = session.anchor_sentence(&dest.fragment)?;
-                Some(session.shared_offset(at))
-            }) else {
+        } else {
+            let Some(local) = self
+                .typeset
+                .as_ref()
+                .and_then(|session| session.anchor_offset(&dest.href, &dest.fragment))
+            else {
                 return;
             };
-            shared
-        } else {
-            self.typeset_fragment = dest.fragment.clone();
-            0
+            if dest.same {
+                self.typeset
+                    .as_ref()
+                    .map(|session| session.shared_offset(local))
+                    .unwrap_or(local)
+            } else {
+                self.typeset_fragment = dest.fragment.clone();
+                0
+            }
         };
-        self.typeset_motion = None;
+        self.drop_typeset_gesture();
         self.jump_place(&dest.href, 1, sentence, sentence);
     }
 
@@ -3922,7 +4195,7 @@ impl State {
             return;
         }
         spike_library::column::arm_nav(spike_library::column::NavIntent::Toc);
-        self.typeset_motion = None;
+        self.drop_typeset_gesture();
         match decided.go.unwrap_or(crate::visit::ChapterMove::Stay) {
             crate::visit::ChapterMove::Reveal { offset } => self.typeset_reveal(offset),
             crate::visit::ChapterMove::Chapter { index, offset } => {
@@ -4053,7 +4326,8 @@ impl State {
     }
 
     fn typeset_measures(&self) -> Value {
-        if self.typeset_motion.is_some() {
+        if self.typeset_motion.is_some() || self.typeset_drag != 0.0 || self.typeset_glide.is_some()
+        {
             return Value::Array(Vec::new());
         }
         let Some(session) = self.typeset.as_ref() else {
@@ -4066,7 +4340,11 @@ impl State {
             notes
                 .iter()
                 .filter_map(|note| {
-                    let (rects, right) = session.note_rects(note.start, note.end);
+                    let (start, end) = session.local_span(note.start, note.end);
+                    if start == end {
+                        return None;
+                    }
+                    let (rects, right) = session.note_rects(start, end);
                     if rects.is_empty() || right <= 0.0 {
                         return None;
                     }
@@ -4361,6 +4639,10 @@ impl Stage {
             web: None,
             typeset: None,
             typeset_motion: None,
+            typeset_drag: 0.0,
+            typeset_glide: None,
+            typeset_swipe: crate::visit::Swipe::default(),
+            typeset_card: (0.0, 0.0),
             typeset_fragment: String::new(),
             web_pages: 1,
             trim_id: crate::settings::load(&crate::settings::path()),

@@ -21,3 +21,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EPUB direction under evaluation toward an owned pure-Rust typesetter (WKWebView remains default until then).
 - `SPIKE_TYPESET=1` paints the owned typesetter's glyph runs. The default EPUB page stays WKWebView.
 - `SPIKE_TYPESET=1` keeps the 160 ms page slide, the sentence, contents, in-book links, annotations, bookmarks, in-book find, live reflow, and Bold Word Starts. The stored sentence stays the WKWebView body offset, and the glyph-run page translates it. The default EPUB page stays WKWebView.
+- `SPIKE_TYPESET=1` follows the finger, jumps to an in-book footnote named with `id` or `name`, and stores a note's start and end as WKWebView body offsets. A 2026-11-27 Phase 1 crate run on EB Garamond and Noto Serif CJK SC did not include the WKWebView census, so the default EPUB page stays WKWebView.

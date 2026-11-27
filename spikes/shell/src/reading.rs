@@ -1542,6 +1542,16 @@ const SCRIPT: &str = r#"
     }
     return null;
   }
+  function fragmentElement(id) {
+    if (!id || !document.getElementById) return null;
+    const byId = document.getElementById(id);
+    if (byId) return byId;
+    const byName = document.getElementsByName;
+    if (typeof byName !== "function") return null;
+    const named = byName.call(document, id);
+    if (!named || !named.length) return null;
+    return named[0];
+  }
   function followLink(event) {
     const node = event.target;
     if (!node || !node.closest) return false;
@@ -1557,7 +1567,7 @@ const SCRIPT: &str = r#"
     const hash = lookup.indexOf('#');
     const fragment = hash < 0 ? '' : lookup.slice(hash + 1);
     if (fragment && linkInDocument(raw)) {
-      const at = textOffsetIn(document.getElementById(fragment));
+      const at = textOffsetIn(fragmentElement(fragment));
       if (at == null) {
         post({ kind: "link", raw: raw, load: pageLoad, measured: false });
         return true;
@@ -1770,7 +1780,7 @@ const SCRIPT: &str = r#"
   function postFragment(waited) {
     const stored = String(window.__spikeFragment);
     const id = decodeHref(stored);
-    const el = id == null ? null : document.getElementById(id);
+    const el = id == null ? null : fragmentElement(id);
     const at = el ? textOffsetIn(el) : null;
     if (el && at == null && !waited) {
       requestAnimationFrame(function () { postFragment(true); });
@@ -1855,6 +1865,9 @@ mod tests {
         assert_eq!(v["far"]["offset"], 4);
         assert_eq!(v["vis"]["raw"], "#vis");
         assert_eq!(v["vis"]["measured"], serde_json::json!(false));
+        assert_eq!(v["named"]["raw"], "#fn1");
+        assert_eq!(v["named"]["measured"], true);
+        assert_eq!(v["named"]["offset"], 13);
     }
 
     #[test]
@@ -3274,6 +3287,7 @@ const zero = { id: 'zero', compareDocumentPosition(){ return 0; } };
 const mark = { id: 'mark', compareDocumentPosition(node) { return node === tail ? 4 : 0; } };
 const far = { id: 'far', compareDocumentPosition(){ return 0; } };
 const vis = { id: 'vis', compareDocumentPosition(){ return 0; } };
+const named = { id: '', compareDocumentPosition(node) { return node === tail ? 4 : 0; } };
 function walker(list) {
   let i = -1;
   return {
@@ -3295,7 +3309,8 @@ global.document = {
   querySelectorAll: () => [],
   querySelector: () => null,
   getElementById: (id) => (id === 'note' ? note : id === 'hid' ? hid : id === 'zero' ? zero : id === 'mark' ? mark : id === 'far' ? far : id === 'vis' ? vis : null),
-  createTreeWalker: (root) => walker(root === note ? [noteSpaces, noteText] : root === hid ? [hidSpace] : root === zero ? [zeroLetter] : root === mark ? [] : root === far ? [farText] : root === vis ? [visText] : bodyNodes),
+  getElementsByName: (name) => (name === 'fn1' ? [named] : []),
+  createTreeWalker: (root) => walker(root === note ? [noteSpaces, noteText] : root === hid ? [hidSpace] : root === zero ? [zeroLetter] : root === mark ? [] : root === named ? [] : root === far ? [farText] : root === vis ? [visText] : bodyNodes),
   addEventListener(){},
   caretRangeFromPoint(){ return null; },
   createRange(){
@@ -3369,6 +3384,8 @@ bodyNodes = [prefix, farText];
 const farClick = click(200, '#far', 0, false);
 bodyNodes = [prefix, visText];
 const visClick = click(200, '#vis', 0, false);
+bodyNodes = [prefix, noteSpaces, noteText, tail];
+const namedClick = click(200, '#fn1', 0, false);
 console.log(JSON.stringify({
   link: link[0] || null,
   edgeLink: edgeLink[0] || null,
@@ -3385,6 +3402,7 @@ console.log(JSON.stringify({
   empty: empty[0] || null,
   far: farClick[0] || null,
   vis: visClick[0] || null,
+  named: namedClick[0] || null,
 }));
 "#;
 

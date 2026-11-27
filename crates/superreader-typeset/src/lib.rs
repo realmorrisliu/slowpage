@@ -1,8 +1,8 @@
 //! Headless chapter typesetter for the owned EPUB engine.
 //!
 //! The shell paints those runs when `SPIKE_TYPESET=1`.
-//! WKWebView remains the default reader until phase 1 is re-measured
-//! on the same build, fonts, and width.
+//! WKWebView remains the default reader. The 2026-11-27 crate run used
+//! the fixture faces and did not include the WKWebView census.
 //! icu_segmenter is Unicode-3.0. rbook is Apache-2.0. harfrust is MIT.
 //! skrifa is MIT OR Apache-2.0. tiny-skia is BSD-3-Clause.
 

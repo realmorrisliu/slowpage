@@ -392,6 +392,14 @@ impl ChapterLayout {
         self.text.from_web(shared)
     }
 
+    pub fn to_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.text.to_web_span(start, end)
+    }
+
+    pub fn from_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.text.from_web_span(start, end)
+    }
+
     pub fn sentence_of(&self, caret: Caret) -> u32 {
         self.text.locate(caret.node, caret.offset)
     }

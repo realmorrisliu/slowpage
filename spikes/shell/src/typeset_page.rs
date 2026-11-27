@@ -5,9 +5,10 @@
 //! is Books-white and the ink is the recorded `#1c1915`. A missing face or
 //! a chapter the crate cannot open leaves the page on WKWebView.
 //!
-//! Page turns, the stored sentence, contents, links, notes, bookmarks,
-//! find, live reflow, and Bold Word Starts stay on this view. The default
-//! reader is still WKWebView.
+//! Page turns, the finger-following swipe, the stored sentence, contents,
+//! links, footnotes, notes, bookmarks, find, live reflow, and Bold Word
+//! Starts stay on this view. A note's start and end are stored as WKWebView
+//! body offsets. The default reader is still WKWebView.
 
 use std::path::Path;
 
@@ -231,6 +232,30 @@ impl Session {
 
     pub fn local_offset(&self, shared: u32) -> u32 {
         self.layout.from_web(shared)
+    }
+
+    /// A note's start and end, stored as WKWebView body offsets.
+    pub fn shared_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.layout.to_web_span(start, end)
+    }
+
+    /// A stored note range in the scalars `note_rects` paints.
+    pub fn local_span(&self, start: u32, end: u32) -> (u32, u32) {
+        self.layout.from_web_span(start, end)
+    }
+
+    /// The scalar of `id` in `href`, or none when that target is not in the chapter.
+    /// A missing fragment does not move the stored place.
+    pub fn anchor_offset(&self, href: &str, id: &str) -> Option<u32> {
+        if id.is_empty() {
+            return None;
+        }
+        let want = spike_epub::normalize_href(href);
+        if spike_epub::normalize_href(&self.href) == want {
+            return self.layout.anchor_sentence(id);
+        }
+        let loaded = open_chapter(&self.epub_path, href, href).ok()?;
+        superreader_typeset::chapter_text(&loaded.xhtml).anchor(id)
     }
 
     pub fn generation(&self) -> u64 {

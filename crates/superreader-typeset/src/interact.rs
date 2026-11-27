@@ -222,6 +222,54 @@ impl ChapterText {
         }
         lo.saturating_sub(1) as u32
     }
+
+    /// The first kept scalar at or after a WKWebView offset.
+    ///
+    /// A note's end is exclusive. `from_web` would stop on the scalar before
+    /// a dropped newline and drop the last kept character of the note.
+    pub fn from_web_end(&self, utf16: u32) -> u32 {
+        let count = self.at.len();
+        if count == 0 || utf16 >= self.web_units {
+            return count as u32;
+        }
+        let mut lo = 0usize;
+        let mut hi = count;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if self.at[mid] < utf16 {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo as u32
+    }
+
+    /// A note range in WKWebView UTF-16 units. `end` is exclusive.
+    pub fn to_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+        let (start, end) = ordered(start, end);
+        (self.to_web(start), self.to_web(end))
+    }
+
+    /// A stored note range back in typesetter scalars. A zero-width web
+    /// range stays zero-width. A web end that falls in dropped whitespace
+    /// still includes the last kept scalar before that gap.
+    pub fn from_web_span(&self, start: u32, end: u32) -> (u32, u32) {
+        let (start, end) = ordered(start, end);
+        if start == end {
+            let at = self.from_web(start);
+            return (at, at);
+        }
+        (self.from_web(start), self.from_web_end(end))
+    }
+}
+
+fn ordered(start: u32, end: u32) -> (u32, u32) {
+    if end < start {
+        (end, start)
+    } else {
+        (start, end)
+    }
 }
 
 #[cfg(test)]
@@ -303,5 +351,59 @@ mod tests {
             chapter_text("<html><head><title>Title</title></head><body><p>Hi</p></body></html>");
         assert_eq!(titled.plain(), "Hi");
         assert_eq!(titled.to_web(0), 0);
+    }
+
+    #[test]
+    fn a_named_footnote_lands_on_its_text() {
+        let text = chapter_text(
+            r##"<p>See <a href="#fn1" epub:type="noteref">1</a>.</p><aside epub:type="footnote"><p><a name="fn1"></a>The note.</p></aside>"##,
+        );
+        let mark = text.plain().find('1').unwrap() as u32;
+        assert_eq!(text.link_at(mark), Some("#fn1"));
+        let at = text.anchor("fn1").expect("name target");
+        assert_eq!(text.slice(at, at + 8), "The note");
+
+        let named = chapter_text(r#"<p><a name="fn1" id="fn1">There</a></p>"#);
+        assert_eq!(
+            named.slice(
+                named.anchor("fn1").unwrap(),
+                named.anchor("fn1").unwrap() + 5
+            ),
+            "There"
+        );
+
+        let both = chapter_text(r#"<p><a id="a" name="b"></a>Next</p>"#);
+        assert_eq!(both.anchor("a"), both.anchor("b"));
+        assert_eq!(
+            both.slice(both.anchor("b").unwrap(), both.anchor("b").unwrap() + 4),
+            "Next"
+        );
+
+        let hidden = chapter_text(
+            r#"<div class="pg-boilerplate"><a name="fn1">Secret</a></div><p>Body</p>"#,
+        );
+        assert!(hidden.anchor("fn1").is_none());
+        assert_eq!(hidden.plain(), "Body");
+    }
+
+    #[test]
+    fn a_note_span_round_trips_across_dropped_whitespace() {
+        let text = chapter_text("<body>\n<p>First</p>\n<p>Second</p>\n</body>");
+        let second = text.plain().find("Second").unwrap() as u32;
+        assert_eq!(text.to_web_span(0, second), (text.to_web(0), 7));
+        assert_eq!(text.from_web_span(text.to_web(0), 7), (0, second));
+        let (start, end) = text.from_web_span(0, 6);
+        assert_eq!(text.slice(start, end), "First");
+        assert_eq!(
+            text.from_web_span(6, 6),
+            (text.from_web(6), text.from_web(6))
+        );
+        assert_eq!(text.to_web_span(second, 0).1, 7);
+
+        let emoji = chapter_text("<p>A😀B</p>");
+        let (start, end) = emoji.from_web_span(1, 2);
+        assert_eq!(emoji.slice(start, end), "😀");
+        let (web_start, web_end) = emoji.to_web_span(1, 2);
+        assert_eq!(emoji.from_web_span(web_start, web_end), (1, 2));
     }
 }

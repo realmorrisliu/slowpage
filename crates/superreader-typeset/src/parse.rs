@@ -350,6 +350,9 @@ struct Frame {
     href: String,
     /// This frame's id has not yet been attached to a text piece.
     id_pending: bool,
+    /// `name` anchors that are not already the id. HTML fragment lookup is
+    /// id, then name. An empty target stays pending until the next text.
+    names: Vec<String>,
     paint: Paint,
     prev_tag: String,
     container: bool,
@@ -464,6 +467,9 @@ impl<'a> Parser<'a> {
                         frame.id_pending = false;
                         anchors.push(frame.id.clone());
                     }
+                    if !frame.names.is_empty() {
+                        anchors.extend(std::mem::take(&mut frame.names));
+                    }
                 }
                 anchors.reverse();
                 anchors.extend(std::mem::take(&mut self.carry_ids));
@@ -499,6 +505,7 @@ impl<'a> Parser<'a> {
                 id,
                 href: String::new(),
                 id_pending: false,
+                names: Vec::new(),
                 paint: self.fallback.clone(),
                 prev_tag: String::new(),
                 container: true,
@@ -528,12 +535,19 @@ impl<'a> Parser<'a> {
         } else {
             String::new()
         };
+        let mut names = Vec::new();
+        if let Some(name) = attr(attrs, "name") {
+            if !name.is_empty() && name != id {
+                names.push(name);
+            }
+        }
         self.stack.push(Frame {
             tag: tag.to_string(),
             class,
             id: id.clone(),
             href,
             id_pending: !id.is_empty(),
+            names,
             paint,
             prev_tag: String::new(),
             container,
@@ -565,6 +579,7 @@ impl<'a> Parser<'a> {
         if frame.id_pending && !frame.id.is_empty() {
             self.carry_ids.push(frame.id);
         }
+        self.carry_ids.extend(frame.names);
         if frame.inline {
             return;
         }
