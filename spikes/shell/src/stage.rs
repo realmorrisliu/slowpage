@@ -590,7 +590,8 @@ enum Mode {
     Pdfium,
     Hayro,
     WebKit,
-    /// Glyph runs from `superreader-typeset`. `SPIKE_TYPESET=1` only.
+    /// Glyph runs from `superreader-typeset`. EPUB opens here unless
+    /// `SPIKE_TYPESET=0`, or the chapter cannot open.
     Typeset,
     Blitz,
     Text,
@@ -2403,7 +2404,7 @@ impl State {
             self.web_pages = 1;
             self.shown_at = None;
             self.placed = None;
-            let debug = crate::typeset_page::debug_requested(
+            let debug = crate::typeset_page::wants_typeset(
                 std::env::var(crate::typeset_page::TYPESET_SWITCH)
                     .ok()
                     .as_deref(),

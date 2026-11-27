@@ -9,6 +9,9 @@ target/
 # Verify run artifacts (committed summaries are added explicitly)
 docs/verify/runs/
 
+# Typeset census scratch (the committed record is ci/census.json)
+docs/design/typeset-gate/ci/run/
+
 # Python / editor
 __pycache__/
 **/*.rs.bk

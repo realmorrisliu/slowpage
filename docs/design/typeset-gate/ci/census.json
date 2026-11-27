@@ -1,0 +1,268 @@
+{
+  "phase": 1,
+  "ci": true,
+  "runner": "github-hosted-macos",
+  "head": "0bab30a7a5b6aac3ac43b374f9548931085ff398",
+  "github_sha": "0bab30a7a5b6aac3ac43b374f9548931085ff398",
+  "github_run_id": "45991366032",
+  "github_run_url": "https://github.com/realmorrisliu/slowpage/actions/runs/45991366032",
+  "sw_vers": "26.7.2",
+  "arch": "arm64",
+  "hostname": "sjc22-bm210-6f298e1f-331c-40dc-93d9-e26221298806-96F217BA8141.local",
+  "load": 32.59,
+  "load_end": 15.52,
+  "baseline": {
+    "column": 343.47,
+    "reader_p95": 3.4286,
+    "reader_max": 5.4286,
+    "owned_p95": 1.2478,
+    "owned_max": 1.4799,
+    "fallback_p95": 3.5714,
+    "fallback_max": 5.4286,
+    "source": "bc-498e04f9",
+    "commit": "cfe3404",
+    "load": 8.9,
+    "note": "Recorded baseline, not the bar. Tighten later."
+  },
+  "faces": {
+    "iowan": "/System/Library/Fonts/Supplemental/Iowan Old Style.ttc#0 Iowan Old Style Roman",
+    "italic": "/System/Library/Fonts/Supplemental/Iowan Old Style.ttc#2 Iowan Old Style Italic",
+    "cjk": "/System/Library/Fonts/Supplemental/Songti.ttc#6 \u5b8b\u9ad4-\u7c21 \u6a19\u6e96\u9ad4"
+  },
+  "nsfont": {
+    "Iowan Old Style": {
+      "family": "Iowan Old Style",
+      "font": "IowanOldStyle-Roman"
+    },
+    "Songti SC": {
+      "family": "Songti SC",
+      "font": "STSongti-SC-Regular"
+    }
+  },
+  "display": {
+    "after": {
+      "mode_h": 1200,
+      "mode_w": 1600,
+      "pixel_h": 1200,
+      "pixel_w": 1600,
+      "points_h": 1200,
+      "points_w": 1600,
+      "scale": 1,
+      "visible_h": 1169,
+      "visible_w": 1600
+    },
+    "before": {
+      "mode_h": 768,
+      "mode_w": 1024,
+      "pixel_h": 768,
+      "pixel_w": 1024,
+      "points_h": 768,
+      "points_w": 1024,
+      "scale": 1,
+      "visible_h": 737,
+      "visible_w": 1024
+    },
+    "modes": [
+      {
+        "h": 600,
+        "pixel_h": 600,
+        "pixel_w": 800,
+        "w": 800
+      },
+      {
+        "h": 540,
+        "pixel_h": 540,
+        "pixel_w": 960,
+        "w": 960
+      },
+      {
+        "h": 576,
+        "pixel_h": 576,
+        "pixel_w": 1024,
+        "w": 1024
+      },
+      {
+        "h": 768,
+        "pixel_h": 768,
+        "pixel_w": 1024,
+        "w": 1024
+      },
+      {
+        "h": 720,
+        "pixel_h": 720,
+        "pixel_w": 1280,
+        "w": 1280
+      },
+      {
+        "h": 960,
+        "pixel_h": 960,
+        "pixel_w": 1280,
+        "w": 1280
+      },
+      {
+        "h": 756,
+        "pixel_h": 756,
+        "pixel_w": 1344,
+        "w": 1344
+      },
+      {
+        "h": 1008,
+        "pixel_h": 1008,
+        "pixel_w": 1344,
+        "w": 1344
+      },
+      {
+        "h": 900,
+        "pixel_h": 900,
+        "pixel_w": 1600,
+        "w": 1600
+      },
+      {
+        "h": 1200,
+        "pixel_h": 1200,
+        "pixel_w": 1600,
+        "w": 1600
+      },
+      {
+        "h": 1080,
+        "pixel_h": 1080,
+        "pixel_w": 1920,
+        "w": 1920
+      },
+      {
+        "h": 480,
+        "pixel_h": 480,
+        "pixel_w": 640,
+        "w": 640
+      }
+    ],
+    "set": "1600x1200",
+    "status": 0
+  },
+  "cases": [
+    {
+      "href": "/epub/text/chapter-1.xhtml",
+      "measure": 343.47,
+      "font_size": 22.0,
+      "crate_p95": 1.978,
+      "crate_max": 3.9429,
+      "crate_gaps": 637,
+      "crate_lines": 147,
+      "scored_lines": 112,
+      "reader_p95": 3.4286,
+      "reader_max": 5.4286,
+      "kinsoku": 0,
+      "overflow": 0,
+      "chapter_ms": 14.849,
+      "cold_ms": 29.115,
+      "warm_min": 11.652,
+      "warm_max": 66.73,
+      "font_expand": 0,
+      "letter_space": 0,
+      "owned": 19.0,
+      "native": 15.0,
+      "all": 34.0,
+      "owned_lines": 42.0,
+      "native_lines": 73.0,
+      "all_lines": 115.0,
+      "column": 343.4688,
+      "pages": 8,
+      "png": "/Users/runner/work/slowpage/slowpage/docs/design/typeset-gate/ci/run/pride-343-crate.png",
+      "failures": [],
+      "extra": [],
+      "ok": true,
+      "id": "pride-343",
+      "target": 343.47,
+      "reader_href": "/epub/text/chapter-1.xhtml",
+      "acknowledged_px": 138.40234375,
+      "tofu": 0,
+      "reader_family": "\"Iowan Old Style\", \"Songti SC\", serif"
+    },
+    {
+      "href": "/epub/text/chapter-1.xhtml",
+      "measure": 383.78,
+      "font_size": 22.0,
+      "crate_p95": 1.7174,
+      "crate_max": 2.1754,
+      "crate_gaps": 634,
+      "crate_lines": 132,
+      "scored_lines": 97,
+      "reader_p95": 3.1429,
+      "reader_max": 4.5714,
+      "kinsoku": 0,
+      "overflow": 0,
+      "chapter_ms": 11.777,
+      "cold_ms": 10.215,
+      "warm_min": 9.829,
+      "warm_max": 18.713,
+      "font_expand": 0,
+      "letter_space": 0,
+      "owned": 29.0,
+      "native": 5.0,
+      "all": 34.0,
+      "owned_lines": 59.0,
+      "native_lines": 37.0,
+      "all_lines": 96.0,
+      "column": 383.7812,
+      "pages": 7,
+      "png": "/Users/runner/work/slowpage/slowpage/docs/design/typeset-gate/ci/run/pride-383-crate.png",
+      "failures": [],
+      "extra": [],
+      "ok": true,
+      "id": "pride-383",
+      "target": 383.78,
+      "reader_href": "/epub/text/chapter-1.xhtml",
+      "acknowledged_px": 138.40234375,
+      "tofu": 0,
+      "reader_family": "\"Iowan Old Style\", \"Songti SC\", serif"
+    },
+    {
+      "href": "/OEBPS/3309323728932395831_25271-0-1.txt.html",
+      "measure": 372.06,
+      "font_size": 20.0,
+      "crate_p95": 0.0,
+      "crate_max": 0.0,
+      "crate_gaps": 0,
+      "crate_lines": 543,
+      "scored_lines": 0,
+      "reader_p95": null,
+      "reader_max": null,
+      "kinsoku": 0,
+      "overflow": 0,
+      "chapter_ms": 11.063,
+      "cold_ms": 24.123,
+      "warm_min": 9.387,
+      "warm_max": 13.024,
+      "font_expand": 0,
+      "letter_space": 0,
+      "owned": 0.0,
+      "native": 0.0,
+      "all": 103.0,
+      "owned_lines": 0.0,
+      "native_lines": 0.0,
+      "all_lines": 0.0,
+      "column": 372.0625,
+      "pages": 28,
+      "png": "/Users/runner/work/slowpage/slowpage/docs/design/typeset-gate/ci/run/zhaohua-fan-crate.png",
+      "failures": [],
+      "extra": [],
+      "ok": true,
+      "id": "zhaohua-fan",
+      "target": 372.06,
+      "reader_href": "/OEBPS/3309323728932395831_25271-0-1.txt.html",
+      "acknowledged_px": 125.8203125,
+      "tofu": 0,
+      "reader_family": "\"Iowan Old Style\", \"Songti SC\", serif"
+    }
+  ],
+  "screenshot": "docs/design/typeset-gate/ci/pride-343.png",
+  "screenshots": [
+    "docs/design/typeset-gate/ci/pride-343.png",
+    "docs/design/typeset-gate/ci/pride-383.png",
+    "docs/design/typeset-gate/ci/zhaohua-fan.png"
+  ],
+  "blocked": null,
+  "phase1_pass": true,
+  "ok": true,
+  "note": "Phase 1 pass on this build, fonts, and widths."
+}

@@ -102,7 +102,7 @@ jobs:
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
             fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
             epub_open_keeps_the_shelf_scroll_and_returns_the_page \
-            the_switch_stays_on_webkit_until_the_typesetter_opens \
+            the_default_page_is_the_typesetter_when_it_opens \
             a_turn_stops_at_the_chapter_ends \
             a_point_maps_into_the_paperback_page \
             selection_tints_paper_and_the_caret_is_ink \
@@ -202,7 +202,7 @@ jobs:
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
             fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
             epub_open_keeps_the_shelf_scroll_and_returns_the_page \
-            the_switch_stays_on_webkit_until_the_typesetter_opens \
+            the_default_page_is_the_typesetter_when_it_opens \
             a_turn_stops_at_the_chapter_ends \
             a_point_maps_into_the_paperback_page \
             selection_tints_paper_and_the_caret_is_ink \
@@ -449,3 +449,26 @@ jobs:
         with:
           workspaces: spikes
       - run: sh ../scripts/lint-bold-word-starts.sh
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust 1.98.1
+        run: rustup toolchain install 1.98.1 && rustup default 1.98.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            spikes
+            crates/superreader-typeset
+      - name: Phase 1 typography census
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/typeset-census.sh
+      - name: Upload the census
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: typeset-census
+          path: docs/design/typeset-gate/ci
+          if-no-files-found: warn

@@ -1,4 +1,5 @@
-//! Glyph-run page for `SPIKE_TYPESET=1`.
+//! Glyph-run page. EPUB opens here. `SPIKE_TYPESET=1` is the same request.
+//! `SPIKE_TYPESET=0` stays on WKWebView.
 //!
 //! The view paints the typesetter's raster of the glyph runs, then the
 //! caret bar and the selection rects the crate already returns. The paper
@@ -9,7 +10,7 @@
 //! links, footnotes, notes, bookmarks, find, live reflow, and Bold Word
 //! Starts stay on this view. The stored sentence and a selection anchor
 //! stay WKWebView UTF-16 body offsets. A margin note stores body Unicode
-//! scalars. The default reader is still WKWebView.
+//! scalars.
 
 use std::path::Path;
 
@@ -37,6 +38,12 @@ pub fn page_engine(debug: bool, opened: bool) -> PageEngine {
 
 pub fn debug_requested(value: Option<&str>) -> bool {
     matches!(value.map(str::trim), Some("1"))
+}
+
+/// EPUB opens on the typesetter. `SPIKE_TYPESET=1` is that same request.
+/// `SPIKE_TYPESET=0` stays on WKWebView. A failed open stays there too.
+pub fn wants_typeset(value: Option<&str>) -> bool {
+    !matches!(value.map(str::trim), Some("0"))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -845,12 +852,18 @@ mod tests {
     use superreader_typeset::INK_RGB;
 
     #[test]
-    fn the_switch_stays_on_webkit_until_the_typesetter_opens() {
+    fn the_default_page_is_the_typesetter_when_it_opens() {
         assert!(!debug_requested(None));
         assert!(!debug_requested(Some("")));
         assert!(!debug_requested(Some("0")));
         assert!(debug_requested(Some("1")));
         assert!(debug_requested(Some(" 1 ")));
+        assert!(wants_typeset(None));
+        assert!(wants_typeset(Some("")));
+        assert!(wants_typeset(Some("1")));
+        assert!(wants_typeset(Some(" 1 ")));
+        assert!(!wants_typeset(Some("0")));
+        assert!(!wants_typeset(Some(" 0 ")));
         assert_eq!(page_engine(false, true), PageEngine::WebKit);
         assert_eq!(page_engine(true, false), PageEngine::WebKit);
         assert_eq!(page_engine(true, true), PageEngine::Typeset);

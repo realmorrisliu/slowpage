@@ -39,6 +39,7 @@ use spike_library::{Catalog, Home, Scope, SourceName};
 
 pub use books::in_app_bundle;
 pub use chrome::opening_size;
+pub use chrome::raise_census_display;
 pub use chrome::shell_opening_size;
 pub use web::mark_process_start;
 
