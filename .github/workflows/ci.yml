@@ -102,7 +102,7 @@ jobs:
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
             fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
             epub_open_keeps_the_shelf_scroll_and_returns_the_page \
-            the_switch_stays_on_webkit_until_the_typesetter_opens \
+            the_default_page_is_the_typesetter_when_it_opens \
             a_turn_stops_at_the_chapter_ends \
             a_point_maps_into_the_paperback_page \
             selection_tints_paper_and_the_caret_is_ink \
@@ -202,7 +202,7 @@ jobs:
             a_later_pass_keeps_the_origin_and_an_unmarked_pass_stays_unreported \
             fullscreen_waits_until_the_window_is_up_and_does_not_toggle_twice \
             epub_open_keeps_the_shelf_scroll_and_returns_the_page \
-            the_switch_stays_on_webkit_until_the_typesetter_opens \
+            the_default_page_is_the_typesetter_when_it_opens \
             a_turn_stops_at_the_chapter_ends \
             a_point_maps_into_the_paperback_page \
             selection_tints_paper_and_the_caret_is_ink \
