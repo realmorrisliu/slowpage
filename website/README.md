@@ -42,7 +42,7 @@ pnpm preview    # Preview the built Cloudflare Worker + assets locally
 
 ### Automatic deploy on `main` (Cloudflare Workers Builds)
 
-`slowpage-website` is connected directly to **Cloudflare Workers Builds** for `realmorrisliu/slowpage` on `main` — no GitHub deployment secrets are required:
+`slowpage-website` is connected directly to **Cloudflare Workers Builds** for `thinksmart-systems/slowpage` on `main` — no GitHub deployment secrets are required:
 
 - **Root directory**: `/website`
 - **Build command**: `pnpm run build`

@@ -18,9 +18,9 @@ cd "$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 
 url=$(git remote get-url origin)
 case "$url" in
-  *realmorrisliu/SuperReader*) ;;
+  *thinksmart-systems/slowpage*) ;;
   *)
-    echo "origin is not realmorrisliu/SuperReader ($url). Nothing removed." >&2
+    echo "origin is not thinksmart-systems/slowpage ($url). Nothing removed." >&2
     exit 1
     ;;
 esac
@@ -56,7 +56,7 @@ busy() {
 }
 
 pr_states() {
-  gh pr list --repo realmorrisliu/SuperReader --state all --head "$1" --json state --jq '.[].state'
+  gh pr list --repo thinksmart-systems/slowpage --state all --head "$1" --json state --jq '.[].state'
 }
 
 dirty() {

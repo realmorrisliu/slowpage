@@ -14,8 +14,8 @@ const BANNER = `
     Typesetting      Paragraph-at-once (Knuth–Plass) justification, CJK kinsoku
 
   ${B}INSTALL / DOWNLOAD${X}
-    Latest release   https://github.com/realmorrisliu/slowpage/releases/latest
-    Source           git clone https://github.com/realmorrisliu/slowpage.git
+    Latest release   https://github.com/thinksmart-systems/slowpage/releases/latest
+    Source           git clone https://github.com/thinksmart-systems/slowpage.git
 
   ${D}https://slowpage.app · MIT OR Apache-2.0 · Powered by Alan (https://alanworks.app)${X}
 `
