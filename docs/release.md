@@ -88,7 +88,7 @@ Name: `NSH_UPDATE_SECRET`. Scope: an Actions environment secret on environment `
 
 This repo's Release and CI workflows run on `pull_request` from branches in the same repository. GitHub does not pass secrets to a workflow triggered from a forked repository, except `GITHUB_TOKEN`. A same-repo pull request is not that exception. GitHub's hardening guide says required reviewers can hold an environment secret until a reviewer approves that job. A repository-level secret has no such wait. Any workflow on `pull_request` that references it, including a pull request that edits the workflow, can receive it.
 
-The environment does not exist yet. `GET /repos/realmorrisliu/slowpage/environments` returned no environments, and `GET .../environments/update-signing` returned 404. The owner is a user account, not an organization. Nothing below is configured. It is the protection to approve before anyone creates the environment.
+The environment does not exist yet. `GET /repos/thinksmart-systems/slowpage/environments` returned no environments, and `GET .../environments/update-signing` returned 404. Nothing below is configured. It is the protection to approve before anyone creates the environment.
 
 This repository is public. GitHub's deployment docs say environments, environment secrets, and deployment protection rules are available on public repositories for current plans, and required reviewers are available on public repositories for GitHub Free, Pro, and Team. The repository owner configures an environment in a personal-account repository. The settings, as named in [Manage environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments):
 
@@ -99,12 +99,12 @@ This repository is public. GitHub's deployment docs say environments, environmen
 - Deployment branches: Selected branches and tags, limited to the protected branch and the version tags chosen later. A pull request head is not in that list.
 - The secret is referenced only by a manual `workflow_dispatch` on one of those refs, or by a signing job on one of those refs. The `pull_request` job does not set `environment: update-signing` and does not read `NSH_UPDATE_SECRET`. Do not approve the environment for a pull request.
 
-This agent's `gh` token cannot do that step. `GET /repos/realmorrisliu/slowpage/actions/secrets`, the secrets public-key endpoint, the Agents and Dependabot secret lists, and Actions permissions all returned `403 Resource not accessible by integration`. `gh secret set` is installed and was not run. A 403 on the public-key endpoint means this token cannot encrypt a secret for storage. Do not work around that with a browser or another token. The list API was not available, so this note does not say which secret names already exist. The workflow file reading six Apple names does not answer that either.
+This agent's `gh` token cannot do that step. `GET /repos/thinksmart-systems/slowpage/actions/secrets`, the secrets public-key endpoint, the Agents and Dependabot secret lists, and Actions permissions all returned `403 Resource not accessible by integration`. `gh secret set` is installed and was not run. A 403 on the public-key endpoint means this token cannot encrypt a secret for storage. Do not work around that with a browser or another token. The list API was not available, so this note does not say which secret names already exist. The workflow file reading six Apple names does not answer that either.
 
 After Morris approves the environment and the backup, he sets the secret from his Mac. Stdin, not `--body`, so the seed is not a command argument:
 
 ```sh
-gh secret set NSH_UPDATE_SECRET --app actions --env update-signing --repo realmorrisliu/slowpage \
+gh secret set NSH_UPDATE_SECRET --app actions --env update-signing --repo thinksmart-systems/slowpage \
   < "$HOME/Library/Application Support/Slowpage/update-keys/update.secret"
 ```
 

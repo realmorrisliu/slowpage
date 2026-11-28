@@ -30,7 +30,7 @@ type GitHubRelease = {
 // lookup replaces them once a newer release ships.
 const [release, setRelease] = createSignal<Release>({
   label: 'Alpha 1',
-  dmgUrl: 'https://github.com/realmorrisliu/slowpage/releases/download/v0.1.0-alpha.1/Slowpage-0.1.0-alpha.1.dmg',
+  dmgUrl: 'https://github.com/thinksmart-systems/slowpage/releases/download/v0.1.0-alpha.1/Slowpage-0.1.0-alpha.1.dmg',
   dmgSize: 24_762_289,
 })
 let requested = false
@@ -39,7 +39,7 @@ let requested = false
 export function useRelease() {
   if (!requested && typeof fetch !== 'undefined') {
     requested = true
-    fetch('https://api.github.com/repos/realmorrisliu/slowpage/releases/latest', {
+    fetch('https://api.github.com/repos/thinksmart-systems/slowpage/releases/latest', {
       headers: { accept: 'application/vnd.github+json' },
     })
       .then((res) => (res.ok ? res.json() : null))

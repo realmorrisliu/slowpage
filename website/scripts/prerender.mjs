@@ -7,11 +7,11 @@ const assetsDir = path.resolve(__dirname, '../.cloudflare/output/v1/workers/defa
 const zhHtmlPath = path.join(assetsDir, 'index.html')
 const enHtmlPath = path.join(assetsDir, '_i18n/en.html')
 
-const REPO_URL = 'https://github.com/realmorrisliu/slowpage'
+const REPO_URL = 'https://github.com/thinksmart-systems/slowpage'
 // Keep in sync with the baked fallback in src/release.ts.
 const FALLBACK_VERSION = 'Alpha 1'
 const FALLBACK_DMG_URL =
-  'https://github.com/realmorrisliu/slowpage/releases/download/v0.1.0-alpha.1/Slowpage-0.1.0-alpha.1.dmg'
+  'https://github.com/thinksmart-systems/slowpage/releases/download/v0.1.0-alpha.1/Slowpage-0.1.0-alpha.1.dmg'
 const FALLBACK_DMG_SIZE = 'DMG 24.8 MB'
 
 const LOCALES = {

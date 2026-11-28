@@ -72,7 +72,7 @@ The admitted file is the original Project Gutenberg mirror of ebook 25271, not a
 
 ## CI at 110e74d
 
-Run [44282176347](https://github.com/realmorrisliu/slowpage/actions/runs/44282176347) on `110e74d` did not run `cargo test -p spike-shell`, and its `fixtures_open_on_chapter_text ... ok` was the early return before the book existed. [44286351544](https://github.com/realmorrisliu/slowpage/actions/runs/44286351544) on `9048bb9` is the run that executes them. The test job is GitHub `macos-26-arm64`, not morris-mac. `spike-shell` is one package. After the admitted sha `91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293` and the chapter check, the log shows:
+Run [44282176347](https://github.com/thinksmart-systems/slowpage/actions/runs/44282176347) on `110e74d` did not run `cargo test -p spike-shell`, and its `fixtures_open_on_chapter_text ... ok` was the early return before the book existed. [44286351544](https://github.com/thinksmart-systems/slowpage/actions/runs/44286351544) on `9048bb9` is the run that executes them. The test job is GitHub `macos-26-arm64`, not morris-mac. `spike-shell` is one package. After the admitted sha `91e59f1acb65d7bc77fa2d52fca8b223b893ad837f55c62de3e85fa848e0f293` and the chapter check, the log shows:
 
 - `launch_tests::a_stored_page_does_not_open_the_shelf_launch ... ok`
 - `launch_tests::an_explicit_file_resumes_its_stored_page ... ok`

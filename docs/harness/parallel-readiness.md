@@ -1,6 +1,6 @@
 # Parallel readiness
 
-Recorded against main `a8942eac8f74aced44419ce6635f1438b9525898` on 2026-11-19. That commit is the merge of pull request 63. The push CI for that commit is green at <https://github.com/realmorrisliu/slowpage/actions/runs/44499726104>.
+Recorded against main `a8942eac8f74aced44419ce6635f1438b9525898` on 2026-11-19. That commit is the merge of pull request 63. The push CI for that commit is green at <https://github.com/thinksmart-systems/slowpage/actions/runs/44499726104>.
 
 Open pull requests 55, 56, 57, and 58 are not the base of this change. None of them edit `spikes/library` or `docs/harness`.
 

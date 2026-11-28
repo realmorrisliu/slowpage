@@ -39,7 +39,7 @@ export function setLocale(next: Locale) {
   setLocaleSignal(next)
 }
 
-export const REPO_URL = 'https://github.com/realmorrisliu/slowpage'
+export const REPO_URL = 'https://github.com/thinksmart-systems/slowpage'
 export const RELEASES_URL = `${REPO_URL}/releases/latest`
 export const ISSUES_URL = `${REPO_URL}/issues`
 export const ALAN_URL = 'https://alanworks.app'

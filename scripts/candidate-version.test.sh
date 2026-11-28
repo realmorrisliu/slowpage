@@ -59,17 +59,17 @@ refuse() {
   fi
 }
 
-refuse github-open '{ "updater": { "github": "realmorrisliu/slowpage" } }'
+refuse github-open '{ "updater": { "github": "thinksmart-systems/slowpage" } }'
 refuse url-open '{ "updater": { "url": "https://example.com/latest.json" } }'
-refuse empty-key '{ "updater": { "github": "realmorrisliu/slowpage", "publicKey": "" } }'
-refuse short-key '{ "updater": { "github": "realmorrisliu/slowpage", "publicKey": "YQ==" } }'
-refuse bad-b64 '{ "updater": { "github": "realmorrisliu/slowpage", "publicKey": "!!!!" } }'
-refuse both "{ \"updater\": { \"github\": \"realmorrisliu/slowpage\", \"url\": \"https://example.com/latest.json\", \"publicKey\": \"$key\" } }"
+refuse empty-key '{ "updater": { "github": "thinksmart-systems/slowpage", "publicKey": "" } }'
+refuse short-key '{ "updater": { "github": "thinksmart-systems/slowpage", "publicKey": "YQ==" } }'
+refuse bad-b64 '{ "updater": { "github": "thinksmart-systems/slowpage", "publicKey": "!!!!" } }'
+refuse both "{ \"updater\": { \"github\": \"thinksmart-systems/slowpage\", \"url\": \"https://example.com/latest.json\", \"publicKey\": \"$key\" } }"
 refuse neither "{ \"updater\": { \"publicKey\": \"$key\" } }"
 refuse bad-repo "{ \"updater\": { \"github\": \"not a repo\", \"publicKey\": \"$key\" } }"
 refuse http "{ \"updater\": { \"url\": \"http://example.com/latest.json\", \"publicKey\": \"$key\" } }"
 
-printf '%s\n' "{ \"updater\": { \"github\": \"realmorrisliu/slowpage\", \"publicKey\": \"$key\" } }" > "$work/keyed.json"
+printf '%s\n' "{ \"updater\": { \"github\": \"thinksmart-systems/slowpage\", \"publicKey\": \"$key\" } }" > "$work/keyed.json"
 if [ "$("$root/scripts/updater-gate.sh" "$work/keyed.json")" != "keyed" ]; then
   echo "a 32-byte publicKey was refused" >&2
   exit 1
@@ -78,7 +78,7 @@ cat > "$work/pretty.json" << EOF
 {
   "version": "0.1.0-alpha.2",
   "updater": {
-    "github": "realmorrisliu/slowpage",
+    "github": "thinksmart-systems/slowpage",
     "publicKey": "$key"
   }
 }

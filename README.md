@@ -1,6 +1,6 @@
 # SuperReader
 
-[![CI](https://github.com/realmorrisliu/SuperReader/actions/workflows/ci.yml/badge.svg)](https://github.com/realmorrisliu/SuperReader/actions/workflows/ci.yml)
+[![CI](https://github.com/thinksmart-systems/slowpage/actions/workflows/ci.yml/badge.svg)](https://github.com/thinksmart-systems/slowpage/actions/workflows/ci.yml)
 
 SuperReader is an agent-native PDF and EPUB reader for macOS, written in Rust on [NSH](https://nsh.dev). The goal is Apple Books–level reading UX with first-class hooks for agents: search, summarization, and tooling over your library and annotations.
 
